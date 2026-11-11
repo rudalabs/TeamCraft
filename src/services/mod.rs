@@ -34,6 +34,7 @@ pub mod mass_geometry;
 pub mod mass_properties;
 pub mod membership_conditions;
 pub mod notifications;
+pub mod offboarding;
 pub mod ownership;
 pub mod package;
 pub mod personal;

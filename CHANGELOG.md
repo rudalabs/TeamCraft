@@ -15,6 +15,16 @@ see the notices in the README.
 
 ### Added
 
+- Offboarding (#173, step 1): **what a user still holds**, in one place –
+  check-outs with their age, open change orders they wrote, reviews waiting
+  for them, change requests assigned to and raised by them, owned items,
+  memberships (flagging groups where they are the only active manager) and
+  API tokens. *Users → user → Everything … still holds*
+  (`/users/{id}/holdings`), `GET /api/v1/users/{id}/holdings` and
+  `teamcraft user holdings --username`. Filtered by the reader's rights, not
+  the leaver's; group managers see the same report for the groups they
+  manage (*holds…* in the member list).
+
 - BOM quantities from Inventor assemblies (#247): the reference scan reads
   how often an `.iam` places each referenced file from the file descriptor
   table of its `UFRxDoc` stream (`src/invasm.rs`, checked against Inventor's

@@ -60,6 +60,7 @@
 
 <section class="card">
   <h2>Check-outs</h2>
+  <p><a href="/users/{{ user.id }}/holdings">Everything {{ user.display_name }} still holds</a> <span class="hint">– check-outs, open change orders, pending reviews, change requests, owned items, sole manager roles</span></p>
   {% if held_checkouts > 0 %}
   <p>{{ user.display_name }} has {{ held_checkouts }} revisions checked out.</p>
   <form class="inline" method="post" action="/admin/users/{{ user.id }}/release-checkouts"

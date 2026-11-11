@@ -44,6 +44,7 @@ pub const TEMPLATES: &[(&str, &str)] = embed![
     "files/preview.html",
     "admin/users.html",
     "admin/user_edit.html",
+    "admin/holdings.html",
     "admin/audit.html",
     "admin/attributes.html",
     "admin/attribute_edit.html",
@@ -1664,6 +1665,55 @@ mod tests {
                              "last_used_at": TS, "expires_at": TS, "scope": "read_only", "idle_days": 30 }],
             })),
         );
+        let html = render(
+            &env,
+            "admin/holdings.html",
+            with_common(json!({
+                "nothing": false,
+                "h": {
+                    "user_id": OTHER, "username": "lena", "display_name": "Lena <left>", "active": false,
+                    "last_login_at": null, "scope": "all",
+                    "checkouts": { "total": 40, "shown": [{ "revision_id": OTHER, "item_number": "PRT-000007",
+                        "code": "B", "name": "Upright <x>", "project_code": "CHASSIS", "checked_out_at": TS }] },
+                    "hidden_checkouts": [{ "project_code": "NTK", "count": 2 }],
+                    "authored_changes": { "total": 1, "shown": [{ "id": OTHER, "number": "CO-0031",
+                        "title": "Stiffer upright", "status": "rejected" }] },
+                    "pending_reviews": { "total": 0, "shown": [] },
+                    "assigned_requests": { "total": 1, "shown": [{ "id": OTHER, "number": "CR-0004",
+                        "title": "Crack", "status": "in_triage" }] },
+                    "raised_requests": { "total": 0, "shown": [] },
+                    "owned_items": { "total": 1, "shown": [{ "id": OTHER, "number": "PRT-000007",
+                        "name": "Upright", "project_code": null }] },
+                    "memberships": [{ "project_id": OTHER, "project_code": "CHASSIS", "project_name": "Chassis",
+                        "source": "oidc", "manager": true, "only_active_manager": true }],
+                    "tokens": [{ "id": ME, "name": "desktop", "token_prefix": "tc_pat_def456", "created_at": TS,
+                        "last_used_at": null, "expires_at": TS, "scope": "full", "idle_days": 30 }],
+                },
+            })),
+        );
+        assert!(html.contains("Lena &lt;left&gt;") && html.contains("Upright &lt;x&gt;"));
+        assert!(html.contains("The first 1 of 40") && html.contains("the only active manager"));
+        assert!(html.contains("2 check-outs in") && html.contains("CO-0031"));
+        let html = render(
+            &env,
+            "admin/holdings.html",
+            with_common(json!({
+                "nothing": true,
+                "h": {
+                    "user_id": OTHER, "username": "tom", "display_name": "Tom", "active": true,
+                    "last_login_at": TS, "scope": "managed",
+                    "checkouts": { "total": 0, "shown": [] }, "hidden_checkouts": [],
+                    "authored_changes": { "total": 0, "shown": [] },
+                    "pending_reviews": { "total": 0, "shown": [] },
+                    "assigned_requests": { "total": 0, "shown": [] },
+                    "raised_requests": { "total": 0, "shown": [] },
+                    "owned_items": { "total": 0, "shown": [] },
+                    "memberships": [], "tokens": null,
+                },
+            })),
+        );
+        assert!(html.contains("holds nothing that blocks") && !html.contains("API tokens"));
+        assert!(html.contains("Only what lies in the project groups you manage"));
         render(
             &env,
             "admin/audit.html",

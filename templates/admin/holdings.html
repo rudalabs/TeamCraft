@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+{% block title %}What {{ h.display_name }} holds{% endblock %}
+{% block nav_projects %}active{% endblock %}
+{% block content %}
+{% import "macros.html" as m %}
+<div class="page-head">
+  <div>
+    <h1>What {{ h.display_name }} still holds</h1>
+    <p class="subtitle"><span class="mono">{{ h.username }}</span> ·
+      {% if h.active %}active{% else %}<span class="badge badge-obsolete">deactivated</span>{% endif %} ·
+      last sign-in: {% if h.last_login_at %}{{ m.time(h.last_login_at) }}{% else %}never{% endif %}.
+      {% if h.scope == "managed" %}Only what lies in the project groups you manage.{% else %}Everything in the groups you can read.{% endif %}</p>
+  </div>
+  <div class="actions">
+    {% if me.is_admin %}<a class="button" href="/admin/users/{{ h.user_id }}">User page</a>{% endif %}
+    <a class="button" href="/projects">Project groups</a>
+  </div>
+</div>
+
+{% if nothing %}
+<section class="card"><p class="empty">{{ h.display_name }} holds nothing that blocks other people's work here.</p></section>
+{% endif %}
+
+<section class="card">
+  <h2>Check-outs ({{ h.checkouts.total }})</h2>
+  {% if h.checkouts.shown %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">Revision</th><th scope="col">Name</th><th scope="col">Group</th><th scope="col">Checked out</th></tr></thead>
+    <tbody>
+    {% for r in h.checkouts.shown %}
+    <tr><td class="nowrap"><a class="mono" href="/revisions/{{ r.revision_id }}">{{ r.item_number }}/{{ r.code }}</a></td><td>{{ r.name }}</td><td>{{ r.project_code or "–" }}</td><td class="nowrap">{% if r.checked_out_at %}{{ m.time(r.checked_out_at) }}{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% if h.checkouts.total > h.checkouts.shown | length %}<p class="hint">The first {{ h.checkouts.shown | length }} of {{ h.checkouts.total }}.</p>{% endif %}
+  <p class="hint">Release them on the {% if me.is_admin %}user page (all at once) or on the {% endif %}member list of the group.</p>
+  {% else %}<p class="empty">None.</p>{% endif %}
+  {% for g in h.hidden_checkouts %}
+  <p>{{ g.count }} check-outs in <span class="mono">{{ g.project_code }}</span>, a group whose need-to-know policy hides its content from administrators – a manager of the group releases those.</p>
+  {% endfor %}
+</section>
+
+<section class="card">
+  <h2>Open change orders they wrote ({{ h.authored_changes.total }})</h2>
+  {% if h.authored_changes.shown %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">Change</th><th scope="col">Title</th><th scope="col">Status</th></tr></thead>
+    <tbody>
+    {% for c in h.authored_changes.shown %}
+    <tr><td class="nowrap"><a class="mono" href="/changes/{{ c.id }}">{{ c.number }}</a></td><td>{{ c.title }}</td><td><span class="badge badge-{{ c.status }}">{{ c.status|label }}</span></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="empty">None.</p>{% endif %}
+</section>
+
+<section class="card">
+  <h2>Reviews that wait for them ({{ h.pending_reviews.total }})</h2>
+  {% if h.pending_reviews.shown %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">Change</th><th scope="col">Title</th><th scope="col">Status</th></tr></thead>
+    <tbody>
+    {% for c in h.pending_reviews.shown %}
+    <tr><td class="nowrap"><a class="mono" href="/changes/{{ c.id }}">{{ c.number }}</a></td><td>{{ c.title }}</td><td><span class="badge badge-{{ c.status }}">{{ c.status|label }}</span></td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="empty">None.</p>{% endif %}
+</section>
+
+<section class="card">
+  <h2>Open change requests</h2>
+  <h3>Assigned to them ({{ h.assigned_requests.total }})</h3>
+  {% if h.assigned_requests.shown %}
+  <ul>
+    {% for r in h.assigned_requests.shown %}<li><a class="mono" href="/requests/{{ r.id }}">{{ r.number }}</a> {{ r.title }} <span class="muted small">{{ r.status|label }}</span></li>{% endfor %}
+  </ul>
+  {% else %}<p class="empty">None.</p>{% endif %}
+  <h3>Raised by them ({{ h.raised_requests.total }})</h3>
+  {% if h.raised_requests.shown %}
+  <ul>
+    {% for r in h.raised_requests.shown %}<li><a class="mono" href="/requests/{{ r.id }}">{{ r.number }}</a> {{ r.title }} <span class="muted small">{{ r.status|label }}</span></li>{% endfor %}
+  </ul>
+  {% else %}<p class="empty">None.</p>{% endif %}
+</section>
+
+<section class="card">
+  <h2>Items they own ({{ h.owned_items.total }})</h2>
+  {% if h.owned_items.shown %}
+  <ul>
+    {% for i in h.owned_items.shown %}<li><a class="mono" href="/i/{{ i.number }}">{{ i.number }}</a> {{ i.name }} <span class="muted small">{{ i.project_code or "" }}</span></li>{% endfor %}
+  </ul>
+  {% if h.owned_items.total > h.owned_items.shown | length %}<p class="hint">The first {{ h.owned_items.shown | length }} of {{ h.owned_items.total }}.</p>{% endif %}
+  {% else %}<p class="empty">None.</p>{% endif %}
+</section>
+
+<section class="card">
+  <h2>Memberships ({{ h.memberships | length }})</h2>
+  {% if h.memberships %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">Group</th><th scope="col">Name</th><th scope="col">Source</th><th scope="col">Role in the group</th></tr></thead>
+    <tbody>
+    {% for g in h.memberships %}
+    <tr><td class="nowrap"><a class="mono" href="/projects/{{ g.project_id }}">{{ g.project_code }}</a></td><td>{{ g.project_name }}</td>
+      <td>{% if g.source == "oidc" %}identity provider{% else %}manual{% endif %}</td>
+      <td>{% if g.manager %}manager{% else %}member{% endif %}{% if g.only_active_manager %} <span class="badge badge-in_review">the only active manager</span>{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="empty">None.</p>{% endif %}
+</section>
+
+{% if h.tokens is not none %}
+<section class="card">
+  <h2>API tokens ({{ h.tokens | length }})</h2>
+  {% if h.tokens %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">Name</th><th scope="col">Scope</th><th scope="col">Last used</th><th scope="col">Expires</th></tr></thead>
+    <tbody>
+    {% for t in h.tokens %}
+    <tr><td>{{ t.name }}</td><td>{{ t.scope }}</td><td>{% if t.last_used_at %}{{ m.time(t.last_used_at) }}{% else %}never{% endif %}</td><td>{% if t.expires_at %}{{ m.time(t.expires_at) }}{% else %}never{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <p class="hint">Tokens of a deactivated user do not work, but come back when the account is activated again; revoke them on the user page.</p>
+  {% else %}<p class="empty">None.</p>{% endif %}
+</section>
+{% endif %}
+{% endblock %}
