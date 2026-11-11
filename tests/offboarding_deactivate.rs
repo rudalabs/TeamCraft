@@ -43,7 +43,7 @@ async fn team(app: &common::TestApp) -> Team {
         "UPDATE project_members SET manager = (user_id = $1)
          WHERE project_id = (SELECT id FROM projects WHERE code = 'ROCKET')",
     )
-    .bind(lena)
+    .bind(lena.id)
     .execute(&app.pool)
     .await
     .unwrap();
@@ -123,7 +123,10 @@ async fn the_only_manager_needs_a_successor_or_a_confirmation() {
     assert_eq!(locks_of(&app, t.lena).await, 0);
     let actions = app.audit_actions(t.lena).await;
     for action in ["token.revoke_all", "user.update", "user.offboard"] {
-        assert!(actions.contains(&action.to_string()), "{action}: {actions:?}");
+        assert!(
+            actions.contains(&action.to_string()),
+            "{action}: {actions:?}"
+        );
     }
 
     // activated again: the old token does not come back
@@ -250,7 +253,9 @@ async fn the_rest_api_and_the_web_page_offboard() {
             Method::POST,
             &path,
             &t.root,
-            Some(json!({ "hand_over_to": "tom", "release_checkouts": true, "revoke_tokens": true })),
+            Some(
+                json!({ "hand_over_to": "tom", "release_checkouts": true, "revoke_tokens": true }),
+            ),
         )
         .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text());

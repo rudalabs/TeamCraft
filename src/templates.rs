@@ -741,6 +741,9 @@ mod tests {
                             "thumbnail_file_id": if state == "released" { json!(ME) } else { json!(null) },
                         }] })
             };
+            // a manager looking at an active member's lock: the reason form
+            let mut can_rev = can_all.clone();
+            can_rev["release_with_reason"] = json!(checked_out);
             let html = render(
                 &env,
                 "revisions/show.html",
@@ -760,11 +763,7 @@ mod tests {
                     "references": references.clone(), "impact_groups": [impact_group()],
                     "resolved_impacts": [impact(Some("acknowledged"))],
                     "open_requests": [request("in_triage")], "similar": similar,
-                    "can": {
-                        let mut can = can_all.clone();
-                        can["release_with_reason"] = json!(checked_out);
-                        can
-                    },
+                    "can": can_rev,
                     "release_reason": { "min": 10, "max": 500 },
                     "max_upload_mb": 512, "assistant_enabled": state == "released",
                     "interchange": {
