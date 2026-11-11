@@ -252,8 +252,8 @@ fn printable_unit(unit: u16) -> bool {
 
 /// Length-prefixed UTF-16LE strings: a `u32` LE count of code units directly
 /// followed by exactly that many printable units. Inventor stores the paths
-/// of its references this way (`9b 00 00 00` + 155 units of
-/// `C:\…\Planetrad2_Stirnraeder3.iam`), and the field after the string may
+/// of its references this way (`57 00 00 00` + 87 units of
+/// `C:\…\Planet_SpurGear.iam`), and the field after the string may
 /// itself look like text – `43 00` is a `C` – which a plain
 /// [`utf16_runs`] scan glues onto the extension (`….iamC`), so the name was
 /// lost. The count gives the exact end of the string.
@@ -445,7 +445,7 @@ fn raw_names(content: &[u8]) -> Vec<String> {
     });
     // Length-prefixed strings have exact ends: a path is reduced to its last
     // part as a whole, so `=`, `,` or `(` inside the name do not cut it
-    // (`CM28-L4-H=7_52.ipt`, `ISO 4762 - M4 x 12 Edelstahl, 440C.ipt`).
+    // (`Spring L=20_D=8.ipt`, `Bolt M4 x 12, stainless.ipt`).
     let mut exact = Vec::new();
     prefixed_utf16_strings(content, skip.as_ref(), |text| {
         let last = text.rsplit(['\\', '/']).next().unwrap_or(text).trim();
@@ -456,12 +456,12 @@ fn raw_names(content: &[u8]) -> Vec<String> {
         }
     });
     // The other scans cut such names at those characters: drop a name that
-    // is only the tail of an exact one after a boundary (`7_52.ipt`).
+    // is only the tail of an exact one after a boundary (`8.ipt`).
     found.retain(|name| {
         let name = name.to_lowercase();
         !exact.iter().any(|e| {
             let e = e.to_lowercase();
-            // the scans trim spaces after the boundary (`…Edelstahl, 440C.ipt`)
+            // the scans trim spaces after the boundary (`…M4 x 12, stainless.ipt`)
             e.len() > name.len()
                 && e.ends_with(&name)
                 && e.get(..e.len() - name.len()).is_some_and(|head| {
@@ -527,7 +527,10 @@ fn count_key(name: &str) -> String {
 ///   without `swExcludeFromBOM` (`swpart::file_component_counts`; a file
 ///   with only excluded instances counts 0);
 /// * STEP assemblies with external references: the assembly occurrences of
-///   each external file (`stepbom::external_instance_counts`).
+///   each external file (`stepbom::external_instance_counts`);
+/// * Inventor assemblies: the occurrences of each referenced file from the
+///   file descriptor table (`invasm::file_occurrence_counts`; suppressed
+///   occurrences count too).
 ///
 /// `None` for every other format and for files without component data.
 /// Blocking (reads the file).
@@ -561,6 +564,17 @@ pub fn instance_counts(path: &Path, format: &str) -> Option<HashMap<String, u32>
                 .read_to_end(&mut content)
                 .ok()?;
             for (name, n) in crate::stepbom::external_instance_counts(&content)? {
+                let total = counts.entry(count_key(&name)).or_default();
+                *total = total.saturating_add(n);
+            }
+        }
+        "inventor-assembly" => {
+            let file = std::io::BufReader::new(std::fs::File::open(path).ok()?);
+            let found = crate::invasm::file_occurrence_counts(file, MAX_SCAN).ok()??;
+            if found.is_empty() {
+                return None; // no descriptor table: the counts are not known
+            }
+            for (name, n) in found {
                 let total = counts.entry(count_key(&name)).or_default();
                 *total = total.saturating_add(n);
             }
@@ -708,32 +722,29 @@ mod tests {
         // length-prefixed workspace name.
         let mut content = vec![0x00, 0x13, 0x88, 0x01];
         content.extend(prefixed(
-            "C:\\Users\\sebas\\Desktop\\Graksleer packngo\\Workspaces\\Arbeitsbereich\\\
-             Radkonstruktion\\Rad Mitte\\Planetrad2\\Konstruktions-Assistent\\\
-             Planetrad2_Stirnraeder3.iam",
+            "C:\\Projects\\Rover\\Workspace\\Drive\\Gearbox\\Planet\\\
+             Design Accelerator\\Planet_SpurGear.iam",
         ));
         content.extend([0x43, 0x00, 0x00, 0x00]);
-        content.extend(prefixed("Arbeitsbereich"));
+        content.extend(prefixed("Workspace"));
         content.extend([0x02, 0x00, 0x00, 0x00, 0xff, 0xfe]);
-        content.extend(prefixed("Radkonstruktion\\Rad Mitte\\Ringrad2.iam"));
+        content.extend(prefixed("Drive\\Gearbox\\RingGear.iam"));
         content.extend([0x43, 0x00, 0x00, 0x00]);
         // names with `=` and `,` stay whole – only the cut tail was found before
-        content.extend(prefixed(
-            "C:\\Rover\\Endstop\\Crash Zone 2024\\CM28-L4-H=7_52.ipt",
-        ));
+        content.extend(prefixed("C:\\Rover\\Bumper\\Spring L=20_D=8.ipt"));
         content.extend([0x43, 0x00, 0x00, 0x00]);
         content.extend(prefixed(
-            "C:\\Rover\\Normteile\\DIN EN ISO 4762 - M4 x 12 Edelstahl, 440C.ipt",
+            "C:\\Rover\\Standard parts\\Bolt M4 x 12, stainless.ipt",
         ));
         content.extend([0x00, 0x00]);
-        let refs = find(&content, "Rad Mitte TEST3.iam");
+        let refs = find(&content, "Gearbox.iam");
         assert_eq!(
             refs,
             vec![
-                "Planetrad2_Stirnraeder3.iam",
-                "Ringrad2.iam",
-                "CM28-L4-H=7_52.ipt",
-                "DIN EN ISO 4762 - M4 x 12 Edelstahl, 440C.ipt"
+                "Planet_SpurGear.iam",
+                "RingGear.iam",
+                "Spring L=20_D=8.ipt",
+                "Bolt M4 x 12, stainless.ipt"
             ]
         );
         // a different file whose name only ends the same way is kept
@@ -1036,6 +1047,38 @@ mod tests {
         assert!(with_counts(names, None)
             .iter()
             .all(|r| r.instances.is_none()));
+    }
+
+    #[test]
+    fn inventor_assemblies_count_their_occurrences() {
+        let path = std::env::temp_dir().join(format!("teamcraft-iam-{}", uuid::Uuid::new_v4()));
+        std::fs::write(
+            &path,
+            crate::invasm::test_assembly(&[
+                ("C:\\Rover\\Wheel\\Wheel.iam", false, 4),
+                ("C:\\CC\\ISO 4762\\ISO 4762 - M6 x 20.ipt", true, 16),
+                ("C:\\Rover\\Frame.ipt", false, 1),
+            ]),
+        )
+        .unwrap();
+        let counts = instance_counts(&path, "inventor-assembly").unwrap();
+        assert_eq!(counts.get("wheel.iam"), Some(&4));
+        assert_eq!(counts.get("iso 4762 - m6 x 20.ipt"), Some(&16));
+        assert_eq!(counts.get("frame.ipt"), Some(&1));
+        let refs = with_counts(
+            vec!["Wheel.iam".into(), "Frame.ipt".into(), "Bracket.ipt".into()],
+            Some(&counts),
+        );
+        assert_eq!(
+            refs.iter().map(|r| r.instances).collect::<Vec<_>>(),
+            vec![Some(4), Some(1), None]
+        );
+        // a part file (no assembly occurrences) and a compound file without
+        // a descriptor table have no counts
+        assert_eq!(instance_counts(&path, "inventor-part"), None);
+        std::fs::write(&path, crate::invasm::test_assembly(&[])).unwrap();
+        assert_eq!(instance_counts(&path, "inventor-assembly"), None);
+        std::fs::remove_file(&path).ok();
     }
 
     #[test]

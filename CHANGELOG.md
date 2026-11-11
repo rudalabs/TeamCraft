@@ -15,6 +15,16 @@ see the notices in the README.
 
 ### Added
 
+- BOM quantities from Inventor assemblies (#247): the reference scan reads
+  how often an `.iam` places each referenced file from the file descriptor
+  table of its `UFRxDoc` stream (`src/invasm.rs`, checked against Inventor's
+  own API on 32 real assemblies: 190 of 190 files), so the folder import,
+  *Quantities from CAD…* and the BOM-from-references page get real
+  quantities instead of 1. Suppressed occurrences are counted too.
+  *Quantities from CAD…* reads the counts from the stored file, so it works
+  for assemblies imported before; `teamcraft rescan-references --format
+  inventor-assembly` also refreshes the stored counts of those files.
+
 - Two optional rules of a project group's review policy (#152 step 9, both
   off by default): *Requesters do not decide their own change requests*, and
   *A reviewer confirms each "use as is" deviation* – a reviewer of the change
