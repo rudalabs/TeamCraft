@@ -18,8 +18,8 @@ The method and its limits are described in the research note
    only adds the parts up – no placements, no CAD assembly file needed.
    A part used several times (four fins) is exported once with all its
    instances in one file; set **Units shown in the file** to 4.
-2. **Attach the files** to the part revisions as usual. Attach the files of
-   **one part** to a part revision, in as many formats as you like. The
+2. **Attach the files** to the part revisions as usual. Attach the files of **one part** to a part revision, in as many
+   formats as you like. The
    geometry file is then picked automatically (STL, 3MF, OBJ, PLY, OFF, AMF,
    glTF, 3DS, then STEP, then the lightweight data in NX, SOLIDWORKS, JT and
    Rhino files; the native format of your preferred CAD program first among
@@ -47,15 +47,15 @@ The method and its limits are described in the research note
 
 For every revision the first source that applies is used:
 
-| Source                         | When                                                                                         | Gives                                                          |
-|--------------------------------|----------------------------------------------------------------------------------------------|----------------------------------------------------------------|
-| **measured**                   | a measured mass is entered                                                                   | that mass; CG and inertia if entered; covers the whole sub-tree |
-| **sum of children**            | the revision has BOM lines                                                                    | the lines added by the parallel axis theorem                   |
-| **computed**                   | a 3D file and a density (override or material library)                                        | mass, CG, inertia from the closed mesh                          |
-| **entered mass on geometry**   | a 3D file, no density, but the revision's *mass* attribute                                    | the entered mass spread uniformly over the mesh                 |
-| **entered mass (no position)** | only the *mass* attribute                                                                     | counts in the total mass, not in the CG and inertia             |
-| **geometry ambiguous**         | 3D files of several different parts and none chosen, no measured mass, no BOM lines           | nothing – the line is flagged, the totals are incomplete        |
-| **missing**                    | none of the above                                                                             | nothing – the line is flagged                                   |
+| Source                         | When                                                                                | Gives                                                           |
+|--------------------------------|-------------------------------------------------------------------------------------|-----------------------------------------------------------------|
+| **measured**                   | a measured mass is entered                                                          | that mass; CG and inertia if entered; covers the whole sub-tree |
+| **sum of children**            | the revision has BOM lines                                                          | the lines added by the parallel axis theorem                    |
+| **computed**                   | a 3D file and a density (override or material library)                              | mass, CG, inertia from the closed mesh                          |
+| **entered mass on geometry**   | a 3D file, no density, but the revision's *mass* attribute                          | the entered mass spread uniformly over the mesh                 |
+| **entered mass (no position)** | only the *mass* attribute                                                           | counts in the total mass, not in the CG and inertia             |
+| **geometry ambiguous**         | 3D files of several different parts and none chosen, no measured mass, no BOM lines | nothing – the line is flagged, the totals are incomplete        |
+| **missing**                    | none of the above                                                                   | nothing – the line is flagged                                   |
 
 Lines below a measured assembly are shown as *covered by measured parent*.
 An assembly's own 3D file and entered mass are not added to the sum of its
@@ -87,8 +87,7 @@ position).
   checked out); the choice is stored like a manual one. It is a suggestion
   only – nothing is used without the click.
 * The file selector lists the candidates **grouped by model**, the likely
-  assembly first, and marks the file in use as *automatic* or *chosen*;
-  *Automatic* restores the automatic pick.
+  assembly first, and marks the file in use as *automatic* or *chosen*; *Automatic* restores the automatic pick.
 * The better fix is usually to model the assembly as an assembly: one item
   per part with the part's files, and BOM lines with quantities (see
   [The workflow](#the-workflow)).

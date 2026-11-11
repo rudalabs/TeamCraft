@@ -169,13 +169,13 @@ the channel, the kind, the object (number or file name, kept as text), what
 read it (the tool, for tool reads) and the client address (with the same
 reverse-proxy rule as the sign-in throttle).
 
-| Channel     | Reads                                                                                         |
-|-------------|-----------------------------------------------------------------------------------------------|
-| `web`       | item and revision pages, file downloads, Pack and Go and BOM exports in the browser           |
-| `api`       | the same over the REST API and the desktop app (personal access token)                        |
+| Channel     | Reads                                                                                                      |
+|-------------|------------------------------------------------------------------------------------------------------------|
+| `web`       | item and revision pages, file downloads, Pack and Go and BOM exports in the browser                        |
+| `api`       | the same over the REST API and the desktop app (personal access token)                                     |
 | `mcp`       | read tools of an MCP client that name an item (`get_item`, `get_revision`, `get_bom`, `read_file_text`, …) |
-| `assistant` | the same read tools called by the built-in assistant                                           |
-| `desktop`   | the desktop app's Get (the working set; its file downloads follow as `api` downloads)          |
+| `assistant` | the same read tools called by the built-in assistant                                                       |
+| `desktop`   | the desktop app's Get (the working set; its file downloads follow as `api` downloads)                      |
 
 Kinds: `view` (an item or revision page, the same data over the API, or a
 read tool), `download` (a file or file version), `package` (Pack and Go),

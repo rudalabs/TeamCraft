@@ -60,10 +60,9 @@ assistant, notifications, e-mail, Mattermost and webhooks.
   and the last sign-in's age are part of `access::hidden_of_user`
   (`membership_conditions::unmet_sql`), so notification recipients and
   tokens are covered; the client network and the web session's age depend on
-  the request and are applied once by the `WebUser` / `ApiCaller` extractors
-  (`membership_conditions::apply`, `Actor::without_groups`) and again at each
-  assistant step. A member hidden this way is no member for that request
-  (`Actor::projects` drops the group).
+  the request and are applied once by the `WebUser` / `ApiCaller` extractors (`membership_conditions::apply`,
+  `Actor::without_groups`) and again at each
+  assistant step. A member hidden this way is no member for that request (`Actor::projects` drops the group).
 * There are no per-object ACLs and no per-membership access levels; a
   read-only member is a member with the global viewer role.
 

@@ -31,6 +31,7 @@ pub mod imports;
 pub mod insights;
 pub mod interchange;
 pub mod items;
+pub mod manager_gaps;
 pub mod mass_geometry;
 pub mod mass_properties;
 pub mod membership_conditions;

@@ -30,15 +30,14 @@ for the files they reference.
 When a part is kept in several CAD programs – an NX model next to a
 SOLIDWORKS and an Inventor copy, say – choose your program under *Account →
 Preferred CAD program*. On the revision page, in the detail pane of the vault
-explorer and in the Files tab of the desktop app, the native files of the
-**other** programs then move into a collapsed group below the list, e.g.
-*2 files in other CAD formats (SolidWorks, Inventor)*; one click opens it.
+explorer and in the Files tab of the desktop app, the native files of the **other** programs then move into a collapsed
+group below the list, e.g. *2 files in other CAD formats (SolidWorks, Inventor)*; one click opens it.
 
 * A family is everything one program writes natively: for NX its parts,
   assemblies, drawings and simulation files (`.prt`, `.sim`, `.fem`, `.afm`);
   for Creo also its neutral and Creo View files; for CATIA also CGR and 3D
-  XML. The families: SolidWorks, NX, Solid Edge, Inventor, Fusion, AutoCAD
-  (DWG), Creo, CATIA, SpaceClaim, FreeCAD, SolidCraft, Rhino, Alias,
+  XML. The families: SolidWorks, NX, Solid Edge, Inventor, Fusion, AutoCAD (DWG), Creo, CATIA, SpaceClaim, FreeCAD,
+  SolidCraft, Rhino, Alias,
   OpenSCAD, Revit, Navisworks, MicroStation, Archicad, SketchUp, Blender,
   Maya, 3ds Max, Cinema 4D, Modo, Houdini, KiCad, Altium and Eagle.
 * Neutral and exchange formats are never collapsed: STEP, IGES, Parasolid,
@@ -64,8 +63,8 @@ the other side – for a look inside housings and assemblies. *Measure* picks
 two points on the model (click, don't drag) and shows their distance and its
 X, Y and Z parts in model units; the decimal places (0–6) are remembered in
 the browser and apply to the section position too. Measured points are on the
-visible surface, so a section shows inner distances such as wall thickness.
-*Compare with …* (on the preview page, when there is something to compare)
+visible surface, so a section shows inner distances such as wall thickness. *Compare with …* (on the preview page, when
+there is something to compare)
 lays another version of the file – or the file of the same name in another
 revision of the item – over the model as a translucent red ghost: red shows
 where the other model sticks out, so added and removed material is visible at

@@ -81,8 +81,8 @@ present. Start the server afterwards; it applies newer migrations.
 
 `teamcraft backup <dir> --encrypt` encrypts the dump and every vault object
 with a key derived from a passphrase (`TEAMCRAFT_BACKUP_PASSPHRASE` or
-`_FILE`, otherwise prompted for twice; at least 12 characters): Argon2id
-(64 MiB, 3 passes) for the key, XChaCha20-Poly1305 in 64 KiB authenticated
+`_FILE`, otherwise prompted for twice; at least 12 characters): Argon2id (64 MiB, 3 passes) for the key,
+XChaCha20-Poly1305 in 64 KiB authenticated
 chunks for the files. Object names and the manifest stay plain (the names are
 the SHA-256 of the plain content); the manifest records the salt, the cost
 and a key check. The plain dump exists only between `pg_dump` and its

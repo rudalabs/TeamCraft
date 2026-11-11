@@ -1495,13 +1495,33 @@ mod tests {
             );
         }
 
-        render(
+        let html = render(
             &env,
             "projects/list.html",
-            with_common(
-                json!({ "projects": [project()], "my_projects": [ROCKET], "review_due": [] }),
-            ),
+            with_common(json!({
+                "projects": [project()], "my_projects": [ROCKET], "review_due": [],
+                "manager_gaps": [
+                    { "project_id": ROCKET, "code": "ROCKET", "name": "Sounding <rocket>", "kind": "none",
+                      "active_managers": 0, "last_active_at": null },
+                    { "project_id": OTHER, "code": "ROVER", "name": "Rover", "kind": "stale",
+                      "active_managers": 2, "last_active_at": TS },
+                ],
+                "manager_gap_ids": [ROCKET, OTHER], "stale_days": 90,
+            })),
         );
+        assert!(html.contains("Groups without an active manager"));
+        assert!(html.contains("Sounding &lt;rocket&gt; –") && html.contains("no active manager"));
+        assert!(html.contains("2 active managers, none seen for 90 days"));
+        assert!(html.contains("href=\"#manager-gaps\""), "the row is marked");
+        let html = render(
+            &env,
+            "projects/list.html",
+            with_common(json!({
+                "projects": [project()], "my_projects": [ROCKET], "review_due": [],
+                "manager_gaps": [], "manager_gap_ids": [], "stale_days": 90,
+            })),
+        );
+        assert!(!html.contains("manager-gaps"));
         let html = render(
             &env,
             "projects/access_review.html",

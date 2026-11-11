@@ -55,8 +55,8 @@ check-outs and reviews, and a **local working folder**:
   instances counted in the revision's CAD files (SOLIDWORKS 2015+, NX, STEP
   assemblies with external part files): missing lines and lines whose
   quantity differs – such as the quantity 1 of an assembly imported before
-  the counts existed – are ticked; *Apply* adds and corrects them in one step
-  (the same plan as *Create BOM from CAD references…* in the web UI). A
+  the counts existed – are ticked; *Apply* adds and corrects them in one step (the same plan as *Create BOM from CAD
+  references…* in the web UI). A
   quantity the CAD file does not tell never replaces an existing one;
 * the *Graph* tab draws a navigable reference and BOM graph around the
   revision: the focused item in the middle, its BOM children and references
@@ -219,8 +219,8 @@ matching sub-tab.
 
 **Projects** (the rail button below *Agent*, `Ctrl/Cmd+5`) is where you
 choose the **active project group**: your groups first, then the others.
-CAD editors create a new group there (*New* – you become its manager; tick
-*Restricted* to keep it to its members), and the page offers *Get…* (copy
+CAD editors create a new group there (*New* – you become its manager; tick *Restricted* to keep it to its members), and
+the page offers *Get…* (copy
 groups into your workspace) and *Import CAD folder…*. The choice is kept on
 this computer.
 
@@ -229,8 +229,8 @@ first and the number and revision dimmed after it, sorted by name (or by
 number, type or state – the choice is kept), or the *Structure* view with
 assemblies and their parts. *Change…* goes back to *Projects*.
 
-*Home*, *Projects*, *Refresh* and the dialogs that offer project groups
-(*New*, *Get Project Groups…*, *Import CAD Folder…*) load the groups and your
+*Home*, *Projects*, *Refresh* and the dialogs that offer project groups (*New*, *Get Project Groups…*, *Import CAD
+Folder…*) load the groups and your
 memberships from the server again, so a group created or joined in the web UI
 shows without restarting the app.
 
@@ -282,8 +282,8 @@ structure is then fetched like *Get* does under the *latest* rule, in the same
 progress dialog. Per file: missing – downloaded read-only; up to date –
 skipped; an unchanged older copy – updated; changed here, checked out by you,
 or a different file at the same place – kept untouched and listed (*kept – your
-local changes*, *name clash*). Cancelling leaves no partial file.
-**Add files.** *Add files…* (Files section and *More ▾* of a revision) takes
+local changes*, *name clash*). Cancelling leaves no partial file. **Add files.** *Add files…* (Files section and *More
+▾* of a revision) takes
 files from a file picker, checks the revision out first if you have not,
 and **copies** them into its working folder – the originals are never moved
 or changed. New files go into the revision's main folder or a sub-folder of

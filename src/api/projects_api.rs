@@ -14,6 +14,18 @@ pub(super) async fn list_projects(
     Ok(Json(json!(projects::list(&st.db, &me, false).await?)))
 }
 
+/// Groups without a present manager (#173 step 7) – administrators.
+pub(super) async fn project_manager_gaps(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+) -> AppResult<Json<Value>> {
+    let gaps = crate::services::manager_gaps::list(&st.db, &me).await?;
+    Ok(Json(json!({
+        "stale_days": crate::services::manager_gaps::STALE_DAYS,
+        "groups": crate::services::manager_gaps::to_json(&gaps),
+    })))
+}
+
 #[derive(Deserialize)]
 pub(super) struct CreateProject {
     code: String,

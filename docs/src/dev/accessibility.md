@@ -33,8 +33,8 @@ fixes changes how a page looks.
 
 The two later rules found 17 empty column headers (16 action columns, now
 a visually hidden "Actions", and the corner of the inertia tensor on the
-mass page, now "Axis") and the missing skip link: every page now starts with
-*Skip to the main content*, visible only while it has the focus.
+mass page, now "Axis") and the missing skip link: every page now starts with *Skip to the main content*, visible only
+while it has the focus.
 
 ## Keyboard: the main flows
 
