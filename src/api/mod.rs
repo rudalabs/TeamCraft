@@ -79,6 +79,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         )
         .route("/tokens/{id}", delete(tokens_api::revoke_token))
         .route("/users/{id}/holdings", get(user_holdings))
+        .route("/users/{id}/offboard", post(user_offboard))
         .route("/worklist", get(worklist))
         .route("/worklist/checkin-all", post(checkin_all))
         .route("/mcp", post(crate::mcp::http).get(crate::mcp::http_get))
@@ -507,7 +508,8 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/tokens                                    your personal access tokens (name, prefix, scope, expiry; never the value)",
             "POST   /api/v1/tokens                                    {name, expires_in_days?: 1..3650 (absent = never), scope?: full|write|read_only|mcp_only} – the value is answered once",
             "DELETE /api/v1/tokens/{id}                               revoke a token (your own; admins: any)",
-            "GET    /api/v1/users/{id}/holdings                       what a user still holds: check-outs, open change orders, pending reviews, change requests, owned items, memberships, tokens – admins; group managers for their groups",
+            "POST   /api/v1/users/{id}/offboard                       {release_checkouts?, hand_over_to?: username, revoke_tokens?, confirm_no_manager?} – admins: deactivate a leaver and hand over / release / revoke in one step",
+            "GET    /api/v1/users/{id}/holdings                     what a user still holds: check-outs, open change orders, pending reviews, change requests, owned items, memberships, tokens – admins; group managers for their groups",
             "GET    /api/v1/projects                                  the groups you may see (restricted groups only for members and admins)",
             "POST   /api/v1/projects                                  {code, name, description?, oidc_group?, visibility?}",
             "PUT    /api/v1/projects/{code}/visibility                {visibility: internal|restricted} – managers and admins",
@@ -718,6 +720,46 @@ async fn user_holdings(
     Ok(Json(json!(
         crate::services::offboarding::holdings(&st.db, &me, id).await?
     )))
+}
+
+#[derive(Deserialize, Default)]
+struct OffboardBody {
+    #[serde(default)]
+    release_checkouts: bool,
+    /// Username of the successor.
+    hand_over_to: Option<String>,
+    #[serde(default)]
+    revoke_tokens: bool,
+    #[serde(default)]
+    confirm_no_manager: bool,
+}
+
+/// `POST /api/v1/users/{id}/offboard` – administrators: deactivate a leaver
+/// with the chosen offboarding steps (issue #173, step 4).
+async fn user_offboard(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(id): Path<Uuid>,
+    ApiJson(body): ApiJson<OffboardBody>,
+) -> AppResult<Json<Value>> {
+    let hand_over_to = match body.hand_over_to.as_deref().map(str::trim) {
+        None | Some("") => None,
+        Some(name) => Some(
+            users::find_by_username(&st.db, name)
+                .await?
+                .ok_or_else(|| AppError::BadRequest(format!("Unknown user '{name}'.")))?
+                .id,
+        ),
+    };
+    let opts = crate::services::deactivation::Offboarding {
+        release_checkouts: body.release_checkouts,
+        hand_over_to,
+        revoke_tokens: body.revoke_tokens,
+        confirm_no_manager: body.confirm_no_manager,
+    };
+    let report = crate::services::deactivation::deactivate(&st.db, &me, id, &opts).await?;
+    let summary = report.summary();
+    Ok(Json(json!({ "report": report, "summary": summary })))
 }
 
 async fn me(

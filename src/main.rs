@@ -181,6 +181,26 @@ enum UserCommand {
         #[arg(long)]
         username: String,
     },
+    /// Deactivate an account as an offboarding step: optionally hand its
+    /// work and manager roles over, release its check-outs and delete its
+    /// API tokens (as the operator of the server; every step is audited).
+    Deactivate {
+        #[arg(long)]
+        username: String,
+        /// Release every check-out the account holds.
+        #[arg(long)]
+        release_checkouts: bool,
+        /// Hand items, change orders, requests, reviews and manager roles
+        /// over to this account.
+        #[arg(long)]
+        hand_over_to: Option<String>,
+        /// Delete the account's API tokens.
+        #[arg(long)]
+        revoke_tokens: bool,
+        /// Leave groups the account alone manages without an active manager.
+        #[arg(long)]
+        confirm_no_manager: bool,
+    },
     /// Show the storage usage and quota of an account; with --mb set the
     /// quota (counted over the sizes of the versions the user stored).
     Quota {
@@ -847,6 +867,38 @@ async fn user_command(command: UserCommand) -> Result<ExitCode> {
                 "{}",
                 services::offboarding::to_text(&report)
             )?;
+        }
+        UserCommand::Deactivate {
+            username,
+            release_checkouts,
+            hand_over_to,
+            revoke_tokens,
+            confirm_no_manager,
+        } => {
+            let user = services::users::find_by_username(&pool, &username)
+                .await?
+                .with_context(|| format!("no user named '{username}'"))?;
+            let hand_over_to = match hand_over_to {
+                Some(name) => Some(
+                    services::users::find_by_username(&pool, &name)
+                        .await?
+                        .with_context(|| format!("no user named '{name}'"))?
+                        .id,
+                ),
+                None => None,
+            };
+            let opts = services::deactivation::Offboarding {
+                release_checkouts,
+                hand_over_to,
+                revoke_tokens,
+                confirm_no_manager,
+            };
+            let actor = teamcraft::auth::Actor::system();
+            let report = services::deactivation::deactivate(&pool, &actor, user.id, &opts).await?;
+            writeln!(std::io::stdout(), "{}", report.summary())?;
+            if report.releases.iter().any(|o| !o.ok) {
+                return Ok(ExitCode::from(2));
+            }
         }
         UserCommand::List => {
             let users = services::users::list(&pool).await?;

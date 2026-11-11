@@ -431,6 +431,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         )
         .route("/admin/users/{id}/password", post(admin::reset_password))
         .route("/admin/users/{id}/handover", post(admin::handover))
+        .route("/admin/users/{id}/offboard", post(admin::offboard))
         .route(
             "/admin/users/{id}/release-checkouts",
             post(admin::release_user_checkouts),
