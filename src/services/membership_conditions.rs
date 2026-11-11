@@ -369,7 +369,7 @@ pub fn unmet_sql(u: &str, pp: &str) -> String {
         "COALESCE((jsonb_array_length({pp}.required_claims) > 0
                    AND EXISTS (SELECT 1 FROM jsonb_array_elements({pp}.required_claims) mrc
                                WHERE NOT (COALESCE({u}.idp_claims -> (mrc->>'claim'), '[]'::jsonb)
-                                          ?| ARRAY(SELECT jsonb_array_elements_text(mrc->'values'))))))
+                                          ?| ARRAY(SELECT jsonb_array_elements_text(mrc->'values')))))
                   OR ({pp}.max_signin_age_hours IS NOT NULL
                       AND ({u}.last_login_at IS NULL
                            OR {u}.last_login_at
@@ -450,7 +450,6 @@ struct Conditioned {
     project_id: Uuid,
     code: String,
     allowed_networks: Vec<String>,
-    max_signin_age_hours: Option<i32>,
     stored_unmet: bool,
     member: bool,
     session_too_old: bool,
@@ -471,7 +470,7 @@ pub async fn apply(pool: &PgPool, actor: Actor, origin: &Origin) -> AppResult<Ac
         return Ok(actor);
     }
     let rows = sqlx::query_as::<_, Conditioned>(&format!(
-        "SELECT p.id AS project_id, p.code, pp.allowed_networks, pp.max_signin_age_hours,
+        "SELECT p.id AS project_id, p.code, pp.allowed_networks,
                 {stored} AS stored_unmet,
                 EXISTS (SELECT 1 FROM project_members pm
                         WHERE pm.project_id = p.id AND pm.user_id = u.id) AS member,
@@ -758,6 +757,25 @@ mod tests {
         ClaimCondition {
             claim: claim.into(),
             values: values.iter().map(|v| v.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn the_sql_fragments_are_balanced() {
+        for sql in [
+            unmet_sql("u", "pp"),
+            crate::services::access::hidden_of_user("u"),
+        ] {
+            let mut depth = 0i32;
+            for c in sql.chars() {
+                match c {
+                    '(' => depth += 1,
+                    ')' => depth -= 1,
+                    _ => {}
+                }
+                assert!(depth >= 0, "closes too early: {sql}");
+            }
+            assert_eq!(depth, 0, "{sql}");
         }
     }
 

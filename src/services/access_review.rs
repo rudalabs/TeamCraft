@@ -47,6 +47,12 @@ pub struct ReviewMember {
     pub last_login_at: Option<DateTime<Utc>>,
     /// No sign-in for [`STALE_DAYS`] days (or never).
     pub stale: bool,
+    /// Whether the member meets the group's conditions on membership with
+    /// the claims of their last single sign-on and the time of their last
+    /// sign-in (`None` when the group has neither claim nor sign-in-age
+    /// conditions; the network is a property of each request).
+    #[serde(default)]
+    pub conditions_met: Option<bool>,
 }
 
 /// A confirmed review.
@@ -78,6 +84,8 @@ pub struct AccessReport {
     pub reviews: Vec<ReviewRecord>,
     /// The review schedule.
     pub schedule: ReviewSchedule,
+    /// The conditions on membership (#151, step 2).
+    pub conditions: crate::services::membership_conditions::Conditions,
 }
 
 /// When the access review of a group is due.
@@ -248,12 +256,22 @@ async fn restricted_code(pool: &PgPool, project_id: Uuid) -> AppResult<(String, 
     Ok((p.0, p.1))
 }
 
-const MEMBER_SELECT: &str = "SELECT u.username, u.display_name, u.role, pm.manager, pm.source,
-            u.active, pm.added_at, u.last_login_at,
-            (u.last_login_at IS NULL
-             OR u.last_login_at < now() - make_interval(days => $2)) AS stale
-     FROM project_members pm JOIN users u ON u.id = pm.user_id
-     WHERE pm.project_id = $1 ORDER BY pm.manager DESC, u.username";
+fn member_select() -> String {
+    format!(
+        "SELECT u.username, u.display_name, u.role, pm.manager, pm.source,
+                u.active, pm.added_at, u.last_login_at,
+                (u.last_login_at IS NULL
+                 OR u.last_login_at < now() - make_interval(days => $2)) AS stale,
+                CASE WHEN pp.project_id IS NULL
+                          OR (jsonb_array_length(pp.required_claims) = 0
+                              AND pp.max_signin_age_hours IS NULL) THEN NULL
+                     ELSE NOT {} END AS conditions_met
+         FROM project_members pm JOIN users u ON u.id = pm.user_id
+         LEFT JOIN project_policies pp ON pp.project_id = pm.project_id
+         WHERE pm.project_id = $1 ORDER BY pm.manager DESC, u.username",
+        crate::services::membership_conditions::unmet_sql("u", "pp")
+    )
+}
 
 /// The access report of a restricted group.
 ///
@@ -267,7 +285,7 @@ pub async fn report(pool: &PgPool, actor: &Actor, project_id: Uuid) -> AppResult
     // the policy view enforces the management permission
     let policy = project_policy::get(pool, actor, project_id).await?;
     let (code, name) = restricted_code(pool, project_id).await?;
-    let members = sqlx::query_as::<_, ReviewMember>(MEMBER_SELECT)
+    let members = sqlx::query_as::<_, ReviewMember>(&member_select())
         .bind(project_id)
         .bind(STALE_DAYS as i32)
         .fetch_all(pool)
@@ -300,6 +318,7 @@ pub async fn report(pool: &PgPool, actor: &Actor, project_id: Uuid) -> AppResult
         elevations: policy.elevations,
         reviews,
         schedule: schedule(pool, project_id).await?,
+        conditions: policy.conditions,
     })
 }
 
@@ -345,7 +364,7 @@ pub async fn confirm(
             project.0
         )));
     }
-    let members = sqlx::query_as::<_, ReviewMember>(MEMBER_SELECT)
+    let members = sqlx::query_as::<_, ReviewMember>(&member_select())
         .bind(project_id)
         .bind(STALE_DAYS as i32)
         .fetch_all(&mut *tx)
@@ -405,6 +424,24 @@ pub async fn confirm(
     Ok(record)
 }
 
+/// The conditions on membership in one line of the evidence.
+fn conditions_text(c: &crate::services::membership_conditions::Conditions) -> String {
+    if c.is_empty() {
+        return "none".into();
+    }
+    let mut parts = Vec::new();
+    for claim in &c.required_claims {
+        parts.push(format!("{} in [{}]", claim.claim, claim.values.join(", ")));
+    }
+    if !c.allowed_networks.is_empty() {
+        parts.push(format!("networks {}", c.allowed_networks.join(" ")));
+    }
+    if let Some(h) = c.max_signin_age_hours {
+        parts.push(format!("signed in within {h} hours"));
+    }
+    parts.join(", ")
+}
+
 /// The report as one CSV table (RFC 4180, formula-safe): a row per member,
 /// elevation and confirmed review, told apart by the first column.
 pub fn to_csv(report: &AccessReport) -> String {
@@ -432,7 +469,8 @@ pub fn to_csv(report: &AccessReport) -> String {
         String::new(),
         String::new(),
         format!(
-            "administrators: {}; {} active administrators are not members; review: {}",
+            "administrators: {}; {} active administrators are not members; review: {}; \
+             conditions: {}",
             report.admin_read.as_str(),
             report.administrators_outside,
             match report.schedule.interval_days {
@@ -441,7 +479,8 @@ pub fn to_csv(report: &AccessReport) -> String {
                     "every {days} days, {}",
                     if report.schedule.due { "due" } else { "not due" }
                 ),
-            }
+            },
+            conditions_text(&report.conditions)
         ),
         time(Some(report.generated_at)),
         String::new(),
@@ -458,7 +497,11 @@ pub fn to_csv(report: &AccessReport) -> String {
             m.active.to_string(),
             m.stale.to_string(),
             time(m.last_login_at),
-            String::new(),
+            match m.conditions_met {
+                None => String::new(),
+                Some(true) => "conditions met at the last sign-in".into(),
+                Some(false) => "conditions not met at the last sign-in".into(),
+            },
             time(Some(m.added_at)),
             String::new(),
         ]);
@@ -559,6 +602,7 @@ mod tests {
                 added_at: now,
                 last_login_at: None,
                 stale: true,
+                conditions_met: Some(false),
             }],
             elevations: vec![],
             reviews: vec![ReviewRecord {
@@ -574,6 +618,11 @@ mod tests {
                 due: true,
                 ..Default::default()
             },
+            conditions: crate::services::membership_conditions::Conditions {
+                allowed_networks: vec!["10.0.0.0/8".into()],
+                max_signin_age_hours: Some(12),
+                ..Default::default()
+            },
         };
         let csv = to_csv(&report);
         let lines: Vec<&str> = csv.lines().collect();
@@ -581,6 +630,11 @@ mod tests {
         assert!(lines[0].starts_with("record,group,"));
         assert!(lines[1].starts_with("policy,NTK,"));
         assert!(lines[1].contains("review: every 90 days, due"), "{csv}");
+        assert!(
+            lines[1].contains("conditions: networks 10.0.0.0/8, signed in within 12 hours"),
+            "{csv}"
+        );
+        assert!(lines[2].contains("conditions not met at the last sign-in"));
         assert!(lines[2]
             .starts_with("member,NTK,erika,\"'=Erika, Mustermann\",editor,true,oidc,true,true,"));
         assert!(lines[3].contains("\"1 members; administrators: none; all \"\"fine\"\"\""));

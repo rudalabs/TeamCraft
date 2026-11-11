@@ -3390,7 +3390,7 @@ async fn fourth_review_round_leaks_are_closed() {
         thread: false,
         limits: String::new(),
         files: Vec::new(),
-        client: None,
+        origin: Default::default(),
     };
     let tools = McpTools::new(&app.state, &mona_actor);
     tools.note_context(&question(&hs)).await;
@@ -3488,6 +3488,7 @@ async fn fourth_review_round_leaks_are_closed() {
         email: None,
         role: Role::Editor,
         groups: groups.iter().map(|g| g.to_string()).collect(),
+        claims: Default::default(),
     };
     upsert_oidc_user(&app.pool, identity(&["teamcraft-rocket"]))
         .await

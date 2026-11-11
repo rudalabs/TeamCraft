@@ -252,6 +252,23 @@
   <p class="muted">Nothing logged{% if not policy.access.read_log %} (the log is off){% endif %}.</p>
   {% endif %}
 </section>
+<section class="card" id="conditions">
+  <h2>Need to know: conditions on membership</h2>
+  <p class="hint">Besides being a member, a reader must meet every condition set here, or the group is hidden from them – administrators included. Empty fields set no condition.</p>
+  <form class="stack" method="post" action="/projects/{{ project.id }}/conditions">
+    <label>Required claims of the identity provider <span class="hint">one per line: <span class="mono">claim = value, value</span> (e.g. <span class="mono">site = main-office, partner-workshop</span>); taken from the last single sign-on, compared without case – local accounts never meet them</span>
+      <textarea name="required_claims" rows="3" maxlength="4000">{{ claim_lines or "" }}</textarea>
+    </label>
+    <label>Allowed networks <span class="hint">address ranges, one per line (e.g. <span class="mono">10.20.0.0/16</span>){% if my_address %}; your address is <span class="mono">{{ my_address }}</span>{% endif %}</span>
+      <textarea name="allowed_networks" rows="3" maxlength="4000">{{ policy.conditions.allowed_networks | join("\n") }}</textarea>
+    </label>
+    <label>Maximum sign-in age (hours) <span class="hint">the group is visible for so many hours after signing in; tokens count from the last sign-in</span>
+      <input type="number" name="max_signin_age_hours" min="1" max="8760" value="{% if policy.conditions.max_signin_age_hours %}{{ policy.conditions.max_signin_age_hours }}{% endif %}">
+    </label>
+    <p class="hint">Conditions that would hide the group from you are refused. Every change is audited and the other managers are told; a member refused by a condition is recorded once per session.</p>
+    <div class="actions"><button class="primary" type="submit">Save</button></div>
+  </form>
+</section>
 {% endif %}
 
 <section class="card" id="numbering">

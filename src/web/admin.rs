@@ -51,6 +51,7 @@ pub struct ProjectQuery {
 pub async fn project_show(
     State(st): State<AppState>,
     ctx: WebCtx,
+    origin: crate::auth::Origin,
     Path(id): Path<Uuid>,
     Query(q): Query<ProjectQuery>,
 ) -> AppResult<Response> {
@@ -150,6 +151,10 @@ pub async fn project_show(
             "interface_rows": interface_rows,
             "access_entries": access_entries,
             "review_schedule": review_schedule,
+            "claim_lines": policy.as_ref().map(|p| {
+                crate::services::membership_conditions::claim_lines(&p.conditions.required_claims)
+            }),
+            "my_address": origin.client.map(|ip| ip.to_string()),
             "elevation_minutes": project_policy::ELEVATION_MINUTES,
             "result_templates": templates,
             "oidc_enabled": st.config.oidc.is_some(),
@@ -388,6 +393,31 @@ pub struct ConditionsForm {
     max_signin_age_hours: String,
 }
 
+/// The conditions update of the form; a malformed field is a 400.
+fn conditions_update(
+    form: &ConditionsForm,
+) -> AppResult<crate::services::membership_conditions::ConditionsUpdate> {
+    use crate::services::membership_conditions as mc;
+    let hours = match form.max_signin_age_hours.trim() {
+        "" => None,
+        raw => Some(raw.parse::<i32>().map_err(|_| {
+            AppError::BadRequest("The maximum sign-in age is a number of hours (or empty).".into())
+        })?),
+    };
+    Ok(mc::ConditionsUpdate {
+        required_claims: Some(mc::parse_claim_lines(&form.required_claims)?),
+        allowed_networks: Some(
+            form.allowed_networks
+                .split(['\n', ','])
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect(),
+        ),
+        max_signin_age_hours: Some(hours),
+    })
+}
+
 /// `POST /projects/{id}/conditions` – managers of the group, admins: the
 /// conditions on membership (#151, step 2).
 pub async fn update_conditions(
@@ -397,30 +427,12 @@ pub async fn update_conditions(
     Path(id): Path<Uuid>,
     Form(form): Form<ConditionsForm>,
 ) -> AppResult<Response> {
-    use crate::services::membership_conditions as mc;
-    let back = format!("/projects/{id}#conditions");
-    let update = (|| {
-        let hours = match form.max_signin_age_hours.trim() {
-            "" => None,
-            raw => Some(raw.parse::<i32>().map_err(|_| {
-                AppError::BadRequest("The maximum sign-in age is a number of hours (or empty).".into())
-            })?),
-        };
-        Ok::<_, AppError>(mc::ConditionsUpdate {
-            required_claims: Some(mc::parse_claim_lines(&form.required_claims)?),
-            allowed_networks: Some(
-                form.allowed_networks
-                    .split(|c: char| c == '\n' || c == ',')
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_string)
-                    .collect(),
-            ),
-            max_signin_age_hours: Some(hours),
-        })
-    })();
-    let result = match update {
-        Ok(update) => mc::set(&st.db, &ctx.me, id, update, &origin).await,
+    let back = format!("/projects/{id}");
+    let result = match conditions_update(&form) {
+        Ok(update) => {
+            crate::services::membership_conditions::set(&st.db, &ctx.me, id, update, &origin)
+                .await
+        }
         Err(e) => Err(e),
     };
     finish(&st, result, &back, |_| {

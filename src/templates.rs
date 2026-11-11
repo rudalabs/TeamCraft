@@ -1507,7 +1507,10 @@ mod tests {
                 "report": { "project_code": "ROVER", "project_name": "Rover <x>", "generated_at": TS,
                     "admin_read": "with_reason", "administrators_outside": 2, "stale_days": 90,
                     "members": [{ "username": "erika", "display_name": "Erika", "role": "editor", "manager": true,
-                                  "source": "oidc", "active": true, "added_at": TS, "last_login_at": null, "stale": true }],
+                                  "source": "oidc", "active": true, "added_at": TS, "last_login_at": null, "stale": true,
+                                  "conditions_met": false }],
+                    "conditions": { "required_claims": [{ "claim": "site", "values": ["a", "b"] }],
+                                    "allowed_networks": [], "max_signin_age_hours": null },
                     "elevations": [{ "id": OTHER, "project_id": OTHER, "user_id": OTHER, "username": "root", "reason": "audit <b>",
                                     "started_at": TS, "expires_at": TS, "ended_at": null, "active": false }],
                     "reviews": [{ "id": OTHER, "username": "root", "note": "ok", "reviewed_at": TS,
@@ -1517,6 +1520,7 @@ mod tests {
         );
         assert!(html.contains("no sign-in for 90 days") && html.contains("audit &lt;b&gt;"));
         assert!(html.contains("review of this group is due") && html.contains("every 90 days"));
+        assert!(html.contains("is one of a, b") && html.contains("not met"));
         let entry = json!({ "id": OTHER, "at": TS, "user_id": OTHER, "username": "erika",
                             "channel": "assistant", "kind": "view", "object_type": "item",
                             "object_id": OTHER, "label": "PRT-1 <x>", "client_address": "192.0.2.4",
@@ -1610,8 +1614,11 @@ mod tests {
                 "result_templates": [],
                 "policy": { "admin_read": "implicit", "access": { "read_log": true, "log_retention_days": 90,
                     "review_interval_days": 120,
-                    "interfaces": { "api_tokens": true, "mcp": false, "assistant": true, "webhooks": true, "packages": true } } },
+                    "interfaces": { "api_tokens": true, "mcp": false, "assistant": true, "webhooks": true, "packages": true } },
+                    "conditions": { "required_claims": [{ "claim": "site", "values": ["main-office"] }],
+                                    "allowed_networks": ["10.0.0.0/8", "192.168.1.0/24"], "max_signin_age_hours": 12 } },
                 "review_schedule": { "interval_days": 120, "last_review_at": null, "next_review_at": TS, "due": true },
+                "claim_lines": "site = main-office, <x>", "my_address": "10.1.2.3",
                 "admin_modes": [{ "value": "implicit", "label": "Implicit" }],
                 "interface_rows": [{ "name": "mcp", "label": "MCP <server>", "allowed": false }],
                 "access_entries": [{ "id": OTHER, "at": TS, "username": "erika", "channel": "api", "kind": "download",
@@ -1631,6 +1638,8 @@ mod tests {
         );
         assert!(html.contains("access review due") && html.contains("value=\"120\""));
         assert!(html.contains("/access-log\""), "the whole log is linked");
+        assert!(html.contains("/conditions\"") && html.contains("main-office, &lt;x&gt;"));
+        assert!(html.contains("10.1.2.3") && html.contains("value=\"12\""));
         render(
             &env,
             "admin/users.html",

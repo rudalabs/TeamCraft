@@ -43,6 +43,16 @@ see the notices in the README.
   page, review page, evidence report) when no review was confirmed within the
   interval, and the hourly housekeeping reminds the managers once it is due
   and again after each further interval (audited). Migration 0067.
+- Conditions on membership of need-to-know groups (#151, step 2): required
+  identity-provider claims (from the last single sign-on; only the claims a
+  condition names are kept), allowed networks (client address ranges) and a
+  maximum sign-in age. A reader who does not meet them – administrators
+  included – sees the group as "not found"; a refused member is audited once
+  per session; a manager cannot set conditions that would hide the group from
+  themselves; administrators limited by the policy may tighten but not
+  loosen. The access review shows the conditions and whether each member met
+  them. The assistant applies the request's conditions (and, for a token, the
+  `api_tokens` switch) at every tool step. Migration 0068.
 
 ### Fixed
 
