@@ -70,6 +70,14 @@ see the notices in the README.
 
 ### Fixed
 
+- Desktop, *Graph* tab (#254): a click on a sub-assembly now turns the tab
+  into that sub-assembly – tab title, header, toolbar and graph are its own –
+  instead of re-centring the graph inside the tab of the assembly above it;
+  a part opens its overview the same way. *← Back* leads back one step per
+  click, and a click on the assembly one came from is that same step. A click
+  on the item in the middle opens its overview and no longer adds a step:
+  each click used to add one, so the back control appeared although nothing
+  had changed. `Ctrl`/`⌘`+click opens a node in a tab of its own.
 - Every web page starts with a *Skip to the main content* link (visible
   while it has the keyboard focus), and the 17 empty column headers (action
   columns, the corner of the inertia tensor) have a name for screen readers.

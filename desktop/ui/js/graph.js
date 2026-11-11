@@ -3,9 +3,10 @@
 // revision. The focused item sits in the middle, its BOM children and
 // references below, the assemblies that use it above. Node size encodes
 // structural complexity (its own BOM child count), node colour the lifecycle
-// state. Every node is clickable: an assembly re-centres the graph on itself,
-// anything else opens its overview – with a back control that stays in the
-// same place so the graph is always one click away.
+// state. Every node is clickable and takes the tab to that item: an assembly
+// shows its own graph, anything else its overview, the centre the overview of
+// the tab's item – with a back control that stays in the same place and leads
+// back the way one came.
 //
 // Pure vanilla: the edges are SVG, the node cards an HTML layer stacked above
 // it that gets the same view transform (zoom and pan move both together).
@@ -15,14 +16,15 @@
 // external engine (the project ships no downloaded engines and the desktop UI
 // has no build step).
 
-import { api, enc, h, invoke, label } from "./core.js";
+import { api, enc, errorText, h, invoke, label, toast } from "./core.js";
 import { typeIcon } from "./navigator.js";
-import { activate, findTab, openTab, renderActive } from "./tabs.js";
+import { fetchRevision } from "./revision.js";
+import { findTab, openTab, renderActive, retargetTab } from "./tabs.js";
 
 var SVG_NS = "http://www.w3.org/2000/svg";
 
 // Per item:code, the cheap facts a node needs (type, complexity, a thumbnail
-// file). Shared across re-centres so the graph is not refetched each hop.
+// file). Shared by every graph so they are not fetched again on each hop.
 var nodeInfo = {};
 // Blob URLs of node thumbnails, by file SHA-256 (same bytes → one request).
 // Bounded: beyond THUMB_CACHE_MAX the least recently used URL is revoked, so
@@ -35,6 +37,9 @@ var THUMB_CACHE_MAX = 200;
 var ENRICH_MAX = 48;
 // Up to this many nodes per side sit on an arc; more are laid out in rows.
 var ARC_MAX = 8;
+
+// the modifier that opens a node in a tab of its own, as browsers do
+var NEW_TAB_KEY = /Mac/.test(navigator.platform) ? "⌘" : "Ctrl";
 
 function key(number, code) { return number + ":" + (code || ""); }
 
@@ -50,23 +55,6 @@ function clamp(v, lo, hi) { return v < lo ? lo : v > hi ? hi : v; }
 // Data: the centre and its neighbours, normalised from a revision's payload.
 // -------------------------------------------------------------------------
 
-/** Loads the full revision payload of one item/code (reusing the open tab's
- *  own data for its centre so the first graph costs no extra request). */
-function loadCenter(tab, number, code) {
-  if (tab.number === number && tab.code === code && tab.data) return Promise.resolve(tab.data);
-  var base = "/items/" + enc(number);
-  return Promise.all([
-    api("GET", base + "/revisions/" + enc(code)),
-    api("GET", base),
-    api("GET", base + "/revisions/" + enc(code) + "/references").catch(function () { return null; })
-  ]).then(function (r) {
-    return {
-      rev: r[0].revision, files: r[0].files, bom: r[0].bom, changes: r[0].changes,
-      item: r[1].item, revisions: r[1].revisions,
-      refs: r[2] || { outgoing: [], incoming: [], files: [], file_referrers: [], impacts: [] }
-    };
-  });
-}
 
 /** The neighbour nodes of a centre, deduplicated by item number. "down" =
  *  BOM children and references; "up" = items that use or reference this one. */
@@ -215,7 +203,8 @@ function thumbInto(img, sha, id) {
 
 /** The HTML card of one node (in the cards layer). */
 function nodeCard(n, isCenter, onOpen) {
-  var cls = "g-node state-" + (n.state || "unknown") + " type-" + (n.type || "unknown") + (isCenter ? " is-center" : "");
+  var cls = "g-node state-" + (n.state || "unknown") + " type-" + (n.type || "unknown") + (isCenter ? " is-center" : "") +
+    (n.busy ? " is-busy" : "");
   var thumb = h("div.g-thumb");
   if (n.thumbId) {
     var img = h("img.g-img.hidden", { alt: "", draggable: "false" });
@@ -230,11 +219,12 @@ function nodeCard(n, isCenter, onOpen) {
   if (n.dir === "up") badges.push(h("span.g-badge.g-up", { title: n.via ? "Its file references this (" + n.via + ")" : "Uses this item" }, "uses"));
   var card = h("div." + cls.split(" ").join("."), {
     role: "button", tabindex: "0",
-    title: n.number + (n.code ? "/" + n.code : "") + " · " + (n.name || "") +
-      "\n" + (n.type === "assembly" ? "Open its graph" : "Open the overview"),
+    title: n.number + (n.code ? "/" + n.code : "") + " · " + (n.name || "") + "\n" +
+      (isCenter ? "Open the overview" : (n.type === "assembly" ? "Go to its graph" : "Go to its overview") +
+        " (" + NEW_TAB_KEY + "+click: in a tab of its own)"),
     on: {
-      click: function (e) { e.stopPropagation(); onOpen(n); },
-      keydown: function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(n); } }
+      click: function (e) { e.stopPropagation(); onOpen(n, e); },
+      keydown: function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(n, e); } }
     }
   }, [
     thumb,
@@ -396,110 +386,149 @@ function draw(pane, center, nodes, onOpen) {
 }
 
 // -------------------------------------------------------------------------
-// The sub-tab entry point and the shared back control.
+// Navigation. A click on a node points the tab at that item (tabs.js
+// retargetTab): the tab strip, the header and the toolbar are the item's, an
+// assembly shows its graph and anything else its overview. The tab remembers
+// where it came from (tab.trail), so one back control in one fixed place
+// leads back step by step. The centre is the tab's own item: a click on it
+// opens its overview and is no step.
 // -------------------------------------------------------------------------
 
-/** Pushes the tab's graph state onto `tab` (the navigation stack of centres).*/
-function graphState(tab) {
-  if (!tab.graph) {
-    var r = tab.data.rev;
-    tab.graph = { stack: [{ number: r.item_number, code: r.code, name: r.name, type: r.item_type }] };
-  }
-  return tab.graph;
-}
-
-/** Re-centres the graph on an item within the same tab. */
-function recenter(tab, n) {
-  tab.graph.stack.push({ number: n.number, code: n.code, name: n.name, type: n.type });
-  renderActive();
-}
-
-/** Opens a non-assembly node's overview, remembering the way back to the graph. */
-function openOverview(tab, n) {
-  var origin = { key: tab.key, stack: tab.graph.stack.slice() };
-  var partKey = revKey(n.number, n.code);
-  var t = findTab(partKey);
-  if (t) t.returnToGraph = origin; // set before openTab renders it
-  openTab({ key: partKey, kind: "revision", number: n.number, code: n.code,
-    title: n.number + "/" + n.code, sub: "overview", returnToGraph: origin });
-}
+/** Steps a tab remembers at most; older ones are dropped. */
+var TRAIL_MAX = 50;
 
 // the key openRevision() (revision.js) gives a revision tab
 function revKey(number, code) { return "rev:" + number + ":" + code; }
 
-function onOpen(tab) {
-  return function (n) {
-    var info = nodeInfo[key(n.number, n.code)];
-    var type = (info && info.type) || n.type;
-    // assemblies (and, until typed, things that clearly have a structure) stay in the graph
-    if (type === "assembly" || (!type && n.complexity)) recenter(tab, n);
-    else openOverview(tab, n);
-  };
+function sameRevision(a, number, code) { return !!a && a.number === number && a.code === code; }
+
+/** Does the node (as far as it is known) have a structure to show as a graph? */
+function nodeHasStructure(n) {
+  var info = nodeInfo[key(n.number, n.code)];
+  var type = (info && info.type) || n.type;
+  return type === "assembly" || (!type && !!n.complexity);
 }
 
-/** The Graph sub-tab. */
+/**
+ * Loads a revision and then shows it in this tab. The payload is loaded
+ * first, so the tab switches in one paint – no "Loading" in between. The
+ * latest request wins; one that the user moved away from (another sub-tab,
+ * the tab closed) is dropped. `arrive(data)` returns the sub-tab to show and
+ * updates the trail; `failed()` runs when the revision cannot be loaded.
+ */
+function travel(tab, number, code, arrive, failed) {
+  var token = tab.travel = (tab.travel || 0) + 1;
+  var from = tab.key, sub = tab.sub;
+  fetchRevision(number, code).then(function (data) {
+    if (tab.travel !== token || tab.key !== from || tab.sub !== sub || findTab(from) !== tab) return;
+    retargetTab(tab, data, arrive(data));
+  }, function (err) {
+    if (tab.travel !== token) return;
+    toast(errorText(err), "error");
+    if (failed) failed();
+  });
+}
+
+/** A click on a node of the tab's graph. */
+function visit(tab, n, ownTab) {
+  // the tab's own item: its overview, in the same tab – nothing to go back from
+  if (n.dir === "center") { tab.sub = "overview"; renderActive(); return; }
+  if (ownTab) {
+    openTab({ key: revKey(n.number, n.code), kind: "revision", number: n.number, code: n.code,
+      title: n.number + "/" + n.code, sub: nodeHasStructure(n) ? "graph" : "overview" });
+    return;
+  }
+  var trail = tab.trail || [];
+  var prev = trail[trail.length - 1];
+  var here = { number: tab.number, code: tab.code, sub: "graph", title: tab.title };
+  busy(tab, n);
+  travel(tab, n.number, n.code, function (data) {
+    // stepping onto the item one came from is the way back, not a new step
+    if (sameRevision(prev, n.number, n.code)) { tab.trail = trail.slice(0, -1); return prev.sub; }
+    tab.trail = trail.concat([here]).slice(-TRAIL_MAX);
+    return data.rev.item_type === "assembly" || (data.bom || []).length ? "graph" : "overview";
+  }, function () { busy(tab, null); });
+}
+
+/** Marks the node the tab is travelling to (its card pulses); one at a time. */
+function busy(tab, n) {
+  [[tab.travelNode, false], [n, true]].forEach(function (m) {
+    var node = m[0];
+    if (!node) return;
+    node.busy = m[1];
+    if (node._card && node._card.firstChild) node._card.firstChild.classList.toggle("is-busy", m[1]);
+  });
+  tab.travelNode = n;
+}
+
+/** One step back along the trail. */
+function goBack(tab) {
+  var trail = tab.trail || [];
+  var prev = trail[trail.length - 1];
+  if (!prev) return;
+  travel(tab, prev.number, prev.code, function () {
+    tab.trail = trail.slice(0, -1);
+    return prev.sub;
+  }, function () {
+    // gone or no longer readable: forget the step, the one before it is next
+    tab.trail = trail.slice(0, -1);
+    renderActive();
+  });
+}
+
+/** The Graph sub-tab: the tab's revision in the middle. */
 export function revGraph(tab, el) {
-  var g = graphState(tab);
-  var current = g.stack[g.stack.length - 1];
-  // every render gets a token; answers for an older render (the user went
-  // back, re-centred or left the tab meanwhile) are dropped.
-  var gen = g.gen = (g.gen || 0) + 1;
-  function live() { return tab.sub === "graph" && tab.graph === g && g.gen === gen && pane.isConnected; }
+  var d = tab.data;
+  // answers for an older render (the tab shows something else meanwhile) are dropped
+  function live() { return tab.sub === "graph" && tab.data === d && pane.isConnected; }
+  function open(n, e) { visit(tab, n, !!e && (e.ctrlKey || e.metaKey)); }
 
   var pane = h("div.graph-pane");
-  pane.appendChild(h("div.g-loading", { text: "Loading the graph of " + current.number + "/" + current.code + " …" }));
   el.appendChild(legend());
   el.appendChild(pane);
 
-  loadCenter(tab, current.number, current.code).then(function (d) {
-    if (!live()) return; // moved away while loading
-    pane.textContent = "";
-    var center = {
-      number: d.rev.item_number, code: d.rev.code, name: d.rev.name, type: d.rev.item_type,
-      state: d.rev.state, complexity: (d.bom || []).length, dir: "center", rel: "center"
-    };
-    var centerThumb = (d.files || []).filter(function (f) { return f.format_info && f.format_info.thumbnail; })[0];
-    if (centerThumb) { center.thumbId = centerThumb.id; center.thumbSha = centerThumb.sha256; center.fileName = centerThumb.filename; }
-    nodeInfo[key(center.number, center.code)] = { type: center.type, complexity: center.complexity,
-      fileName: center.fileName, thumbId: center.thumbId || null, thumbSha: center.thumbSha || null };
-    var nodes = neighbours(d);
-    center.size = nodeSize(center.complexity, true);
-    nodes.forEach(function (n) { n.size = nodeSize(n.complexity, false); });
+  var center = {
+    number: d.rev.item_number, code: d.rev.code, name: d.rev.name, type: d.rev.item_type,
+    state: d.rev.state, complexity: (d.bom || []).length, dir: "center", rel: "center"
+  };
+  var centerThumb = (d.files || []).filter(function (f) { return f.format_info && f.format_info.thumbnail; })[0];
+  if (centerThumb) { center.thumbId = centerThumb.id; center.thumbSha = centerThumb.sha256; center.fileName = centerThumb.filename; }
+  else if ((d.files || [])[0]) center.fileName = d.files[0].filename;
+  nodeInfo[key(center.number, center.code)] = { type: center.type, complexity: center.complexity,
+    fileName: center.fileName || null, thumbId: center.thumbId || null, thumbSha: center.thumbSha || null };
+  var nodes = neighbours(d);
+  center.size = nodeSize(center.complexity, true);
+  nodes.forEach(function (n) { n.size = nodeSize(n.complexity, false); });
 
-    if (!nodes.length) {
-      layout(center, nodes);
-      draw(pane, center, nodes, onOpen(tab));
-      pane.appendChild(h("div.g-empty", { text: current.number + " has no BOM children or references to show." }));
-      return;
-    }
-
-    // first paint with what we know; grow + fill previews as details arrive.
-    // Enrichment resolves many neighbours at once, so coalesce the re-layout
-    // into one frame instead of redrawing per result.
+  if (!nodes.length) {
     layout(center, nodes);
-    var view = draw(pane, center, nodes, onOpen(tab));
-    var pending = false;
-    var skipped = enrich(nodes, function () {
-      if (pending) return;
-      pending = true;
-      requestAnimationFrame(function () {
-        pending = false;
-        if (!live()) return;
-        nodes.forEach(function (n) { n.size = nodeSize(n.complexity, false); });
-        layout(center, nodes);
-        redraw(center, nodes, onOpen(tab));
-        view.refit();
-      });
-    }, live);
-    if (skipped) {
-      pane.appendChild(h("div.g-empty", { text: skipped + " of " + nodes.length +
-        " neighbours shown without preview and complexity – open one to see its details." }));
-    }
-  }, function (err) {
-    if (!live()) return;
-    pane.textContent = "";
-    pane.appendChild(h("p.notice.error", { text: "Could not load the graph: " + (err && err.message ? err.message : err) }));
-  });
+    draw(pane, center, nodes, open);
+    pane.appendChild(h("div.g-empty", { text: center.number + " has no BOM children or references to show." }));
+    return;
+  }
+
+  // first paint with what we know; grow + fill previews as details arrive.
+  // Enrichment resolves many neighbours at once, so coalesce the re-layout
+  // into one frame instead of redrawing per result.
+  layout(center, nodes);
+  var view = draw(pane, center, nodes, open);
+  var pending = false;
+  var skipped = enrich(nodes, function () {
+    if (pending) return;
+    pending = true;
+    requestAnimationFrame(function () {
+      pending = false;
+      if (!live()) return;
+      nodes.forEach(function (n) { n.size = nodeSize(n.complexity, false); });
+      layout(center, nodes);
+      redraw(center, nodes, open);
+      view.refit();
+    });
+  }, live);
+  if (skipped) {
+    pane.appendChild(h("div.g-empty", { text: skipped + " of " + nodes.length +
+      " neighbours shown without preview and complexity – open one to see its details." }));
+  }
 }
 
 /** Places a card holder in scene coordinates: its centre at (x, y). */
@@ -529,38 +558,20 @@ function redraw(center, nodes, open) {
   });
 }
 
-function backChip(text, title, onClick) {
-  return h("button.graph-back", { type: "button", title: title, on: { click: onClick } }, text);
-}
-
-/** The back control for the sub-tab strip, in one fixed place for every tab:
- *  "← Graph" on an item opened from a graph (returns to that graph, even in a
- *  different tab), or "← Back" when the graph itself has been navigated into a
- *  sub-assembly. Null when there is nowhere to go back to. revision.js renders
- *  it as the first item of the sub-tab row so it never moves. */
+/** The back control for the sub-tab strip, in one fixed place on every
+ *  sub-tab: "← Back" returns to the graph this tab came from (an assembly's
+ *  graph, however the item was reached from it). Null when the tab has not
+ *  been navigated – there is nowhere to go back to. revision.js renders it
+ *  as the first item of the sub-tab row so it never moves. */
 export function graphBackControl(tab) {
-  if (tab.sub === "graph" && tab.graph && tab.graph.stack.length > 1) {
-    return backChip("← Back", "Back to the previous assembly in the graph", function () {
-      tab.graph.stack.pop(); renderActive();
-    });
-  }
-  if (tab.returnToGraph) {
-    return backChip("← Graph", "Back to the assembly graph", function () { returnToGraph(tab); });
-  }
-  return null;
-}
-
-function returnToGraph(tab) {
-  var o = tab.returnToGraph;
-  var g = findTab(o.key);
-  if (g) { g.sub = "graph"; g.graph = { stack: o.stack.slice() }; activate(o.key); return; }
-  // the graph's tab was closed: reopen it on the assembly the graph showed
-  var top = o.stack[o.stack.length - 1];
-  var k = revKey(top.number, top.code);
-  var t = findTab(k);
-  if (t) t.graph = { stack: o.stack.slice() };
-  openTab({ key: k, kind: "revision", number: top.number, code: top.code,
-    title: top.number + "/" + top.code, sub: "graph", graph: { stack: o.stack.slice() } });
+  var trail = tab.trail || [];
+  var prev = trail[trail.length - 1];
+  if (!prev) return null;
+  var chip = h("button.graph-back", {
+    type: "button", title: "Back to the graph of " + (prev.title || prev.number + "/" + prev.code),
+    on: { click: function () { chip.disabled = true; goBack(tab); } }
+  }, "← Back");
+  return chip;
 }
 
 function legend() {
@@ -572,6 +583,6 @@ function legend() {
     sw("state-released", label("released")),
     sw("state-obsolete", label("obsolete")),
     h("span.g-legend-sep"),
-    h("span.g-legend-label", { text: "Size = BOM complexity · ⚙ children · ×n instances in this assembly · click a node to open it · double-click the background to fit" })
+    h("span.g-legend-label", { text: "Size = BOM complexity · ⚙ children · ×n instances in this assembly · click a node to go to it · double-click the background to fit" })
   ]);
 }

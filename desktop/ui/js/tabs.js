@@ -7,7 +7,7 @@ import { canEdit, checkInAll, refreshWorklistCount } from "./shell.js";
 import { selectView } from "./navigator.js";
 import { assistantContextChanged } from "./assistant.js";
 import { agent, renderAgentTab, schedulePaint } from "./agent.js";
-import { loadRevision, openRevision, renderRevision } from "./revision.js";
+import { loadRevision, openRevision, renderRevision, revisionTitle } from "./revision.js";
 import { impactGroup, impactGroups } from "./references.js";
 import { disposeViewer, lockAge } from "./workspace.js";
 import { loadChange, openChange, renderChange } from "./change.js";
@@ -29,6 +29,33 @@ export function openTab(tab) {
     if (tab.viewerFile) { existing.viewerFile = tab.viewerFile; existing.viewerVersion = null; }
   }
   activate(tab.key);
+}
+
+/**
+ * Points an open revision tab at another revision, in place: the tab keeps
+ * its position in the strip and its trail (graph.js), everything else is the
+ * new revision's. `data` is that revision's payload (revision.js
+ * fetchRevision), loaded beforehand so the switch paints once, without a
+ * "Loading" state in between. A tab that already shows the target gives way:
+ * there is one tab per revision.
+ */
+export function retargetTab(tab, data, sub) {
+  var key = "rev:" + data.rev.item_number + ":" + data.rev.code;
+  var wasActive = state.active === tab.key;
+  var twin = state.tabs.findIndex(function (t) { return t.key === key && t !== tab; });
+  if (twin !== -1) state.tabs.splice(twin, 1);
+  if (agent.contextKey === tab.key) agent.contextKey = key;
+  tab.key = key;
+  tab.number = data.rev.item_number;
+  tab.code = data.rev.code;
+  tab.title = revisionTitle(data);
+  tab.sub = sub || "overview";
+  tab.data = data;
+  tab.viewerFile = null;
+  tab.viewerVersion = null;
+  tab.recheckLocal = null;
+  if (wasActive) activate(key);
+  else renderTabs();
 }
 
 export function activate(key) {
