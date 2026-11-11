@@ -299,17 +299,25 @@ pub async fn checkout(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revis
 /// # Invariants
 ///
 /// * **Permission:** CAD editor; the revision is visible ("not found" otherwise). Nothing happens
-///   when it is not checked out. Another user's check-out may be released only by an
-///   administrator or by a manager of the group when that user is no longer a member or is
-///   deactivated (403 otherwise).
+///   when it is not checked out. Another user's check-out may be released by an administrator,
+///   by a manager of the group when that user is no longer a member or is deactivated, or by a
+///   manager of the group for an active member with a `reason` (issue #173, step 6); 403
+///   otherwise (a manager without a reason is told to give one).
+/// * **Data:** a reason has [`RELEASE_REASON_MIN`] to [`RELEASE_REASON_MAX`] characters (400).
 /// * **Locks:** the revision row (`revisions::lock`).
 /// * **Audit:** `revision.checkout_cancel`; `revision.checkout_forced_release` when the check-out
-///   was held by someone else.
-/// * **Notifications:** on a forced release the former holder; otherwise none.
+///   was held by someone else, with the reason.
+/// * **Notifications:** on a forced release the former holder, with the reason; otherwise none.
 /// * **Webhooks:** none.
 /// * **Atomic:** one transaction.
-pub async fn cancel_checkout(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revision> {
+pub async fn cancel_checkout(
+    pool: &PgPool,
+    actor: &Actor,
+    id: Uuid,
+    reason: Option<&str>,
+) -> AppResult<Revision> {
     actor.require(Role::Editor)?;
+    let reason = release_reason(reason)?;
     let mut tx = pool.begin().await?;
     let rev = lock(&mut tx, id).await?;
     access::ensure_visible(actor, rev.project_id, access::not_found_revision())?;
@@ -318,11 +326,25 @@ pub async fn cancel_checkout(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResul
     };
     if owner != actor.id && !actor.is_admin() && !orphaned_lock(&mut tx, actor, &rev, owner).await?
     {
-        return Err(AppError::Forbidden(format!(
-            "{} is checked out by {}; only they or an administrator can check it in.",
-            label(&rev),
-            rev.checked_out_by_name.as_deref().unwrap_or("another user")
-        )));
+        let holder = rev.checked_out_by_name.as_deref().unwrap_or("another user");
+        let manager = match rev.project_id {
+            Some(p) => crate::services::projects::can_manage(&mut tx, actor, p).await?,
+            None => false,
+        };
+        if !manager {
+            return Err(AppError::Forbidden(format!(
+                "{} is checked out by {holder}; only they or an administrator can check it in.",
+                label(&rev)
+            )));
+        }
+        if reason.is_none() {
+            return Err(AppError::Forbidden(format!(
+                "{} is checked out by {holder}, who is an active member: as a manager of the \
+                 group you release it only with a reason ({RELEASE_REASON_MIN} to \
+                 {RELEASE_REASON_MAX} characters), which {holder} is told.",
+                label(&rev)
+            )));
+        }
     }
     sqlx::query("UPDATE revisions SET checked_out_by = NULL, checked_out_at = NULL WHERE id = $1")
         .bind(id)
@@ -348,10 +370,12 @@ pub async fn cancel_checkout(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResul
         } else {
             format!("Cancelled the check-out of {}", label(&rev))
         },
-        json!({ "item_id": rev.item_id }),
+        json!({ "item_id": rev.item_id, "reason": reason }),
     )
     .await?;
     if forced {
+        let keep = "Files you changed in your workspace stay there; check the revision out again \
+                    to continue.";
         let notice = Notice::revision(
             NotificationKind::Unlock,
             &rev,
@@ -360,9 +384,10 @@ pub async fn cancel_checkout(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResul
                 actor.display_name,
                 label(&rev)
             ),
-            "Files you changed in your workspace stay there; check the revision out again to \
-             continue."
-                .into(),
+            match &reason {
+                Some(r) => format!("Reason: {r}\n\n{keep}"),
+                None => keep.to_string(),
+            },
         );
         notifications::notify(&mut tx, Some(actor), &[owner], &notice).await?;
     }
@@ -370,19 +395,67 @@ pub async fn cancel_checkout(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResul
     get(pool, actor, id).await
 }
 
-/// For pages: whether [`cancel_checkout`] would release the revision's lock.
-pub async fn may_cancel_checkout(pool: &PgPool, actor: &Actor, rev: &Revision) -> AppResult<bool> {
+/// Shortest reason for releasing an active member's check-out.
+pub const RELEASE_REASON_MIN: usize = 10;
+/// Longest reason for releasing a check-out.
+pub const RELEASE_REASON_MAX: usize = 500;
+
+/// A release reason as given: trimmed, empty = none; its length is checked.
+fn release_reason(raw: Option<&str>) -> AppResult<Option<String>> {
+    let Some(text) = raw.map(str::trim).filter(|t| !t.is_empty()) else {
+        return Ok(None);
+    };
+    let n = text.chars().count();
+    if !(RELEASE_REASON_MIN..=RELEASE_REASON_MAX).contains(&n) {
+        return Err(AppError::BadRequest(format!(
+            "Give a reason of {RELEASE_REASON_MIN} to {RELEASE_REASON_MAX} characters."
+        )));
+    }
+    Ok(Some(text.to_string()))
+}
+
+/// How [`cancel_checkout`] would treat the actor and the revision's lock.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Release {
+    /// Not checked out, or the actor may not release it.
+    No,
+    /// The actor may release it at once.
+    Yes,
+    /// A manager releasing an active member's lock: only with a reason.
+    WithReason,
+}
+
+/// For pages: whether and how [`cancel_checkout`] would release the
+/// revision's lock.
+pub async fn release_rule(pool: &PgPool, actor: &Actor, rev: &Revision) -> AppResult<Release> {
     let Some(owner) = rev.checked_out_by else {
-        return Ok(false);
+        return Ok(Release::No);
     };
     if !actor.can_edit() {
-        return Ok(false);
+        return Ok(Release::No);
     }
     if owner == actor.id || actor.is_admin() {
-        return Ok(true);
+        return Ok(Release::Yes);
     }
     let mut conn = pool.acquire().await?;
-    orphaned_lock(&mut conn, actor, rev, owner).await
+    if orphaned_lock(&mut conn, actor, rev, owner).await? {
+        return Ok(Release::Yes);
+    }
+    let manager = match rev.project_id {
+        Some(p) => crate::services::projects::can_manage(&mut conn, actor, p).await?,
+        None => false,
+    };
+    Ok(if manager {
+        Release::WithReason
+    } else {
+        Release::No
+    })
+}
+
+/// For pages: whether [`cancel_checkout`] would release the revision's lock
+/// (managers of an active member's lock: with a reason).
+pub async fn may_cancel_checkout(pool: &PgPool, actor: &Actor, rev: &Revision) -> AppResult<bool> {
+    Ok(release_rule(pool, actor, rev).await? != Release::No)
 }
 
 /// A lock that a manager of the revision's group may release: its owner is
