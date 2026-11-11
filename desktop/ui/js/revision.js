@@ -19,16 +19,19 @@ export function openRevision(number, code, sub, viewerFile) {
   openTab({ key: "rev:" + number + ":" + code, kind: "revision", number: number, code: code, title: number + "/" + code, sub: sub || "overview", viewerFile: viewerFile || null });
 }
 
-export function loadRevision(tab) {
-  if (tab.data) return Promise.resolve(tab.data);
-  var base = "/items/" + enc(tab.number);
+/** What a revision tab shows: the revision with its files, BOM, changes, the
+ *  item with its revisions, the references and – for my own check-out –
+ *  whether the working copy has changes. `onData` gets the payload as soon as
+ *  the server answered (before the look at the working copy). */
+export function fetchRevision(number, code, onData) {
+  var base = "/items/" + enc(number);
   return Promise.all([
-    api("GET", base + "/revisions/" + enc(tab.code)),
+    api("GET", base + "/revisions/" + enc(code)),
     api("GET", base),
     // references, referrers, CAD file references and impacts (older servers: none)
-    api("GET", base + "/revisions/" + enc(tab.code) + "/references").catch(function () { return null; })
+    api("GET", base + "/revisions/" + enc(code) + "/references").catch(function () { return null; })
   ]).then(function (r) {
-    tab.data = {
+    var data = {
       rev: r[0].revision, files: r[0].files, bom: r[0].bom, changes: r[0].changes, item: r[1].item, revisions: r[1].revisions,
       requests: r[0].open_requests || [],
       watching: !!r[1].watching,
@@ -36,11 +39,26 @@ export function loadRevision(tab) {
       // my check-out: are there local changes? (decides the primary action)
       localChanges: null
     };
-    tab.title = tab.data.rev.item_number + "/" + tab.data.rev.code + " " + tab.data.rev.name;
-    renderTabs();
-    var data = tab.data;
+    if (onData) onData(data);
     if (data.rev.checked_out_by !== state.me.id) return data;
     return localChanges(data.rev).then(function (changed) { data.localChanges = changed; data.localChangesFresh = true; return data; });
+  });
+}
+
+/** The title of a revision tab once its data is there. */
+export function revisionTitle(data) {
+  return data.rev.item_number + "/" + data.rev.code + " " + data.rev.name;
+}
+
+export function loadRevision(tab) {
+  if (tab.data) return Promise.resolve(tab.data);
+  var number = tab.number, code = tab.code;
+  return fetchRevision(number, code, function (data) {
+    // the tab was pointed at another revision meanwhile (retargetTab)
+    if (tab.number !== number || tab.code !== code) return;
+    tab.data = data;
+    tab.title = revisionTitle(data);
+    renderTabs();
   });
 }
 

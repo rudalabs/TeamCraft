@@ -13,15 +13,6 @@ see the notices in the README.
 
 ## [Unreleased]
 
-### Fixed
-
-- Desktop graph navigation (#254): clicking a sub-assembly turns the tab
-  into that sub-assembly's tab and centres its graph there; *← Back* turns
-  it back into the assembly it was opened from. Clicking the item in the
-  centre opens its overview instead of adding a step to the back history, so
-  *← Back* no longer appears (or stacks up) when nothing changed. A tab that
-  already showed the target item is merged, so no item is open twice.
-
 ### Added
 
 - Offboarding (#173, step 7): **groups without an active manager** – or
@@ -110,6 +101,14 @@ see the notices in the README.
 
 ### Fixed
 
+- Desktop, *Graph* tab (#254): a click on a sub-assembly now turns the tab
+  into that sub-assembly – tab title, header, toolbar and graph are its own –
+  instead of re-centring the graph inside the tab of the assembly above it;
+  a part opens its overview the same way. *← Back* leads back one step per
+  click, and a click on the assembly one came from is that same step. A click
+  on the item in the middle opens its overview and no longer adds a step:
+  each click used to add one, so the back control appeared although nothing
+  had changed. `Ctrl`/`⌘`+click opens a node in a tab of its own.
 - Every web page starts with a *Skip to the main content* link (visible
   while it has the keyboard focus), and the 17 empty column headers (action
   columns, the corner of the inertia tensor) have a name for screen readers.

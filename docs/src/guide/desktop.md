@@ -63,15 +63,16 @@ check-outs and reviews, and a **local working folder**:
   below, the assemblies that use it above. Node colour is the lifecycle state,
   node size (and the ⚙ badge) the item's own BOM complexity; the small ×n in
   the top-left corner of a child is how many instances of it the assembly
-  contains (summed over its BOM lines). Click a node to
-  follow it – a sub-assembly becomes the item of the tab and the graph
-  re-centres on it (*← Back* returns to the assembly you came from), the item
-  in the centre opens its own overview, anything else opens its overview –
-  and a back control stays in the same place (left of the tab row)
-  so the graph is one click away even from a part's page; the mouse wheel
-  zooms on the cursor, dragging pans and a double-click on the background
-  fits the graph again. Large assemblies are laid out in rows, and only the
-  first 48 neighbours get a preview and their complexity;
+  contains (summed over its BOM lines). Click a node to go to it: the tab
+  becomes that item – a sub-assembly shows its own graph, anything else its
+  overview – and *← Back*, always in the same place (left of the tab row),
+  leads back the way you came, one step per click; clicking the assembly you
+  came from is the same step back. A click on the item in the middle opens
+  its own overview. `Ctrl`+click (`⌘`+click on macOS) opens a node in a tab
+  of its own instead. The mouse wheel zooms on the cursor, dragging pans and
+  a double-click on the background fits the graph again. Large assemblies are
+  laid out in rows, and only the first 48 neighbours get a preview and their
+  complexity;
 * the *Workspace* tab shows per file where it is, whether it is up to date,
   modified, outdated, in conflict, new, missing or a name clash, whether it
   is read-only, and who holds the lock for how long; opening an outdated
