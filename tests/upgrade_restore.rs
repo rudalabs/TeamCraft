@@ -355,7 +355,6 @@ async fn a_migration_that_fails_rolls_back_and_leaves_the_data_alone() {
     let other = seeded_database_at(&app, "rollback", previous).await;
     let before = Snapshot::take(&other.pool).await;
     let versions = applied(&other.pool).await;
-    let schema_before = schema_of(&other.pool).await;
 
     // the first statements change the schema and the data, the last one fails
     let failing = migrator_with_failing_migration(
@@ -383,6 +382,11 @@ async fn a_migration_that_fails_rolls_back_and_leaves_the_data_alone() {
     .await
     .unwrap();
     assert!(!has_column, "the schema change was rolled back");
+    assert_eq!(
+        schema_of(&other.pool).await,
+        schema_of(&app.pool).await,
+        "the schema is head's, nothing of the failed migration is left"
+    );
     before
         .assert_kept_in(&other.pool, "after the failed migration")
         .await;
@@ -403,9 +407,11 @@ async fn a_migration_that_fails_rolls_back_and_leaves_the_data_alone() {
         "the failing migration is not recorded"
     );
     assert_eq!(now.len(), versions.len() + 1, "the real newest one is");
-    assert_ne!(
+    // the real newest migration ran in full (it may change data only, so
+    // compare with head rather than expect a difference to before)
+    assert_eq!(
         schema_of(&behind.pool).await,
-        schema_before,
+        schema_of(&app.pool).await,
         "the real newest migration ran"
     );
     // and the regular start-up still finishes the job afterwards
@@ -534,6 +540,7 @@ async fn a_backup_from_before_the_newest_migrations_restores_and_migrates() {
     // the old installation, with its files, is backed up
     give_the_seeded_files_content(&old).await;
     let before = Snapshot::take(&old.pool).await;
+    let old_schema = schema_of(&old.pool).await;
     let summary = backup::backup(&source, &backup_dir).await.expect("backup");
     assert!(summary.vault_objects > 0 && summary.db_dump_bytes > 0);
 
@@ -557,7 +564,9 @@ async fn a_backup_from_before_the_newest_migrations_restores_and_migrates() {
         &all[..all.len() - 1],
         "the restored database has the migrations of the backup only"
     );
-    assert_ne!(schema_of(&restored.pool).await, schema_of(&app.pool).await);
+    // the schema of the backup, not head's (the newest migration may change
+    // data only, so the two can also be equal)
+    assert_eq!(schema_of(&restored.pool).await, old_schema);
     before.assert_kept_in(&restored.pool, "restored").await;
     for table in ["files", "change_request_attachments"] {
         let sha: String = sqlx::query_scalar(&format!("SELECT sha256 FROM {table} LIMIT 1"))

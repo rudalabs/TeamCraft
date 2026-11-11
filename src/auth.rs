@@ -47,6 +47,9 @@ pub struct Actor {
     pub role: Role,
     /// UI skin (see `domain::SKINS`).
     pub skin: String,
+    /// Preferred CAD program (a format family, see `cadformat::families`);
+    /// `""` = show all files alike.
+    pub preferred_cad: String,
     /// Project groups the user is a member of.
     pub projects: Vec<Uuid>,
     /// Restricted project groups the user is NOT a member of; always empty
@@ -86,6 +89,7 @@ impl Actor {
             display_name: "Webhook".into(),
             role: Role::Viewer,
             skin: String::new(),
+            preferred_cad: String::new(),
             projects: project_id.into_iter().collect(),
             hidden_projects: restricted
                 .iter()
@@ -104,6 +108,7 @@ impl Actor {
             display_name: "Test".into(),
             role,
             skin: "teamcraft".into(),
+            preferred_cad: String::new(),
             projects,
             hidden_projects,
         }
@@ -117,6 +122,7 @@ impl Actor {
             display_name: "TeamCraft".into(),
             role: Role::Admin,
             skin: String::new(),
+            preferred_cad: String::new(),
             projects: Vec::new(),
             hidden_projects: Vec::new(),
         }
@@ -291,11 +297,50 @@ impl FromRequestParts<AppState> for WebUser {
         let token = cookie_value(&parts.headers, SESSION_COOKIE)
             .filter(|t| !t.is_empty())
             .ok_or(AppError::Unauthorized)?;
-        let actor = services::users::actor_for_session(&state.db, &token)
+        let (actor, started) = services::users::session_actor(&state.db, &token)
             .await?
             .ok_or(AppError::Unauthorized)?;
+        // conditions on membership that depend on the request (#151)
+        let origin = Origin {
+            client: request_client(parts),
+            session_started: Some(started),
+            key: Some(hash_token(&token)[..16].to_string()),
+            token: false,
+        };
+        let actor = services::membership_conditions::apply(&state.db, actor, &origin).await?;
         parts.extensions.insert(actor.clone());
+        parts.extensions.insert(origin);
         Ok(WebUser(actor))
+    }
+}
+
+/// The client address of a request (see [`client_address`]).
+fn request_client(parts: &Parts) -> Option<IpAddr> {
+    let peer = parts
+        .extensions
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|c| c.0.ip());
+    client_address(&parts.headers, peer)
+}
+
+/// Where the signed-in request comes from (client address, session start, a
+/// key of the session or token), set by [`WebUser`] and [`ApiCaller`]; long
+/// work on behalf of the request (the assistant) applies the conditions on
+/// membership again with it. Empty when the request has no user.
+pub use services::membership_conditions::Origin;
+
+impl FromRequestParts<AppState> for Origin {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        _state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        Ok(parts
+            .extensions
+            .get::<Origin>()
+            .cloned()
+            .unwrap_or_default())
     }
 }
 
@@ -358,9 +403,19 @@ impl FromRequestParts<AppState> for ApiCaller {
             let (actor, scope) = services::users::actor_for_api_token(&state.db, token)
                 .await?
                 .ok_or(AppError::Unauthorized)?;
+            // conditions on membership that depend on the request (#151);
+            // a token's age is the user's last sign-in (checked in SQL)
+            let origin = Origin {
+                client: request_client(parts),
+                session_started: None,
+                key: Some(hash_token(token)[..16].to_string()),
+                token: true,
+            };
+            let actor = services::membership_conditions::apply(&state.db, actor, &origin).await?;
             let caller = ApiCaller { actor, scope };
             parts.extensions.insert(caller.actor.clone());
             parts.extensions.insert(caller.clone());
+            parts.extensions.insert(origin);
             caller
         };
         // the full path: routes nested under /api/v1 see only their own part
@@ -390,17 +445,13 @@ impl FromRequestParts<AppState> for services::access_log::AccessCtx {
             .get(header::AUTHORIZATION)
             .and_then(|v| v.to_str().ok())
             .is_some_and(|v| v.len() > 7 && v[..7].eq_ignore_ascii_case("bearer "));
-        let peer = parts
-            .extensions
-            .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
-            .map(|c| c.0.ip());
         Ok(services::access_log::AccessCtx {
             channel: if bearer {
                 services::access_log::Channel::Api
             } else {
                 services::access_log::Channel::Web
             },
-            client: client_address(&parts.headers, peer),
+            client: request_client(parts),
         })
     }
 }
@@ -658,6 +709,7 @@ mod tests {
             display_name: "Eng".into(),
             role: Role::Editor,
             skin: "teamcraft".into(),
+            preferred_cad: String::new(),
             projects: vec![rocket],
             hidden_projects: vec![],
         };

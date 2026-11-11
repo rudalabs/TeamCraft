@@ -42,7 +42,8 @@ release.
     * **Reject** – no change (reason required).
       While no item is named, any CAD editor may triage; once the request is
       decided, an item is added only by a member of its project group (or an
-      admin).
+      admin). A group can keep requesters from deciding their own requests (*Review policy*,
+      see [Read permissions](../admin/permissions.md)).
 4. **Implement** – an accepted request gets its change order: *Create change
    order* creates a draft with the in-work revisions of the affected items (items without a revision in work are
    listed – revise them and add the
@@ -120,6 +121,17 @@ touch the files. The user who submitted a change is stored in
 was introduced keep working: only the author is refused on those until they
 are withdrawn and submitted again.
 
+### Signing off a decision
+
+A reviewer may state what their approval means (*Meaning of your sign-off*,
+e.g. *approved as design owner*; `meaning` in `POST /api/v1/changes/{number}/review`).
+When the server asks for a fresh sign-in (`TEAMCRAFT_APPROVAL_REAUTH`, see
+[Configuration](../admin/configuration.md)), the review form also asks for
+the password – or offers *Sign in again* for single sign-on accounts – and
+a decision without it is refused. The change page shows how each decision
+was signed off (password, single sign-on or an API token with the `approve`
+scope) and the stated meaning.
+
 ### Review rounds and absent reviewers
 
 When a change is withdrawn or reopened after somebody decided, the decisions
@@ -165,10 +177,18 @@ assign anybody.
 
 The bell lists review requests, decisions, releases, checks needed, change
 requests and news about **watched** items, changes and change requests (*Watch* on any of their pages).
-Optionally TeamCraft sends them by e-mail (SMTP) and to Mattermost (mention
-or direct message). Every user chooses channels and mutes kinds on the
+Optionally TeamCraft sends them by e-mail (SMTP) and to Mattermost (a direct
+message from the TeamCraft bot to you, never into a channel). Every user chooses channels and mutes kinds on the
 account page; delivery runs from an outbox, so a slow mail server never
 delays a request.
+
+**Mattermost** messages arrive as a direct message from the *TeamCraft* bot,
+with the full title and text; nothing is posted into a channel. Enter your
+Mattermost username on the account page if it differs from your TeamCraft
+login. If it is wrong (or your Mattermost account is deactivated), the
+notification shows *Mattermost failed* with the reason on the page *Notifications*, for example *Mattermost user "xy"
+not found – check your
+Mattermost username*. **Send a test** on the account page checks the setting.
 
 With e-mail switched on, CAD editors also get a **digest of the change
 requests waiting for triage** – one e-mail per project group, by default

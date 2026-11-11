@@ -46,6 +46,8 @@ enum Tweak {
     OtherIssuer,
     NoSubject,
     BadSignature,
+    /// A fresh sign-in: `auth_time` = now (asked for with `max_age=0`).
+    Fresh,
 }
 
 struct Grant {
@@ -149,6 +151,7 @@ async fn token(
         Tweak::OtherAudience => claims["aud"] = json!("another-app"),
         Tweak::OtherIssuer => claims["iss"] = json!("https://evil.example.org"),
         Tweak::NoSubject => claims["sub"] = json!(""),
+        Tweak::Fresh => claims["auth_time"] = json!(now),
     }
     let signature = if grant.tweak == Tweak::BadSignature {
         "bm90IGEgc2lnbmF0dXJl".to_string()
@@ -632,5 +635,127 @@ async fn changing_the_own_password_ends_the_other_sessions() {
         StatusCode::OK,
         "tokens are revoked one by one, not with the password"
     );
+    app.teardown().await;
+}
+
+/// The parameters of a redirect to the provider for a fresh sign-in.
+async fn start_reauth(app: &common::TestApp, cookie: &str, next: &str) -> Login {
+    let r = app
+        .get_page(&format!("/auth/oidc/reauth?next={next}"), Some(cookie))
+        .await;
+    assert!(r.status.is_redirection(), "{} {}", r.status, r.text());
+    let location = r.header("location").expect("redirect to the provider");
+    let url = reqwest::Url::parse(&location).unwrap();
+    let q: HashMap<String, String> = url.query_pairs().into_owned().collect();
+    assert_eq!(
+        q["prompt"], "login",
+        "the provider is asked to authenticate again"
+    );
+    assert_eq!(q["max_age"], "0");
+    Login {
+        state: q["state"].clone(),
+        nonce: q["nonce"].clone(),
+        challenge: q["code_challenge"].clone(),
+    }
+}
+
+/// With `TEAMCRAFT_APPROVAL_REAUTH` an SSO reviewer signs in again (fresh
+/// `auth_time`) to approve; the existing session is marked, no new one is
+/// opened, and the decision records `sso` (#152 step 4).
+#[tokio::test]
+async fn an_sso_reviewer_signs_in_again_to_approve() {
+    let provider = Provider::start().await;
+    let issuer: &'static str = Box::leak(provider.base.clone().into_boxed_str());
+    let extra: &'static [(&'static str, &'static str)] = Box::leak(
+        vec![
+            ("TEAMCRAFT_OIDC_ISSUER_URL", issuer),
+            ("TEAMCRAFT_OIDC_CLIENT_ID", CLIENT_ID),
+            ("TEAMCRAFT_OIDC_CLIENT_SECRET", "secret"),
+            ("TEAMCRAFT_APPROVAL_REAUTH", "release"),
+        ]
+        .into_boxed_slice(),
+    );
+    let Some(app) = common::setup_with(extra).await else {
+        return;
+    };
+    // the SSO reviewer signs in once
+    let login = start_login(&app).await;
+    let code = provider.authorize(&login.nonce, &login.challenge, Tweak::None);
+    let cookie = session_cookie(&callback(&app, &code, &login.state).await).expect("signed in");
+
+    // a change in review with the SSO user as reviewer
+    let (_, erika) = app.user_in("erika", Role::Editor, &["ROVER"]).await;
+    let part = app
+        .create_item(
+            &erika,
+            json!({ "item_type": "part", "name": "Bracket", "project": "ROVER" }),
+        )
+        .await;
+    let r = app
+        .api(
+            Method::POST,
+            &format!("/api/v1/items/{part}/revisions/A/checkin"),
+            &erika,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let number = app
+        .submit_change(&erika, "Bracket", &[&part], &["sso-erika"])
+        .await;
+    let id: uuid::Uuid = sqlx::query_scalar("SELECT id FROM changes WHERE number = $1")
+        .bind(&number)
+        .fetch_one(&app.pool)
+        .await
+        .unwrap();
+    let status = || async {
+        sqlx::query_scalar::<_, String>("SELECT status FROM changes WHERE id = $1")
+            .bind(id)
+            .fetch_one(&app.pool)
+            .await
+            .unwrap()
+    };
+    let review_uri = format!("/changes/{id}/review");
+    let approve = || {
+        app.post_form(
+            &review_uri,
+            Some(&cookie),
+            Some("http://localhost:8080"),
+            &[("decision", "approve")],
+        )
+    };
+
+    // the page offers "Sign in again", the session alone does not approve
+    let page = app.get_page(&format!("/changes/{id}"), Some(&cookie)).await;
+    assert!(page.text().contains("/auth/oidc/reauth"), "{}", page.text());
+    approve().await;
+    assert_eq!(status().await, "in_review");
+
+    // a provider that does not confirm a fresh sign-in is refused
+    let next = format!("/changes/{id}");
+    let again = start_reauth(&app, &cookie, &next).await;
+    let code = provider.authorize(&again.nonce, &again.challenge, Tweak::None);
+    let r = callback(&app, &code, &again.state).await;
+    assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.text());
+    assert!(r.text().contains("fresh sign-in"), "{}", r.text());
+
+    // a fresh sign-in marks this session and returns to the change
+    let before = sessions(&app).await;
+    let again = start_reauth(&app, &cookie, &next).await;
+    let code = provider.authorize(&again.nonce, &again.challenge, Tweak::Fresh);
+    let r = callback(&app, &code, &again.state).await;
+    assert!(r.status.is_redirection(), "{} {}", r.status, r.text());
+    assert_eq!(r.header("location").as_deref(), Some(next.as_str()));
+    assert!(session_cookie(&r).is_none(), "no new session");
+    assert_eq!(sessions(&app).await, before);
+    approve().await;
+    assert_eq!(status().await, "released");
+    let method: Option<String> =
+        sqlx::query_scalar("SELECT sign_off_method FROM change_reviews WHERE change_id = $1")
+            .bind(id)
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+    assert_eq!(method.as_deref(), Some("sso"));
     app.teardown().await;
 }

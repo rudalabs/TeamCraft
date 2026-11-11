@@ -92,6 +92,8 @@ pub struct Session {
     pub update_check: bool,
     /// Check-out of an assembly also gets its parts.
     pub checkout_parts: bool,
+    /// After a crash, ask at the next start whether to share the report.
+    pub crash_prompt: bool,
 }
 
 #[tauri::command]
@@ -101,6 +103,7 @@ pub fn session(app: AppHandle, state: State<'_, AppState>) -> Session {
         token_storage: s.token.as_ref().and(s.token_storage),
         update_check: s.update_check != Some(false),
         checkout_parts: s.checkout_parts != Some(false),
+        crash_prompt: s.crash_prompt != Some(false),
         server_url: s.server_url.clone(),
         signed_in: s.token.is_some(),
         skin: s.skin.clone().unwrap_or_else(|| "teamcraft".into()),
@@ -796,6 +799,84 @@ pub fn set_update_check(state: State<'_, AppState>, enabled: bool) -> CmdResult<
     Ok(())
 }
 
+// ------------------------------------------------------------ crash reports
+
+/// The crash reports waiting for the user's decision (src/crash.rs).
+#[derive(Serialize)]
+pub struct CrashReports {
+    /// How many reports (panics, unexpected exits, UI error sessions).
+    pub count: usize,
+    pub kinds: Vec<String>,
+    /// All reports as the plain, redacted text the user can share.
+    pub text: String,
+    /// Settings: ask at start-up (off: the reports are only kept locally).
+    pub ask: bool,
+}
+
+/// Crash reports stored by an earlier session, or none.
+#[tauri::command]
+pub fn crash_reports(state: State<'_, AppState>) -> Option<CrashReports> {
+    let dir = crate::crash::store_dir()?;
+    let reports = crate::crash::pending(dir);
+    if reports.is_empty() {
+        return None;
+    }
+    Some(CrashReports {
+        count: reports.len(),
+        kinds: reports.iter().map(|r| r.kind.clone()).collect(),
+        text: crate::crash::combined(&reports),
+        ask: snapshot(&state).crash_prompt != Some(false),
+    })
+}
+
+/// Opens a prefilled new issue on GitHub with the reports – the user reviews
+/// and submits it there – and removes them here. The address is built from
+/// the stored reports, never from text the web view passes in.
+#[tauri::command]
+pub fn crash_reports_open_issue(app: AppHandle) -> CmdResult<()> {
+    let dir =
+        crate::crash::store_dir().ok_or_else(|| ApiError::local("No crash report is stored."))?;
+    let reports = crate::crash::pending(dir);
+    if reports.is_empty() {
+        return Err(ApiError::local("No crash report is stored."));
+    }
+    let url = crate::crash::issue_url(&crate::crash::combined(&reports));
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|e| ApiError::local(format!("The browser could not be opened: {e}")))?;
+    crate::crash::discard(dir);
+    Ok(())
+}
+
+/// Deletes the stored crash reports without sharing them.
+#[tauri::command]
+pub fn crash_reports_discard() {
+    if let Some(dir) = crate::crash::store_dir() {
+        crate::crash::discard(dir);
+    }
+}
+
+/// Settings → ask after a crash whether to share the report.
+#[tauri::command]
+pub fn set_crash_prompt(state: State<'_, AppState>, enabled: bool) -> CmdResult<()> {
+    update_settings(&state, |s| s.crash_prompt = Some(enabled))?;
+    Ok(())
+}
+
+/// An uncaught error of the user interface (js/crash.js); redacted, deduplicated
+/// and capped per session. `true` when it was recorded.
+#[tauri::command]
+pub fn record_ui_error(message: String, stack: Option<String>, source: Option<String>) -> bool {
+    crate::crash::store_dir().is_some_and(|dir| {
+        crate::crash::record_ui_error(
+            dir,
+            &message,
+            stack.as_deref().unwrap_or(""),
+            source.as_deref().unwrap_or(""),
+        )
+    })
+}
+
 /// Opens the release page in the default browser (a fixed address – the app
 /// itself never downloads or installs anything).
 #[tauri::command]
@@ -1122,6 +1203,9 @@ pub struct AgentEntry {
 pub struct AgentProfiles {
     pub agents: Vec<AgentEntry>,
     pub selected: Option<String>,
+    /// Ask before read-only TeamCraft tools too (default: allowed once
+    /// without a prompt).
+    pub ask_read_only: bool,
 }
 
 /// Arguments as one line again (quoted where they contain spaces).
@@ -1150,6 +1234,7 @@ fn profiles_of(s: &Settings) -> AgentProfiles {
             })
             .collect(),
         selected: s.agent.clone(),
+        ask_read_only: s.agent_ask_read_only,
     }
 }
 
@@ -1186,9 +1271,17 @@ fn parse_profiles(agents: Vec<AgentEntry>) -> Result<Vec<acp::AgentProfile>, Str
 pub fn set_agent_profiles(
     state: State<'_, AppState>,
     agents: Vec<AgentEntry>,
+    ask_read_only: Option<bool>,
 ) -> CmdResult<AgentProfiles> {
     let profiles = parse_profiles(agents).map_err(ApiError::local)?;
+    // asking more takes effect at once, even if saving fails
+    if ask_read_only == Some(true) {
+        set_running_ask_read_only(&state, true);
+    }
     let s = update_settings(&state, |s| {
+        if let Some(ask) = ask_read_only {
+            s.agent_ask_read_only = ask;
+        }
         if !s
             .agent
             .as_ref()
@@ -1198,7 +1291,26 @@ pub fn set_agent_profiles(
         }
         s.agents = profiles;
     })?;
+    // a running agent follows the saved setting
+    set_running_ask_read_only(&state, s.agent_ask_read_only);
     Ok(profiles_of(&s))
+}
+
+fn set_running_ask_read_only(state: &State<'_, AppState>, ask: bool) {
+    if let Some(running) = state.agent.lock().expect("agent lock").as_ref() {
+        running.agent.set_ask_read_only(ask);
+    }
+}
+
+/// The read-only tools of TeamCraft's MCP server by its own `tools/list`
+/// (`annotations.readOnlyHint`), asked with the signed-in user's token – the
+/// list the agent session about to start uses. `None` when the server does
+/// not answer with a list (old server, refusal, network error): then every
+/// tool call asks, as before.
+async fn read_only_tools(api: &Api) -> Option<crate::autoallow::ReadOnlyTools> {
+    let list = json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" });
+    let answer = api.json(Method::POST, "/mcp", Some(&list)).await.ok()?;
+    crate::autoallow::ReadOnlyTools::from_tools_list(&answer)
 }
 
 #[derive(Serialize)]
@@ -1366,7 +1478,18 @@ pub async fn agent_start(
         app: app.clone(),
         session,
     });
+    let ask_read_only = snapshot(&state).agent_ask_read_only;
+    // fetched per session: it holds one server and one user's token, and a
+    // new sign-in ends the agent (also fetched while the setting asks, so
+    // turning it off applies to the running agent)
+    let read_only_tools = if api.token.is_some() {
+        read_only_tools(&api).await
+    } else {
+        None
+    };
     let opts = acp::Options {
+        read_only_tools,
+        ask_read_only,
         cwd: root,
         mcp: api.token.clone().map(|token| acp::McpServer {
             url: format!("{}/api/v1/mcp", api.base),

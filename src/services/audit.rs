@@ -166,7 +166,9 @@ async fn insert(
                        WHERE pi.project_id IS NOT NULL
                          AND (pi.id = $8 OR pi.id = ANY($9))))",
     )
-    .bind(actor.map(|a| a.id))
+    // the system actor (the command line) has no user row: no user id, its
+    // name "system" is kept
+    .bind(actor.map(|a| a.id).filter(|id| !id.is_nil()))
     .bind(actor.map(|a| a.username.as_str()).unwrap_or("system"))
     .bind(action)
     .bind(entity_type)
@@ -318,6 +320,78 @@ pub async fn list(
     Ok((redact(entries), total))
 }
 
+/// Most entries in one export ([`export`]); narrow the filter for more.
+pub const EXPORT_MAX: i64 = 100_000;
+
+/// The audit log as an export (#152 step 8): the entries of [`list`] with
+/// the same filter, visibility and redaction, newest first, at most
+/// [`EXPORT_MAX`]. Returns the entries and whether more matched.
+///
+/// # Invariants
+///
+/// * **Permission:** administrators only (403).
+/// * **Audit:** `audit.export` with the filter and the number of entries –
+///   exporting the log is itself on record.
+pub async fn export(
+    pool: &PgPool,
+    actor: &Actor,
+    filter: &AuditFilter,
+) -> AppResult<(Vec<AuditEntry>, bool)> {
+    actor.require(crate::domain::Role::Admin)?;
+    let (entries, total) = list(
+        pool,
+        actor,
+        filter,
+        Page {
+            limit: EXPORT_MAX,
+            offset: 0,
+        },
+    )
+    .await?;
+    let mut tx = pool.begin().await?;
+    record(
+        &mut tx,
+        Some(actor),
+        "audit.export",
+        "user",
+        Some(actor.id),
+        format!("Exported {} audit log entries", entries.len()),
+        serde_json::json!({
+            "entity_type": filter.entity_type,
+            "username": filter.username,
+            "action": filter.action,
+            "entries": entries.len(),
+            "matching": total,
+        }),
+    )
+    .await?;
+    tx.commit().await?;
+    let truncated = total > entries.len() as i64;
+    Ok((entries, truncated))
+}
+
+/// An export as CSV: `id,at,username,action,entity_type,entity_id,summary,details`
+/// (details as JSON).
+pub fn to_csv(entries: &[AuditEntry]) -> String {
+    let mut out = String::from("id,at,username,action,entity_type,entity_id,summary,details\n");
+    for e in entries {
+        let fields = [
+            e.id.to_string(),
+            e.at.to_rfc3339(),
+            e.username.clone(),
+            e.action.clone(),
+            e.entity_type.clone(),
+            e.entity_id.map(|i| i.to_string()).unwrap_or_default(),
+            e.summary.clone(),
+            e.details.to_string(),
+        ];
+        let row: Vec<String> = fields.iter().map(|f| crate::util::csv_field(f)).collect();
+        out.push_str(&row.join(","));
+        out.push('\n');
+    }
+    out
+}
+
 /// The row filter of the audit feeds; expects the joins `sr` (revision) and
 /// `si` (item of an item or revision entry) on `audit_log a`. `hidden`,
 /// `admin` and `actor` are the parameter numbers of the actor's hidden
@@ -439,4 +513,41 @@ pub async fn recent(pool: &PgPool, actor: &Actor, limit: i64) -> AppResult<Vec<A
     .fetch_all(pool)
     .await?;
     Ok(redact(entries))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_csv_export_escapes_text_formulas_and_details() {
+        let entry = AuditEntry {
+            id: 7,
+            at: "2026-11-10T08:00:00Z".parse().unwrap(),
+            user_id: None,
+            username: "erika".into(),
+            action: "change.approve".into(),
+            entity_type: "change".into(),
+            entity_id: Some(Uuid::nil()),
+            summary: "Approved ECO-1, \"as is\"".into(),
+            details: serde_json::json!({ "comment": "=SUM(A1)" }),
+            related_hidden: false,
+            mentions_hidden: false,
+        };
+        let csv = to_csv(&[entry]);
+        let mut lines = csv.lines();
+        assert_eq!(
+            lines.next(),
+            Some("id,at,username,action,entity_type,entity_id,summary,details")
+        );
+        let row = lines.next().unwrap();
+        assert!(
+            row.starts_with("7,2026-11-10T08:00:00+00:00,erika,change.approve,change,"),
+            "{row}"
+        );
+        assert!(row.contains(r#""Approved ECO-1, ""as is""""#), "{row}");
+        // the details are JSON in one quoted field
+        assert!(row.ends_with(r#""{""comment"":""=SUM(A1)""}""#), "{row}");
+        assert_eq!(lines.next(), None);
+    }
 }

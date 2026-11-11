@@ -19,13 +19,13 @@ fn fixture_types(target: &str) -> Option<&'static [&'static str]> {
         "swpart" => &["sldprt", "sldasm", "slddrw"],
         "nxpart" => &["prt"],
         "thumbnail" => &[
-            "ipt", "iam", "sldprt", "sldasm", "prt", "catpart", "par", "asm",
+            "ipt", "iam", "sldprt", "sldasm", "prt", "catpart", "par", "asm", "3dm",
         ],
         "bomtable" => &["tsv", "csv"],
         "resultscan" | "solversummary" => &["csv", "tsv", "txt"],
         // The STEP tessellation is slow in a debug build: only small files.
         "mesh_step" => &["stp"],
-        "mesh" => &[],
+        "mesh" => &["3dm"],
         _ => return None,
     })
 }

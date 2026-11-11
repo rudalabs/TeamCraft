@@ -1,4 +1,5 @@
-//! Real CAD files from NIST (`tests/fixtures/cad`, see its README): the
+//! Real CAD files from NIST and the MIT-licensed Rhino models of rhino3dm
+//! (`tests/fixtures/cad`, see its README): the
 //! copies are unchanged, TeamCraft recognises their formats, finds the
 //! preview images in Inventor, NX and SOLIDWORKS files and the parts of
 //! the NX and SOLIDWORKS assemblies, and turns every STEP file (AP203 and
@@ -49,7 +50,7 @@ fn manifest() -> Vec<Entry> {
 #[tokio::test]
 async fn files_are_unchanged_and_recognised() {
     let entries = manifest();
-    assert_eq!(entries.len(), 32, "every fixture is listed");
+    assert_eq!(entries.len(), 35, "every fixture is listed");
     for e in &entries {
         let shown = e.path.display();
         let data = std::fs::read(&e.path).unwrap_or_else(|err| panic!("{shown}: {err}"));
@@ -110,7 +111,7 @@ fn nx_parts_carry_a_preview_image() {
 async fn the_nx_assembly_references_its_parts() {
     let dir = fixture("mtc-assembly/nx");
     let name = "NIST mtc crada assembly.prt";
-    let refs = cadrefs::scan_file(&dir.join(name), name).await;
+    let refs = cadrefs::scan_file(&dir.join(name), name, "nx-part").await;
     for part in [
         "NIST mtc crada box.prt",
         "NIST mtc crada cover.prt",
@@ -121,9 +122,20 @@ async fn the_nx_assembly_references_its_parts() {
         "91274A141 SHCS.prt",
         "91304A112 FHSCS.prt",
     ] {
-        assert!(refs.iter().any(|r| r == part), "{part} missing in {refs:?}");
+        assert!(
+            refs.iter().any(|r| r.name == part),
+            "{part} missing in {refs:?}"
+        );
         assert!(dir.join(part).is_file(), "{part} is part of the fixture");
     }
+    // How often the assembly places each part (#247) – the same counts as
+    // its SOLIDWORKS version.
+    let count = |part: &str| refs.iter().find(|r| r.name == part).unwrap().instances;
+    assert_eq!(count("90591A141 HEX NUT.prt"), Some(10));
+    assert_eq!(count("91274A118 SHCS.prt"), Some(14));
+    assert_eq!(count("91274A141 SHCS.prt"), Some(4));
+    assert_eq!(count("91304A112 FHSCS.prt"), Some(4));
+    assert_eq!(count("NIST mtc crada box.prt"), Some(1));
 }
 
 /// Every NX part gets a 3D preview from the JT tessellation NX stores in
@@ -517,7 +529,7 @@ async fn step_header_name_is_not_a_reference() {
             .unwrap()
             .to_string_lossy()
             .into_owned();
-        let refs = cadrefs::scan_file(&fixture(rel), &name).await;
+        let refs = cadrefs::scan_file(&fixture(rel), &name, "step").await;
         assert!(refs.is_empty(), "{rel}: {refs:?}");
     }
 }
@@ -555,8 +567,9 @@ async fn solidworks_files_carry_previews_and_references() {
     // The assembly names exactly its eight parts – not the old names of
     // renamed components that the rest of the file still contains.
     let name = "nist_mtc_crada_assembly_rev-D.SLDASM";
-    let mut refs = cadrefs::scan_file(&dir.join(name), name).await;
-    refs.sort();
+    let mut scanned = cadrefs::scan_file(&dir.join(name), name, "solidworks-assembly").await;
+    scanned.sort_by(|a, b| a.name.cmp(&b.name));
+    let refs: Vec<String> = scanned.iter().map(|r| r.name.clone()).collect();
     assert_eq!(refs.len(), 8, "{refs:?}");
     assert!(refs.iter().all(|r| dir.join(r).is_file()), "{refs:?}");
     // Scanning the bytes in memory gives the same result.
@@ -564,10 +577,13 @@ async fn solidworks_files_carry_previews_and_references() {
     let mut in_memory = cadrefs::find(&bytes, name);
     in_memory.sort();
     assert_eq!(in_memory, refs);
+    // How often the assembly places each part (#247).
+    let counts: Vec<Option<u32>> = scanned.iter().map(|r| r.instances).collect();
+    assert_eq!(counts, [10, 14, 4, 4, 1, 1, 1, 1].map(Some), "{scanned:?}");
     // Parts reference nothing (no noise from their compressed data).
     for path in files.iter().filter(|p| p != &&dir.join(name)) {
         let own = path.file_name().unwrap().to_string_lossy().into_owned();
-        let refs = cadrefs::scan_file(path, &own).await;
+        let refs = cadrefs::scan_file(path, &own, "solidworks-part").await;
         assert!(refs.is_empty(), "{own}: {refs:?}");
     }
 }
@@ -582,15 +598,20 @@ async fn nx_parts_report_no_false_references() {
         "91274A118 SHCS.prt",
         "90591A141 HEX NUT.prt",
     ] {
-        let refs = cadrefs::scan_file(&dir.join(part), part).await;
+        let refs = cadrefs::scan_file(&dir.join(part), part, "nx-part").await;
         assert!(refs.is_empty(), "{part}: {refs:?}");
     }
     let rel = "ctc-01/nx-1980/nist_ctc_01_asme1_nx1980_rd.prt";
-    let refs = cadrefs::scan_file(&fixture(rel), "nist_ctc_01_asme1_nx1980_rd.prt").await;
+    let refs =
+        cadrefs::scan_file(&fixture(rel), "nist_ctc_01_asme1_nx1980_rd.prt", "nx-part").await;
     assert!(refs.is_empty(), "{rel}: {refs:?}");
     // The assembly names exactly its eight components.
     let name = "NIST mtc crada assembly.prt";
-    let mut refs = cadrefs::scan_file(&dir.join(name), name).await;
+    let mut refs: Vec<String> = cadrefs::scan_file(&dir.join(name), name, "nx-part")
+        .await
+        .into_iter()
+        .map(|r| r.name)
+        .collect();
     refs.sort();
     assert_eq!(refs.len(), 8, "{refs:?}");
     assert!(refs.iter().all(|r| dir.join(r).is_file()), "{refs:?}");
@@ -625,7 +646,7 @@ async fn step_files_carry_their_export_name() {
             export,
             "{rel}"
         );
-        let refs = cadrefs::scan_file(&path, &own).await;
+        let refs = cadrefs::scan_file(&path, &own, "step").await;
         assert!(refs.is_empty(), "{rel}: {refs:?}");
     }
 }
@@ -636,7 +657,7 @@ async fn step_files_carry_their_export_name() {
 #[tokio::test]
 async fn jt_files_report_no_false_references() {
     let rel = "mtc-assembly/nx/NIST mtc crada assembly.jt";
-    let refs = cadrefs::scan_file(&fixture(rel), "NIST mtc crada assembly.jt").await;
+    let refs = cadrefs::scan_file(&fixture(rel), "NIST mtc crada assembly.jt", "jt").await;
     assert!(refs.is_empty(), "{rel}: {refs:?}");
     // the same file with a part reference of a shattered JT assembly
     // (UTF-16, as JT stores strings) between its segments
@@ -651,4 +672,70 @@ async fn jt_files_report_no_false_references() {
         cadrefs::find(&bytes, "NIST mtc crada assembly.jt"),
         ["NIST mtc crada box.jt"]
     );
+}
+
+/// The Rhino models of rhino3dm (MIT): a mesh object, a polysurface with
+/// its stored render mesh and a SubD (no stored mesh: its control net is
+/// subdivided) – each a closed, consistently oriented preview in
+/// millimetres with the extent seen in Rhino.
+#[test]
+fn rhino_models_get_a_closed_3d_preview() {
+    for (name, triangles, extent) in [
+        // a sphere-like mesh, radius 25.1 mm
+        ("mesh.3dm", 276, [50.25, 50.25, 50.25]),
+        // render meshes of one polysurface; welded at 1 µm
+        ("sphereDecals.3dm", 18_752, [107.83, 107.83, 107.84]),
+        // 6 control faces, 4 subdivision steps: 6 · 4⁴ quads
+        ("subd_creases.3dm", 3_072, [9.583, 9.583, 9.198]),
+    ] {
+        let path = root().join("rhino3dm").join(name);
+        assert_eq!(
+            preview::PreviewFormat::of(name),
+            Some(preview::PreviewFormat::Rhino)
+        );
+        let mesh = preview::convert(preview::PreviewFormat::Rhino, &path)
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        mesh.check().unwrap();
+        assert_eq!(mesh.triangle_count(), triangles, "{name}");
+        let b = mesh.bounds();
+        for k in 0..3 {
+            let size = b[k + 3] - b[k];
+            assert!(
+                (size - extent[k]).abs() < 0.01,
+                "{name}: axis {k} is {size} mm, not {}",
+                extent[k]
+            );
+        }
+        let mut edges = std::collections::HashMap::<(u32, u32), u32>::new();
+        for t in mesh.indices.chunks_exact(3) {
+            for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+                *edges.entry((a, b)).or_default() += 1;
+            }
+        }
+        assert!(
+            edges
+                .iter()
+                .all(|(&(a, b), &n)| n == 1 && edges.get(&(b, a)) == Some(&1)),
+            "{name}: the mesh is not closed"
+        );
+        let s = teamcraft::shape::compute(&mesh).unwrap_or_else(|e| panic!("{name}: {e}"));
+        assert!(s.is_valid() && s.closed && s.volume > 0.0, "{name}: {s:?}");
+        assert_eq!(mesh::Mesh::decode(&mesh.encode()).unwrap(), mesh);
+    }
+}
+
+/// Damaged or cut Rhino models are errors, never panics.
+#[test]
+fn damaged_rhino_models_never_panic() {
+    for name in ["mesh.3dm", "subd_creases.3dm"] {
+        let data = std::fs::read(root().join("rhino3dm").join(name)).unwrap();
+        for at in (32..data.len()).step_by(61) {
+            let mut copy = data.clone();
+            copy[at] ^= 0x5A;
+            let _ = mesh::read("rhino", &copy);
+        }
+        for cut in (0..data.len()).step_by(211) {
+            let _ = mesh::read("rhino", &data[..cut]);
+        }
+    }
 }

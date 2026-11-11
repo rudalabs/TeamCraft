@@ -396,5 +396,53 @@ mod tests {
         assert!(note.contains("change order: ECO-000003"));
         assert!(note.contains("rows shown: PRT-000001"));
         assert!(note.contains("a hint, not data"));
+        // an item with and without a revision (found by cargo mutants)
+        let item = PageContext {
+            kind: "item".into(),
+            item: Some("PRT-000009".into()),
+            ..Default::default()
+        };
+        assert_eq!(item.label(), "PRT-000009");
+        let revision = PageContext {
+            kind: "revision".into(),
+            item: Some("PRT-000009".into()),
+            revision: Some("A".into()),
+            view: Some("bom".into()),
+            rule: Some("latest_released".into()),
+            ..Default::default()
+        };
+        assert_eq!(revision.label(), "PRT-000009/A · bom (latest released)");
+    }
+
+    /// Every page kind has its own label (found by cargo mutants).
+    #[test]
+    fn kind_labels() {
+        let labels = [
+            ("dashboard", "Dashboard"),
+            ("items", "Items list"),
+            ("item", "Item"),
+            ("revision", "Revision"),
+            ("bom", "Bill of materials"),
+            ("where_used", "Where-used"),
+            ("compare", "Comparison"),
+            ("change", "Change order"),
+            ("changes", "Change orders list"),
+            ("request", "Change request"),
+            ("requests", "Change requests list"),
+            ("simulation", "Simulation results"),
+            ("project", "Project group"),
+            ("projects", "Project groups"),
+            ("search", "Search"),
+            ("vault", "Vault explorer"),
+            ("notifications", "Notifications"),
+        ];
+        for (kind, label) in labels {
+            assert_eq!(kind_label(kind), label, "{kind}");
+        }
+        assert_eq!(kind_label("settings"), "Page");
+        // a new kind needs its own label (only `other` is a plain page)
+        for kind in KINDS {
+            assert_eq!(kind_label(kind) == "Page", kind == "other", "{kind}");
+        }
     }
 }

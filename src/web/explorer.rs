@@ -78,13 +78,16 @@ pub async fn show(
                     value
                 })
                 .collect();
+            let release = revisions::release_rule(&st.db, me, &rev).await?;
             Some(json!({
                 "rev": rev,
+                "file_groups": super::file_groups(&me.preferred_cad, &file_list),
                 "files": file_list,
                 "can": {
                     "checkout": can_work && rev.checked_out_by.is_none(),
                     "checkin": rev.checked_out_by == Some(me.id),
-                    "cancel_checkout": revisions::may_cancel_checkout(&st.db, me, &rev).await?,
+                    "cancel_checkout": release == revisions::Release::Yes,
+                    "release_with_reason": release == revisions::Release::WithReason,
                 },
             }))
         }

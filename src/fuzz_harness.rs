@@ -29,6 +29,7 @@ pub const MESH_FORMATS: &[&str] = &[
     "amf",
     "gltf",
     "3ds",
+    "rhino",
     "pts",
     "las",
     "jt",

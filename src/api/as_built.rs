@@ -177,6 +177,17 @@ pub(super) async fn patch_deviation(
     Ok(Json(json!(deviation)))
 }
 
+/// `POST /as-built-deviations/{id}/confirm` – a reviewer of the change order
+/// accepts a "use as is" concession on its own.
+pub(super) async fn confirm_concession(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<Value>> {
+    let deviation = as_built::confirm_concession(&st.db, &me, id).await?;
+    Ok(Json(json!(deviation)))
+}
+
 pub(super) async fn delete_deviation(
     State(st): State<AppState>,
     ApiUser(me): ApiUser,

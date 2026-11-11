@@ -79,6 +79,12 @@ A change order with an as-built revision cannot be submitted while that
 revision has **no build record** or an **open deviation**. The engineering
 decision on the deviations is the review of the change order itself.
 
+A project group can ask for more: with *A reviewer confirms each "use as is"
+deviation* in its review policy, a reviewer of the change order confirms every *use as is* concession on its own
+(*Confirm* in the deviation table) before
+their approval counts, and the person who recorded the deviation cannot
+confirm it. See [Read permissions and review policies](../admin/permissions.md).
+
 ## The design side
 
 The **Built units** card of a part, assembly or software revision lists the

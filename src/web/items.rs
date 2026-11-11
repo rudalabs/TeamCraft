@@ -256,6 +256,7 @@ async fn render_new(
         "items/new.html",
         json!({
             "form": form,
+            "materials": super::mass::material_options(st).await?,
             "error": error,
             "basis": basis,
             "basis_roles": basis_roles(),

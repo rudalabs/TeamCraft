@@ -316,20 +316,34 @@ pub async fn hand_over(
     from: Uuid,
     to: Uuid,
 ) -> AppResult<HandoverReport> {
+    let mut tx = pool.begin().await?;
+    let report = hand_over_in(&mut tx, actor, from, to).await?;
+    tx.commit().await?;
+    Ok(report)
+}
+
+/// [`hand_over`] inside the caller's transaction (the offboarding of a
+/// leaver runs it together with the deactivation, see
+/// `services::offboarding::deactivate`). Same invariants; the caller commits.
+pub(crate) async fn hand_over_in(
+    tx: &mut PgConnection,
+    actor: &Actor,
+    from: Uuid,
+    to: Uuid,
+) -> AppResult<HandoverReport> {
     actor.require(Role::Admin)?;
     if from == to {
         return Err(AppError::BadRequest(
             "Choose a different user to hand over to.".into(),
         ));
     }
-    let mut tx = pool.begin().await?;
     let from_name =
         sqlx::query_scalar::<_, String>("SELECT display_name FROM users WHERE id = $1 FOR UPDATE")
             .bind(from)
             .fetch_optional(&mut *tx)
             .await?
             .ok_or_else(|| AppError::not_found("User not found."))?;
-    let target = recipient(&mut tx, to).await?;
+    let target = recipient(&mut *tx, to).await?;
     let mut report = HandoverReport {
         from_name,
         to_name: target.display_name.clone(),
@@ -353,7 +367,7 @@ pub async fn hand_over(
         } else {
             access::RESTRICTED_LABEL.to_string()
         };
-        if !user_sees(&mut tx, to, project_id).await? {
+        if !user_sees(&mut *tx, to, project_id).await? {
             report.skipped(
                 "item",
                 &shown,
@@ -370,7 +384,7 @@ pub async fn hand_over(
             .execute(&mut *tx)
             .await?;
         audit::record_related(
-            &mut tx,
+            &mut *tx,
             Some(actor),
             "item.owner",
             "item",
@@ -398,7 +412,7 @@ pub async fn hand_over(
     .await?;
     report.truncated |= authored.len() as i64 >= MAX_PER_KIND;
     for (id, number) in authored {
-        let shown = change_label(&mut tx, actor, id, &number).await?;
+        let shown = change_label(&mut *tx, actor, id, &number).await?;
         let reviewing = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS(SELECT 1 FROM change_reviews WHERE change_id = $1 AND reviewer_id = $2)",
         )
@@ -417,7 +431,7 @@ pub async fn hand_over(
             );
             continue;
         }
-        if blind_to_change(&mut tx, to, id).await? {
+        if blind_to_change(&mut *tx, to, id).await? {
             report.skipped(
                 "change",
                 &shown,
@@ -431,7 +445,7 @@ pub async fn hand_over(
             .execute(&mut *tx)
             .await?;
         audit::record(
-            &mut tx,
+            &mut *tx,
             Some(actor),
             "change.handover",
             "change",
@@ -458,8 +472,8 @@ pub async fn hand_over(
     .await?;
     report.truncated |= assigned.len() as i64 >= MAX_PER_KIND;
     for (id, number) in assigned {
-        let shown = request_label(&mut tx, actor, id, &number).await?;
-        if blind_to_request(&mut tx, to, id).await? {
+        let shown = request_label(&mut *tx, actor, id, &number).await?;
+        if blind_to_request(&mut *tx, to, id).await? {
             report.skipped(
                 "request",
                 &shown,
@@ -473,7 +487,7 @@ pub async fn hand_over(
             .execute(&mut *tx)
             .await?;
         audit::record(
-            &mut tx,
+            &mut *tx,
             Some(actor),
             "change_request.handover",
             "change_request",
@@ -511,7 +525,7 @@ pub async fn hand_over(
         if !matches!(change.status.as_str(), "draft" | "in_review") {
             continue;
         }
-        let shown = change_label(&mut tx, actor, change_id, &change.number).await?;
+        let shown = change_label(&mut *tx, actor, change_id, &change.number).await?;
         let already = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS(SELECT 1 FROM change_reviews WHERE change_id = $1 AND reviewer_id = $2)",
         )
@@ -527,7 +541,8 @@ pub async fn hand_over(
             );
             continue;
         }
-        if let Some(conflict) = changes::review_conflict(&mut tx, &change, to, None, false).await? {
+        if let Some(conflict) = changes::review_conflict(&mut *tx, &change, to, None, false).await?
+        {
             report.skipped(
                 "review",
                 &shown,
@@ -539,7 +554,7 @@ pub async fn hand_over(
             );
             continue;
         }
-        if blind_to_change(&mut tx, to, change_id).await? {
+        if blind_to_change(&mut *tx, to, change_id).await? {
             report.skipped(
                 "review",
                 &shown,
@@ -566,7 +581,7 @@ pub async fn hand_over(
             .execute(&mut *tx)
             .await?;
         audit::record(
-            &mut tx,
+            &mut *tx,
             Some(actor),
             "change.review_handover",
             "change",
@@ -582,7 +597,7 @@ pub async fn hand_over(
     }
 
     audit::record(
-        &mut tx,
+        &mut *tx,
         Some(actor),
         "user.handover",
         "user",
@@ -609,6 +624,5 @@ pub async fn hand_over(
         }),
     )
     .await?;
-    tx.commit().await?;
     Ok(report)
 }

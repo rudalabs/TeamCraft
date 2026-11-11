@@ -146,10 +146,12 @@ feature milestone – the features in *What works* are enough; what is missing i
   is already tested) – `every_rendered_page_is_accessible` checks labels, accessible names, `alt`, `tabindex`,
   `lang`, heading levels and `<th scope>` on every rendered page; sign-in, new item, check-in, BOM and new change
   request done with the keyboard in Chromium; toggled panels now close with Escape ([docs](src/dev/accessibility.md))
-- [ ] Accessibility: a skip link to the main content (eight stops come before it on every page)
+- [x] Accessibility: a skip link to the main content (eight stops come before it on every page) – checked by
+  `every_rendered_page_is_accessible`
 - [ ] Accessibility: the HTML built by JavaScript (assistant sidebar, BOM tree controls, 3D viewer, upload progress)
   and the desktop app's UI under the same checks as the templates
-- [ ] Accessibility: a text (visually hidden) for the 15 empty action column headers (`<th scope="col"></th>`)
+- [x] Accessibility: a text (visually hidden) for the empty action column headers (`<th scope="col"></th>`) – 17
+  found and fixed; every `<th>` needs a name now
 - [ ] Accessibility: the main flows once with a screen reader (NVDA or VoiceOver)
 
 *Documentation and project*
@@ -257,8 +259,13 @@ half a state behind. Prefer tests that fail on a real regression over tests that
   Docker smoke test per push, the other artifacts nightly, on tags and by hand; (c) per push only when packaging
   inputs change. Either way: add `packaging/**` and `desktop/tauri.conf.json` to the PR paths of `release.yml`, so a
   Flatpak or bundle change is built before it is merged
-- [ ] Run `fuzz.yml` and `scale.yml` once by hand – their schedules have never fired yet – and make a failing
-  scheduled run open an issue instead of only an e-mail
+- [ ] Run `scale.yml` once by hand – its schedule has never fired yet – and make a failing scheduled run open an
+  issue instead of only an e-mail
+- [x] `fuzz.yml` had never built a single target: the prebuilt `cargo-fuzz` from `taiki-e/install-action` is a musl
+  binary, so `cargo fuzz` defaulted `--target` to `x86_64-unknown-linux-musl` (not installed; its static libc the
+  sanitizer refuses), and every target failed before fuzzing. The first scheduled run (2026-11-08) failed for this,
+  not for a crash. Fixed by building for the GNU host triple (`fix/fuzz-build-target`); the targets themselves compile
+  (`cargo +nightly check` on `fuzz/`). Still to do: make a failing scheduled run open an issue, not only an e-mail
 - [x] Triage the open CodeQL alerts (2026-11-07, 32 alerts, each checked twice; `fix/codeql-triage`). One real
   finding, the rest false positives, all answered in code or configuration, none by a model row:
     - `rust/uncontrolled-allocation-size` #38 (`POST /api/v1/change-requests`) **real, low risk**: the handler
@@ -347,17 +354,15 @@ half a state behind. Prefer tests that fail on a real regression over tests that
 
 ### 4. Parked features
 
-**Need-to-know project groups (#151)** – step 1 (administrator access: policy, reason-based elevation, `none`) is
-done; steps 3 and 4 are done in part: switches `api_tokens`, `mcp`, `assistant`, `webhooks`, `packages`,
-`notification_content`, `external_llm`,
-`desktop_sync` (`project_policy::narrow` per channel, `tests/interface_switches.rs`) and the read and download log with
-retention and
-`teamcraft access-log purge` (views, file downloads, Pack and Go, BOM exports). Left of 3 and 4: log entries for MCP and
-assistant tool reads and desktop Get;
-optional PDF/image watermark; a log page with filters and paging. Left, in the order of the issue: 2 conditions on
-membership (OIDC claims, allowed networks, shorter sessions); 5 access review page and evidence report (done: page,
-confirmation, CSV/JSON evidence; open: periodic reminder, review-due flag); 6 token scopes (F2). Open question 1
-is answered for now: `none` is allowed, but needs a member who is a manager.
+**Need-to-know project groups (#151)** – done: step 1 (administrator access: policy, reason-based elevation,
+`none`), step 2 (conditions on membership: IdP claims, allowed networks, maximum sign-in age;
+`services::membership_conditions`, `tests/membership_conditions.rs`), step 3 (switches `api_tokens`, `mcp`,
+`assistant`, `webhooks`, `packages`, `notification_content`, `external_llm`, `desktop_sync`), step 4 (read and
+download log incl. MCP and assistant tool reads and desktop Get, log page with filters and paging, retention and
+`teamcraft access-log purge`), step 5 (access review, evidence, review schedule with reminders and the review-due
+flag), step 6 (token scopes). Left, optional: a PDF/image watermark of downloads; claims for local accounts (an
+administrator-maintained attribute) – local accounts never meet a claim condition today. Open question 1 is
+answered for now: `none` is allowed, but needs a member who is a manager.
 
 Only finish what is in progress and fix bugs here; see *Direction*. The CAD-program entries are mostly checks with
 real files and belong to section 3 once such files are at hand.
@@ -371,28 +376,48 @@ real files and belong to section 3 once such files are at hand.
 - [x] Step 3: obsolete and supersede through a change order (group setting `obsolete_requires_change`, obsolete and
   supersede lines on a change order applied on release, supersede notifies watchers). Left: an
   `obsolete_requires_change` toggle in the desktop app; lines from MCP and the desktop app.
-- [ ] Step 4: token scopes (`approve`: done, scope `write` cannot approve) and sign-off re-authentication
-  (`TEAMCRAFT_APPROVAL_REAUTH`, open).
+- [x] Step 4: token scopes (`approve`: done, scope `write` cannot approve) and sign-off re-authentication
+  (`TEAMCRAFT_APPROVAL_REAUTH` = `release` | `every_decision`: password or a fresh SSO sign-in with `prompt=login`,
+  method and meaning stored per review; `tests/approval_sign_off.rs`, `tests/oidc_flow.rs`). The meaning is free
+  text (open question 7: no fixed list yet).
 - [x] Step 5: keep review rounds (`change_review_rounds`, `changes.review_round`; change page and API show earlier
   rounds).
 - [x] Step 6: flag and replace absent reviewers (substitutes per user: still open).
 - [x] Step 7: item owner and admin handover of a leaving user's work (owner on the item page; notifying the new owner
   and a CLI command are not done).
-- [ ] Step 8: approvals in the package manifest, audit log export, hash chain.
-- [ ] Step 9: requester cannot triage own request; separate approval of *use as is* deviations.
+- [x] Step 8: approvals in the package manifest (`released_by`), audit log export (CSV/JSON, admin page and
+  `GET /api/v1/audit`, `tests/approval_records.rs`). Hash chain: not done – open question 6 answered with the
+  database grant (`REVOKE UPDATE, DELETE` on `audit_log`, documented in admin/operations.md).
+- [x] Step 9: requester cannot decide own request; separate approval of *use as is* deviations (group settings
+  `requester_cannot_decide`, `concessions_need_review`; `tests/review_rules.rs`).
 - [x] Follow-up of step 1: show editors in the suggester as "knows the item, cannot review".
 
 **Offboarding for high-turnover teams ([#173](https://github.com/rudalabs/TeamCraft/issues/173))**
 
 - [x] Step 0: runbook "When someone leaves" in `docs/src/admin/users.md`.
-- [ ] Step 1: holdings report per user (admin user page, group managers, REST, CLI), filtered by the viewer's rights.
+- [x] Step 1: holdings report per user (`services::offboarding::holdings`: page `/users/{id}/holdings` for admins and
+  group managers, `GET /api/v1/users/{id}/holdings`, `teamcraft user holdings`), filtered by the viewer's rights. Left:
+  show it as a confirmation list when an administrator unticks *Active* (with step 4).
 - [x] Step 2: inactive lock holders count as gone, only active managers count, a deactivated user's IdP membership can
   be removed, submit refuses a deactivated reviewer, *Demote* manager.
 - [x] Step 3: bulk release of another user's check-outs (`checkouts::release_held`; admin user page, group member list).
-- [ ] Step 4: deactivation as an offboarding step (release / hand over / revoke tokens), CLI `user deactivate`.
+- [x] Step 4: deactivation as an offboarding step (`services::deactivation`: hand-over incl. manager roles, token
+  revocation, release of check-outs; *Offboard and deactivate* on the user page, `POST /api/v1/users/{id}/offboard`,
+  `teamcraft user deactivate`).
 - [x] Step 5: managers of every affected group withdraw, reopen, cancel or take over a deactivated author's change.
-- [ ] Steps 6–10: manager release with a reason, groups without an active manager, season handover, IdP-driven
-  offboarding, desktop working folder.
+- [x] Step 6: a manager releases an active member's check-out with a reason (`revisions::cancel_checkout` with
+  `reason`: audited, told to the holder; *Release with reason* on the revision page, `{reason}` in REST). Lock age is
+  shown in the explorer, on the revision page and in the holdings report. Open: a timed stale-lock rule
+  (`TEAMCRAFT_STALE_CHECKOUT_DAYS`), issue question 3.
+- [x] Step 7: groups without an active manager, or whose managers showed no activity for 90 days
+  (`services::manager_gaps`: *Groups without an active manager* on the project overview of administrators,
+  `GET /api/v1/projects/manager-gaps`; the hourly housekeeping tells the administrators once per gap).
+- [x] Step 8: season handover per group (`services::season`, *Season handover* at `/projects/{id}/season` for managers
+  and admins): tick members (or those inactive since a date / past "member until"), then one run makes the new lead a
+  manager, releases check-outs with a reason, sets "member until" (`project_members.expires_at`, flag only), removes
+  members and demotes the old managers – each step through its own service and audited. Left: the access review page
+  for internal groups, ownership hand-over from the season page (today: *Hand over work* on the user page).
+- [ ] Steps 9–10: IdP-driven offboarding, desktop working folder.
 
 **Desktop app**
 
@@ -549,7 +574,8 @@ real files and belong to section 3 once such files are at hand.
 - [ ] Test preview images of SOLIDWORKS 2014 and older (OLE files) with real files – 2015 and newer: done
 - [ ] Test the SOLIDWORKS 2015+ reader with drawings (`.slddrw`, also a real drawing for the document-manager
   fallback), nested sub-assemblies and other versions than 2018
-- [x] Use the instance counts of the component tree (`swReference`, without `swExcludeFromBOM`) for BOM quantities (#180: Create BOM from CAD references)
+- [x] Use the instance counts of the component tree (`swReference`, without `swExcludeFromBOM`) for BOM quantities
+  (#180: Create BOM from CAD references)
 - [ ] Take configurations and Toolbox parts into account in the import and the reference scan
 - [ ] Test the BOM import with real BOM exports
 
@@ -586,9 +612,14 @@ needs an issue with a reason first (see *Direction*).
   to a managed mode (Save As, revise, structure, numbering)
 - [ ] ECAD/EPLAN integration: electrical design files and their BOM connectivity as first-class data, not
   attachments
-- [ ] Derivatives generated on check-in or release – STEP, drawing PDF, DXF, Parasolid – through the CAD programs
-  (the desktop app's Inventor/Solid Edge STEP export is a first step)
+- [ ] Derivatives generated on check-in or release – STEP, drawing PDF, DXF, Parasolid – through the CAD programs (the
+  desktop app's Inventor/Solid Edge STEP export is a first step)
 - [ ] Restore drills: back up and restore the data of each release in CI, not only the current one
+- [ ] Mass properties, follow-ups of the first version (`services::mass_properties`, research page *Mass properties from
+  exported meshes*): placements per BOM line instance (4×4 transforms, e.g. from the NX /
+  SOLIDWORKS assembly placements the 3D preview reads) for parts exported in their own frame; a REST/MCP write
+  for the mass settings and the material library; measured masses on released revisions (as-built units);
+  the unit a 3MF or STEP file declares as the default unit; desktop view
 
 #### Search, metadata and usability
 
@@ -597,8 +628,8 @@ needs an issue with a reason first (see *Direction*).
 - [ ] Personal search presets (filters, columns, defaults); configurable result columns with per-user layouts,
   classification attributes as columns
 - [ ] Search across classification attributes; important metadata on the summary page; full long descriptions
-- [ ] Richer custom attribute types (date, unit, reference, formula) with validation; full regex naming rules
-  (negative lookahead)
+- [ ] Richer custom attribute types (date, unit, reference, formula) with validation; full regex naming rules (negative
+  lookahead)
 - [ ] Hierarchical numbering (from parent or project), document numbering apart from parts, custom document types,
   generated cover sheets
 - [ ] Administrator-configurable forms (hide unused fields), role-specific views, low-code validation rules
@@ -620,8 +651,8 @@ needs an issue with a reason first (see *Direction*).
   BOMs that include hidden or reference-only content, workflow expansion filters
 - [ ] Dissolve/promote a subassembly, pack identical lines, substitutes per occurrence, supersession propagated to all
   assemblies, reference designators in electrical searches; proofing of quantity/unit edge cases
-- [ ] Sourcing: supplier price breaks, currency conversion, inventory, distributor search and metadata import
-  (DigiKey, Nexar)
+- [ ] Sourcing: supplier price breaks, currency conversion, inventory, distributor search and metadata import (DigiKey,
+  Nexar)
 - [ ] Workflows: NPI process, parallel and conditional routing, dynamic participants, notify earlier reviewers,
   target vs. reference attachments at submission, editable task names, templates, a no-code designer, versioned
   definitions, delegation, due dates and escalation

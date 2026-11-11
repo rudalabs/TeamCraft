@@ -32,7 +32,7 @@ async fn notes_on_a_model_version() {
     let r = app
         .api_upload(&files, &max, "bracket.stl", b"solid x\nendsolid x\n")
         .await;
-    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
     let file_id = app.api(Method::GET, &files, &max, None).await.json()[0]["id"]
         .as_str()
         .unwrap()

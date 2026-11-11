@@ -4,6 +4,9 @@
 //! `TEAMCRAFT_WRITE_SIM_FIXTURES=1 cargo test --lib write_sim_fixtures -- --ignored`.
 
 use super::*;
+use crate::mesh::{Field, Mesh, MAX_FIELDS};
+use anyhow::Result;
+use base64::Engine;
 use std::io::Write;
 
 fn fixture(name: &str) -> Vec<u8> {

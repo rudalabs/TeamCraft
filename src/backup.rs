@@ -1012,7 +1012,8 @@ mod tests {
     #[test]
     fn encrypted_backups_verify_and_restore_only_with_the_passphrase() {
         let pass = "correct horse battery staple";
-        let key = BackupKey::new(pass).unwrap();
+        // cheap parameters: the manifest records them, the restore derives the same
+        let key = BackupKey::for_tests(pass);
         let source = temp_dir("enc-source");
         let dir = temp_dir("enc-backup");
         let plain_dump = source.join("db.dump");

@@ -1209,6 +1209,13 @@ impl MeshDecoder {
 
     fn face_context(&self, v: usize) -> Result<usize> {
         let val = self.mesh.valence(v)?;
+        // only valences 3 and 4 look at the faces: scanning the slots of
+        // every polygon for each of its slots would be quadratic
+        match val {
+            5 => return Ok(6),
+            3 | 4 => {}
+            _ => return Ok(7),
+        }
         let (mut known, mut total) = (0usize, 0usize);
         for s in 0..val {
             let f = self.mesh.face(v, s)?;
@@ -1432,150 +1439,4 @@ impl MeshDecoder {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn bits_read_msb_first_and_stop_after_the_slack() {
-        let mut b = Bits::new(vec![0b1010_0000, 0xFF]);
-        assert_eq!(b.u(1).unwrap(), 1);
-        assert_eq!(b.u(3).unwrap(), 0b010);
-        assert_eq!(b.s(4).unwrap(), 0);
-        assert_eq!(b.s(8).unwrap(), -1);
-        assert_eq!(b.u(32).unwrap(), 0, "zeros past the end");
-        assert_eq!(b.u(32).unwrap(), 0);
-        assert!(b.u(1).is_err(), "more than the slack");
-        // code text words are little endian, read from the top bit
-        let mut w = Bits::words(&[0x01, 0x00, 0x00, 0x80]);
-        assert_eq!(w.u(1).unwrap(), 1);
-        assert_eq!(w.u(31).unwrap(), 1);
-    }
-
-    #[test]
-    fn lag1_keeps_the_first_four_values() {
-        assert_eq!(lag1(vec![5, 6, 7, 8, 1, 1, -2]), vec![5, 6, 7, 8, 9, 10, 8]);
-        assert_eq!(lag1(vec![1, 2]), vec![1, 2]);
-    }
-
-    #[test]
-    fn fixed_width_bitlength() {
-        // fixed width: min 3 bits = 1, max 3 bits = 3 → 2-bit fields + 1
-        let mut stream = Bits::new(pack(&[
-            (0, 1),
-            (3, 6),
-            (3, 6),
-            (1, 3),
-            (3, 3),
-            (1, 2),
-            (2, 2),
-            (0, 2),
-        ]));
-        assert_eq!(bitlength(&mut stream, 3).unwrap(), vec![2, 3, 1]);
-    }
-
-    /// Packs (value, bits) pairs MSB first.
-    fn pack(fields: &[(u32, u32)]) -> Vec<u8> {
-        let mut out = Vec::new();
-        let mut acc: u64 = 0;
-        let mut n = 0;
-        for &(v, bits) in fields {
-            acc = (acc << bits) | u64::from(v);
-            n += bits;
-            while n >= 8 {
-                out.push((acc >> (n - 8)) as u8);
-                n -= 8;
-                acc &= (1 << n) - 1;
-            }
-        }
-        if n > 0 {
-            out.push((acc << (8 - n)) as u8);
-        }
-        out
-    }
-
-    #[test]
-    fn arithmetic_with_a_single_symbol_needs_no_bits() {
-        let ctx = [Entry {
-            symbol: 0,
-            occurrences: 1,
-            value: 7,
-        }];
-        let mut bits = Bits::new(vec![0, 0]);
-        assert_eq!(arithmetic(&mut bits, 5, &ctx, &[]).unwrap(), vec![7; 5]);
-        let escape = [Entry {
-            symbol: -2,
-            occurrences: 1,
-            value: 0,
-        }];
-        let mut bits = Bits::new(vec![0, 0]);
-        assert_eq!(
-            arithmetic(&mut bits, 2, &escape, &[4, 9]).unwrap(),
-            vec![4, 9]
-        );
-        let mut bits = Bits::new(vec![0, 0]);
-        assert!(
-            arithmetic(&mut bits, 3, &escape, &[4, 9]).is_err(),
-            "out-of-band values run out"
-        );
-    }
-
-    #[test]
-    fn the_jt_file_starts_after_the_stream_index() {
-        // a large part: 259 index entries put the JT file past 4 KiB
-        for count in [19u32, 259] {
-            let mut stream = Vec::new();
-            stream.extend(9u32.to_le_bytes());
-            stream.extend(count.to_le_bytes());
-            stream.extend(0u32.to_le_bytes());
-            stream.resize(12 + 16 * count as usize, 0x11);
-            stream.extend(b"Version 9.4 JT DM");
-            assert_eq!(jt_start(&stream), Some(12 + 16 * count as usize));
-        }
-        // another layout: found by searching
-        let mut odd = vec![0u8; 100];
-        odd.extend(b"Version 9.4 JT");
-        assert_eq!(jt_start(&odd), Some(100));
-        assert_eq!(jt_start(b"short"), None);
-    }
-
-    #[test]
-    fn refine_level_stays_in_the_budget() {
-        assert_eq!(refine_level(1_000), 3);
-        assert_eq!(refine_level(100_000), 2);
-        assert_eq!(refine_level(1_000_000), 1);
-    }
-
-    #[test]
-    fn not_jt_or_garbage_is_an_error() {
-        assert!(read_jt(b"Version 10.5 JT").is_err());
-        let mut fake = b"Version 9.4 JT".to_vec();
-        fake.resize(200, 0);
-        assert!(read_jt(&fake).is_err());
-        assert!(read_nx(b"SPLMSSTR").is_err());
-        assert!(read_file(b"SPLMSSTR").is_err());
-        let newer = read_file(&[b"Version 10.0 JT".as_slice(), &[b' '; 80]].concat());
-        assert!(newer.unwrap_err().to_string().contains("10.0"));
-    }
-
-    /// The JT file inside an NX part, read as a standalone `.jt`.
-    #[test]
-    fn standalone_jt_files_are_read() {
-        let path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/tests/fixtures/cad/nist/mtc-assembly/nx/90591A141 HEX NUT.prt"
-        );
-        let nx = std::fs::read(path).unwrap();
-        let streams = crate::nxpart::streams(&nx);
-        let stream = streams
-            .iter()
-            .find(|s| s.name == crate::nxpart::JT_STREAM)
-            .and_then(|s| crate::nxpart::data(&nx, s))
-            .unwrap();
-        let jt = &stream[jt_start(stream).unwrap()..];
-        let mesh = super::super::read("jt", jt).unwrap();
-        assert_eq!(
-            mesh.triangle_count(),
-            read_nx(&nx).unwrap().triangle_count()
-        );
-    }
-}
+mod tests;

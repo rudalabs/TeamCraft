@@ -134,6 +134,24 @@ pub async fn update_deviation(
     })
 }
 
+/// `POST /as-built-deviations/{id}/confirm` – a reviewer accepts a "use as
+/// is" concession on its own.
+pub async fn confirm_concession(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<super::items::BackForm>,
+) -> AppResult<Response> {
+    let back = util::safe_redirect_target(form.back.as_deref());
+    let result = as_built::confirm_concession(&st.db, &ctx.me, id).await;
+    finish(&st, result, &back, |d| {
+        (
+            back.clone(),
+            format!("Confirmed \"use as is\" for {}", d.feature),
+        )
+    })
+}
+
 /// `POST /as-built-deviations/{id}/delete`
 pub async fn delete_deviation(
     State(st): State<AppState>,

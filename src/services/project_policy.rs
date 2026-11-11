@@ -67,6 +67,8 @@ pub struct PolicyView {
     pub updated_at: Option<DateTime<Utc>>,
     /// Interface switches and read log settings (the defaults without a row).
     pub access: AccessSettings,
+    /// Conditions on membership (step 2; none without a row).
+    pub conditions: crate::services::membership_conditions::Conditions,
     /// Newest first.
     pub elevations: Vec<Elevation>,
 }
@@ -167,9 +169,11 @@ pub async fn get(pool: &PgPool, actor: &Actor, project_id: Uuid) -> AppResult<Po
     .fetch_all(&mut *conn)
     .await?;
     let access = settings(&mut conn, project_id).await?;
+    let conditions = crate::services::membership_conditions::of(&mut conn, project_id).await?;
     Ok(PolicyView {
         project_id,
         access,
+        conditions,
         admin_read: row
             .as_ref()
             .and_then(|(m, _)| AdminRead::parse(m))
@@ -558,6 +562,10 @@ pub struct ReviewPolicyView {
     pub role_group_hidden: bool,
     /// Obsoleting and superseding needs a released change order (step 3).
     pub obsolete_requires_change: bool,
+    /// The requester of a change request does not decide it (step 9).
+    pub requester_cannot_decide: bool,
+    /// "Use as is" deviations are confirmed by a reviewer one by one (step 9).
+    pub concessions_need_review: bool,
 }
 
 /// What a manager submits.
@@ -569,6 +577,10 @@ pub struct ReviewPolicyInput {
     pub role_group_code: Option<String>,
     /// `None` leaves the setting as it is.
     pub obsolete_requires_change: Option<bool>,
+    /// `None` leaves the setting as it is.
+    pub requester_cannot_decide: Option<bool>,
+    /// `None` leaves the setting as it is.
+    pub concessions_need_review: Option<bool>,
 }
 
 async fn review_policy_of(
@@ -576,14 +588,15 @@ async fn review_policy_of(
     viewer: Option<&Actor>,
     project_id: Uuid,
 ) -> AppResult<ReviewPolicyView> {
-    let row = sqlx::query_as::<_, (Option<i32>, Option<Uuid>, bool)>(
-        "SELECT review_min_approvals, review_role_project_id, obsolete_requires_change
+    let row = sqlx::query_as::<_, (Option<i32>, Option<Uuid>, bool, bool, bool)>(
+        "SELECT review_min_approvals, review_role_project_id, obsolete_requires_change,
+                requester_cannot_decide, concessions_need_review
          FROM project_policies WHERE project_id = $1",
     )
     .bind(project_id)
     .fetch_optional(&mut *conn)
     .await?
-    .unwrap_or((None, None, false));
+    .unwrap_or((None, None, false, false, false));
     let required_reviewers = sqlx::query_as::<_, PolicyPerson>(
         "SELECT u.id, u.username, u.display_name FROM project_required_reviewers r
          JOIN users u ON u.id = r.user_id WHERE r.project_id = $1 ORDER BY u.username",
@@ -614,6 +627,8 @@ async fn review_policy_of(
         role_group,
         role_group_hidden,
         obsolete_requires_change: row.2,
+        requester_cannot_decide: row.3,
+        concessions_need_review: row.4,
     })
 }
 
@@ -640,7 +655,8 @@ pub async fn get_review_policy(
 /// * **Locks:** the group row (`FOR UPDATE`).
 /// * **Data:** the minimum is 1 to 50 or empty (all reviewers); required
 ///   `obsolete_requires_change` (`None` keeps it) makes direct obsolete and supersede in the
-///   group a 409.
+///   group a 409; `requester_cannot_decide` and `concessions_need_review`
+///   (`None` keeps them) are the two rules of step 9.
 ///   reviewers are active users with the editor role or higher, at most
 ///   [`MAX_REQUIRED_REVIEWERS`] (400). Existing changes already in review
 ///   keep being evaluated with the policy as it is when they are decided.
@@ -736,12 +752,15 @@ pub async fn set_review_policy(
     let before = review_policy_of(&mut tx, None, project_id).await?;
     sqlx::query(
         "INSERT INTO project_policies (project_id, review_min_approvals, review_role_project_id,
-                                       obsolete_requires_change, created_by, updated_by)
-         VALUES ($1, $2, $3, $5, $4, $4)
+                                       obsolete_requires_change, requester_cannot_decide,
+                                       concessions_need_review, created_by, updated_by)
+         VALUES ($1, $2, $3, $5, $6, $7, $4, $4)
          ON CONFLICT (project_id) DO UPDATE
          SET review_min_approvals = EXCLUDED.review_min_approvals,
              review_role_project_id = EXCLUDED.review_role_project_id,
              obsolete_requires_change = EXCLUDED.obsolete_requires_change,
+             requester_cannot_decide = EXCLUDED.requester_cannot_decide,
+             concessions_need_review = EXCLUDED.concessions_need_review,
              updated_by = EXCLUDED.updated_by, updated_at = now()",
     )
     .bind(project_id)
@@ -752,6 +771,16 @@ pub async fn set_review_policy(
         input
             .obsolete_requires_change
             .unwrap_or(before.obsolete_requires_change),
+    )
+    .bind(
+        input
+            .requester_cannot_decide
+            .unwrap_or(before.requester_cannot_decide),
+    )
+    .bind(
+        input
+            .concessions_need_review
+            .unwrap_or(before.concessions_need_review),
     )
     .execute(&mut *tx)
     .await?;
@@ -779,11 +808,15 @@ pub async fn set_review_policy(
             "required_reviewers": after.required_reviewers.iter().map(|p| &p.username).collect::<Vec<_>>(),
             "role_group": after.role_group.as_ref().map(|g| &g.code),
             "obsolete_requires_change": after.obsolete_requires_change,
+            "requester_cannot_decide": after.requester_cannot_decide,
+            "concessions_need_review": after.concessions_need_review,
             "previous": {
                 "min_approvals": before.min_approvals,
                 "required_reviewers": before.required_reviewers.iter().map(|p| &p.username).collect::<Vec<_>>(),
                 "role_group": before.role_group.as_ref().map(|g| &g.code),
                 "obsolete_requires_change": before.obsolete_requires_change,
+                "requester_cannot_decide": before.requester_cannot_decide,
+                "concessions_need_review": before.concessions_need_review,
             },
         }),
     )
@@ -803,6 +836,43 @@ pub(crate) async fn obsolete_requires_change(
     };
     Ok(sqlx::query_scalar::<_, bool>(
         "SELECT obsolete_requires_change FROM project_policies WHERE project_id = $1",
+    )
+    .bind(project_id)
+    .fetch_optional(&mut *conn)
+    .await?
+    .unwrap_or(false))
+}
+
+/// Whether one of these groups keeps the requester of a change request from
+/// deciding it. Items without a group and groups without a policy: no.
+pub(crate) async fn requester_cannot_decide(
+    conn: &mut PgConnection,
+    projects: &[Option<Uuid>],
+) -> AppResult<bool> {
+    let ids: Vec<Uuid> = projects.iter().flatten().copied().collect();
+    if ids.is_empty() {
+        return Ok(false);
+    }
+    Ok(sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM project_policies
+                       WHERE project_id = ANY($1) AND requester_cannot_decide)",
+    )
+    .bind(&ids)
+    .fetch_one(&mut *conn)
+    .await?)
+}
+
+/// Whether "use as is" deviations in this group need a reviewer's separate
+/// confirmation. Items without a group and groups without a policy: no.
+pub(crate) async fn concessions_need_review(
+    conn: &mut PgConnection,
+    project_id: Option<Uuid>,
+) -> AppResult<bool> {
+    let Some(project_id) = project_id else {
+        return Ok(false);
+    };
+    Ok(sqlx::query_scalar::<_, bool>(
+        "SELECT concessions_need_review FROM project_policies WHERE project_id = $1",
     )
     .bind(project_id)
     .fetch_optional(&mut *conn)
@@ -1024,26 +1094,37 @@ impl Interfaces {
     }
 }
 
-/// The interface switches and the log settings of a group.
+/// Longest accepted access review interval (ten years).
+pub const MAX_REVIEW_INTERVAL_DAYS: i32 = 3650;
+
+/// The interface switches, the log settings and the review interval of a
+/// group.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, sqlx::FromRow)]
 pub struct AccessSettings {
     #[sqlx(flatten)]
     pub interfaces: Interfaces,
     pub read_log: bool,
     pub log_retention_days: Option<i32>,
+    /// The access review is due every this many days (`None` = no schedule).
+    pub review_interval_days: Option<i32>,
 }
 
-/// A change of the switches and log settings; `None` leaves a value as it is.
+/// A change of the switches, log settings and review interval; `None`
+/// leaves a value as it is.
 #[derive(Clone, Debug, Default)]
 pub struct AccessUpdate {
     pub interfaces: Vec<(Interface, bool)>,
     pub read_log: Option<bool>,
     /// `Some(None)` keeps the log until it is purged by hand.
     pub log_retention_days: Option<Option<i32>>,
+    /// `Some(None)` removes the review schedule.
+    pub review_interval_days: Option<Option<i32>>,
 }
 
-const SETTINGS_SELECT: &str = "SELECT api_tokens, mcp, assistant, webhooks, packages, notification_content,
-            external_llm, desktop_sync, read_log, log_retention_days FROM project_policies WHERE project_id = $1";
+const SETTINGS_SELECT: &str =
+    "SELECT api_tokens, mcp, assistant, webhooks, packages, notification_content,
+            external_llm, desktop_sync, read_log, log_retention_days, review_interval_days
+     FROM project_policies WHERE project_id = $1";
 
 /// The switches and log settings of a group (defaults without a policy row).
 pub async fn settings(conn: &mut PgConnection, project_id: Uuid) -> AppResult<AccessSettings> {
@@ -1113,11 +1194,13 @@ pub async fn package_actor(
 /// * **Permission:** the actor manages the group (403; "not found" for a
 ///   group the actor may not know); the group must be restricted (409).
 /// * **Locks:** the group row (`FOR UPDATE`).
-/// * **Data:** the retention is 1 to 36500 days (400). Tightening (switching
-///   an interface off, the log on) is open to managers and administrators;
-///   loosening (switching one on, the log off, changing the retention) is
-///   for the managers while administrators are limited by the policy, like
-///   [`set_admin_read`]. No change, no audit entry.
+/// * **Data:** the retention is 1 to 36500 days, the review interval 1 to
+///   [`MAX_REVIEW_INTERVAL_DAYS`] (400). Tightening (switching an interface
+///   off, the log on, a shorter review interval) is open to managers and
+///   administrators; loosening (switching one on, the log off, changing the
+///   retention, a longer or no review interval) is for the managers while
+///   administrators are limited by the policy, like [`set_admin_read`]. No
+///   change, no audit entry.
 /// * **Audit:** `project.interfaces` with old and new values.
 /// * **Notifications / webhooks:** the other managers get an access alert; no
 ///   webhooks.
@@ -1133,6 +1216,13 @@ pub async fn set_access(
             return Err(AppError::BadRequest(
                 "The retention is 1 to 36500 days.".into(),
             ));
+        }
+    }
+    if let Some(Some(days)) = update.review_interval_days {
+        if !(1..=MAX_REVIEW_INTERVAL_DAYS).contains(&days) {
+            return Err(AppError::BadRequest(format!(
+                "The review interval is 1 to {MAX_REVIEW_INTERVAL_DAYS} days."
+            )));
         }
     }
     let mut tx = pool.begin().await?;
@@ -1161,15 +1251,25 @@ pub async fn set_access(
     if let Some(days) = update.log_retention_days {
         new.log_retention_days = days;
     }
+    if let Some(days) = update.review_interval_days {
+        new.review_interval_days = days;
+    }
     if new == old {
         tx.rollback().await?;
         return get(pool, actor, project_id).await;
     }
+    // a longer interval (or none) asks for fewer reviews: loosening
+    let fewer_reviews = match (old.review_interval_days, new.review_interval_days) {
+        (Some(_), None) => true,
+        (Some(o), Some(n)) => n > o,
+        _ => false,
+    };
     let loosens = Interface::ALL
         .into_iter()
         .any(|i| new.interfaces.allowed(i) && !old.interfaces.allowed(i))
         || (old.read_log && !new.read_log)
-        || new.log_retention_days != old.log_retention_days;
+        || new.log_retention_days != old.log_retention_days
+        || fewer_reviews;
     if loosens {
         require_member_manager_under_policy(
             &mut tx,
@@ -1182,8 +1282,9 @@ pub async fn set_access(
     sqlx::query(
         "INSERT INTO project_policies (project_id, api_tokens, mcp, assistant, webhooks, packages,
                                        notification_content, external_llm, desktop_sync,
-                                       read_log, log_retention_days, created_by, updated_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
+                                       read_log, log_retention_days, created_by, updated_by,
+                                       review_interval_days)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12, $13)
          ON CONFLICT (project_id) DO UPDATE
          SET api_tokens = EXCLUDED.api_tokens, mcp = EXCLUDED.mcp,
              assistant = EXCLUDED.assistant, webhooks = EXCLUDED.webhooks,
@@ -1192,6 +1293,7 @@ pub async fn set_access(
              external_llm = EXCLUDED.external_llm, desktop_sync = EXCLUDED.desktop_sync,
              read_log = EXCLUDED.read_log,
              log_retention_days = EXCLUDED.log_retention_days,
+             review_interval_days = EXCLUDED.review_interval_days,
              updated_by = EXCLUDED.updated_by, updated_at = now()",
     )
     .bind(project_id)
@@ -1206,6 +1308,7 @@ pub async fn set_access(
     .bind(new.read_log)
     .bind(new.log_retention_days)
     .bind(actor.id)
+    .bind(new.review_interval_days)
     .execute(&mut *tx)
     .await?;
     audit::record(

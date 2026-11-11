@@ -7,10 +7,13 @@
 //! * **E-mail** via SMTP ([lettre](https://lettre.rs), MIT) when
 //!   `TEAMCRAFT_SMTP_URL` and `TEAMCRAFT_MAIL_FROM` are set; plain text with a
 //!   link to the object and to the notification settings.
-//! * **Mattermost** via an incoming webhook (`TEAMCRAFT_MATTERMOST_WEBHOOK`):
-//!   a post in the webhook's channel that @-mentions the user, or a direct
-//!   message (`TEAMCRAFT_MATTERMOST_DIRECT=true`). The Mattermost user is the
-//!   TeamCraft username unless the user set another one.
+//! * **Mattermost** as a direct message from a bot account through the REST API
+//!   ([`crate::mattermost`], `TEAMCRAFT_MATTERMOST_URL` + `…_BOT_TOKEN`); never a
+//!   post in a channel. An unknown or deactivated user fails at once with a
+//!   reason the user sees. Deprecated: an incoming webhook
+//!   (`TEAMCRAFT_MATTERMOST_WEBHOOK`): a post in the webhook's channel that
+//!   @-mentions the user, or a direct message (`TEAMCRAFT_MATTERMOST_DIRECT=true`).
+//!   The Mattermost user is the TeamCraft username unless the user set another one.
 //!
 //! Without configuration the pending rows are marked `skipped`. A failed
 //! delivery is retried on the next runs and marked `failed` after
@@ -26,7 +29,11 @@ use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use crate::{config::Config, error::AppResult};
+use crate::{
+    config::Config,
+    error::AppResult,
+    mattermost::{BotClient, ChatFailure, DirectMessenger},
+};
 
 /// Delivery attempts per channel before a notification is marked `failed`.
 pub const MAX_ATTEMPTS: i32 = 5;
@@ -81,7 +88,16 @@ pub struct Delivery {
     public_url: String,
     instance_name: String,
     mail: Option<(Arc<dyn MailSender>, Mailbox)>,
-    chat: Option<(Arc<dyn ChatSender>, bool)>,
+    chat: Option<Chat>,
+}
+
+/// How Mattermost is reached.
+#[derive(Clone)]
+enum Chat {
+    /// Bot account, REST API: direct messages only.
+    Bot(Arc<dyn DirectMessenger>),
+    /// Deprecated incoming webhook (`direct`: `"channel": "@user"`).
+    Webhook(Arc<dyn ChatSender>, bool),
 }
 
 /// What one run delivered.
@@ -109,16 +125,34 @@ impl Delivery {
             None => None,
         };
         let chat = match &config.mattermost {
-            Some(m) => {
-                let http = reqwest::Client::builder()
-                    .timeout(Duration::from_secs(10))
-                    .build()?;
-                let sender = WebhookSender {
-                    http,
-                    url: m.webhook.clone(),
-                };
-                Some((Arc::new(sender) as Arc<dyn ChatSender>, m.direct))
-            }
+            Some(m) => match (&m.bot, &m.webhook) {
+                (Some(bot), webhook) => {
+                    if webhook.is_some() {
+                        tracing::warn!(
+                            "TEAMCRAFT_MATTERMOST_WEBHOOK is ignored: notifications go out as direct messages of the bot"
+                        );
+                    }
+                    let client = BotClient::new(&bot.url, &bot.token)?;
+                    Some(Chat::Bot(Arc::new(client) as Arc<dyn DirectMessenger>))
+                }
+                (None, Some(webhook)) => {
+                    tracing::warn!(
+                        "TEAMCRAFT_MATTERMOST_WEBHOOK is deprecated: it posts into a channel or as the webhook's creator. Create a bot account and set TEAMCRAFT_MATTERMOST_URL and TEAMCRAFT_MATTERMOST_BOT_TOKEN (docs: admin/upgrade)"
+                    );
+                    let http = reqwest::Client::builder()
+                        .timeout(Duration::from_secs(10))
+                        .build()?;
+                    let sender = WebhookSender {
+                        http,
+                        url: webhook.clone(),
+                    };
+                    Some(Chat::Webhook(
+                        Arc::new(sender) as Arc<dyn ChatSender>,
+                        m.direct,
+                    ))
+                }
+                (None, None) => None,
+            },
             None => None,
         };
         Ok(Delivery {
@@ -144,8 +178,22 @@ impl Delivery {
             public_url: public_url.trim_end_matches('/').to_string(),
             instance_name: instance_name.to_string(),
             mail,
-            chat,
+            chat: chat.map(|(sender, direct)| Chat::Webhook(sender, direct)),
         })
+    }
+
+    /// Delivery whose Mattermost is a bot with a fake API (tests).
+    pub fn with_bot(
+        public_url: &str,
+        instance_name: &str,
+        bot: Arc<dyn DirectMessenger>,
+    ) -> Delivery {
+        Delivery {
+            public_url: public_url.trim_end_matches('/').to_string(),
+            instance_name: instance_name.to_string(),
+            mail: None,
+            chat: Some(Chat::Bot(bot)),
+        }
     }
 
     pub fn email_enabled(&self) -> bool {
@@ -255,6 +303,7 @@ impl Delivery {
                 }
             }
             let mut chat_state = row.chat_state.clone();
+            let mut permanent_chat = false;
             if chat_state == "pending" {
                 match self
                     .post_chat(
@@ -271,7 +320,11 @@ impl Delivery {
                         chat_state = "sent".into();
                         report.chats += 1;
                     }
-                    Err(e) => errors.push(format!("Mattermost: {e}")),
+                    Err(e) => {
+                        // an unknown or deactivated user does not appear by retrying
+                        permanent_chat = e.permanent;
+                        errors.push(format!("Mattermost: {e}"));
+                    }
                 }
             }
             let attempts = row.delivery_attempts + i32::from(!errors.is_empty());
@@ -285,6 +338,9 @@ impl Delivery {
                     if chat_state == "pending" {
                         chat_state = "failed".into();
                     }
+                }
+                if permanent_chat && chat_state == "pending" {
+                    chat_state = "failed".into();
                 }
             }
             sqlx::query(
@@ -345,22 +401,29 @@ impl Delivery {
         url: &str,
         user: &str,
         confidential: bool,
-    ) -> anyhow::Result<()> {
-        let (sender, direct) = self
-            .chat
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Mattermost is not configured"))?;
-        let (title, body) = chat_text(instance_name, title, body, confidential, *direct);
-        sender
-            .post(chat_payload(
-                instance_name,
-                &title,
-                &body,
-                url,
-                user,
-                *direct,
-            ))
-            .await
+    ) -> Result<(), ChatFailure> {
+        match self.chat.as_ref() {
+            None => Err(ChatFailure::transient("Mattermost is not configured")),
+            // a direct message is read by its recipient only: full text
+            Some(Chat::Bot(bot)) => {
+                bot.send(user, &crate::mattermost::dm_text(title, body, url))
+                    .await
+            }
+            Some(Chat::Webhook(sender, direct)) => {
+                let (title, body) = chat_text(instance_name, title, body, confidential, *direct);
+                sender
+                    .post(chat_payload(
+                        instance_name,
+                        &title,
+                        &body,
+                        url,
+                        user,
+                        *direct,
+                    ))
+                    .await?;
+                Ok(())
+            }
+        }
     }
 }
 

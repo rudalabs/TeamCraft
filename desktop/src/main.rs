@@ -10,10 +10,12 @@ mod abortable;
 mod acp;
 mod addfiles;
 mod api;
+mod autoallow;
 mod bomimport;
 mod cadexport;
 mod commands;
 mod compat;
+mod crash;
 mod folderimport;
 mod layout;
 mod resume;
@@ -126,6 +128,7 @@ fn build_menu(app: &tauri::App) -> tauri::Result<()> {
         .item(&item("go-worklist", "My Worklist", Some("CmdOrCtrl+2"))?)
         .item(&item("go-changes", "Changes", Some("CmdOrCtrl+3"))?)
         .item(&item("go-agent", "Agent", Some("CmdOrCtrl+4"))?)
+        .item(&item("go-projects", "Projects", Some("CmdOrCtrl+5"))?)
         .separator()
         .item(&item("zoom-in", "Zoom In (Ctrl + wheel)", None)?)
         .item(&item("zoom-out", "Zoom Out", None)?)
@@ -151,11 +154,20 @@ fn build_menu(app: &tauri::App) -> tauri::Result<()> {
 }
 
 fn main() {
+    // first: every later panic becomes a local crash report (src/crash.rs)
+    crash::install_panic_hook();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let config_dir = app.path().app_config_dir()?;
+            // crash reports: report sessions that ended unexpectedly, start ours;
+            // one found later (a parallel instance that died) is announced to the UI
+            let crash_dir = crash::open(&config_dir);
+            let handle = app.handle().clone();
+            crash::start_session(&crash_dir, move || {
+                let _ = handle.emit("crash-reports", ());
+            });
             let settings = settings::Settings::load(&config_dir);
             let zoom = settings.zoom.map(commands::clamp_zoom);
             let theme = window_theme(settings.skin.as_deref());
@@ -242,9 +254,21 @@ fn main() {
             commands::agent_set_model,
             commands::agent_cancel,
             commands::agent_stop,
+            commands::crash_reports,
+            commands::crash_reports_open_issue,
+            commands::crash_reports_discard,
+            commands::set_crash_prompt,
+            commands::record_ui_error,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running TeamCraft Desktop");
+        .build(tauri::generate_context!())
+        .expect("error while building TeamCraft Desktop")
+        .run(|_app, event| {
+            // a normal exit removes the session marker; a missing exit leaves it
+            // behind and the next start reports the session as ended unexpectedly
+            if let tauri::RunEvent::Exit = event {
+                crash::end_session();
+            }
+        });
 }
 
 #[cfg(test)]
