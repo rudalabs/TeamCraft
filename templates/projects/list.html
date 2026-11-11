@@ -21,7 +21,7 @@
     {% for p in projects %}
       <tr>
         <td class="mono nowrap"><a href="/projects/{{ p.id }}">{{ p.code }}</a></td>
-        <td>{{ p.name }}{% if p.visibility == "restricted" %} {{ m.restricted("Restricted") }}{% endif %}{% if p.id in my_projects %} <span class="badge badge-member">member</span>{% endif %}</td>
+        <td>{{ p.name }}{% if p.visibility == "restricted" %} {{ m.restricted("Restricted") }}{% endif %}{% if p.id in my_projects %} <span class="badge badge-member">member</span>{% endif %}{% if p.id in review_due %} <a class="badge badge-in_review" href="/projects/{{ p.id }}/access-review">access review due</a>{% endif %}</td>
         <td class="small muted">{{ p.description }}</td>
         <td class="num">{{ p.member_count }}</td>
         <td>{% if p.active %}<span class="badge badge-released">active</span>{% else %}<span class="badge badge-obsolete">archived</span>{% endif %}</td>

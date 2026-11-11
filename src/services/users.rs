@@ -58,7 +58,13 @@ impl From<ActorRow> for Actor {
             } else {
                 String::new()
             },
-            projects: row.projects,
+            // a member hidden by the conditions on membership of a group is
+            // treated as a non-member of it (also for editing)
+            projects: row
+                .projects
+                .into_iter()
+                .filter(|p| !row.hidden_projects.contains(p))
+                .collect(),
             hidden_projects: row.hidden_projects,
         }
     }
@@ -95,16 +101,33 @@ pub async fn active_actor(pool: &PgPool, user_id: Uuid) -> AppResult<Option<Acto
 // ---------------------------------------------------------------------------
 
 pub async fn actor_for_session(pool: &PgPool, token: &str) -> AppResult<Option<Actor>> {
+    Ok(session_actor(pool, token).await?.map(|(actor, _)| actor))
+}
+
+#[derive(sqlx::FromRow)]
+struct SessionActorRow {
+    #[sqlx(flatten)]
+    actor: ActorRow,
+    session_started: chrono::DateTime<Utc>,
+}
+
+/// The user of a web session and when the session began (for the maximum
+/// sign-in age of need-to-know groups); `None` for an unknown or expired
+/// session or a deactivated user.
+pub async fn session_actor(
+    pool: &PgPool,
+    token: &str,
+) -> AppResult<Option<(Actor, chrono::DateTime<Utc>)>> {
     let cols = actor_columns();
-    let row = sqlx::query_as::<_, ActorRow>(&format!(
-        "SELECT {cols}
+    let row = sqlx::query_as::<_, SessionActorRow>(&format!(
+        "SELECT {cols}, s.created_at AS session_started
          FROM sessions s JOIN users u ON u.id = s.user_id
          WHERE s.token_hash = $1 AND s.expires_at > now() AND u.active"
     ))
     .bind(auth::hash_token(token))
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(Actor::from))
+    Ok(row.map(|r| (Actor::from(r.actor), r.session_started)))
 }
 
 #[derive(sqlx::FromRow)]
@@ -985,6 +1008,10 @@ pub struct OidcIdentity {
     pub role: Role,
     /// All IdP groups (used to synchronise project memberships).
     pub groups: Vec<String>,
+    /// The claims of the sign-in as name → values; only those that a
+    /// need-to-know group's conditions name are kept
+    /// (`membership_conditions::store_claims`).
+    pub claims: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 /// Finds or provisions the user for an OIDC identity and synchronises name,
@@ -996,7 +1023,9 @@ pub struct OidcIdentity {
 /// * **Locks:** the existing user row (`FOR UPDATE`).
 /// * **Data:** the role always follows the IdP groups; a new user gets a free
 ///   username (suffix `-2` to `-99`, else 409). Memberships from the IdP are
-///   added and dropped to match the groups; manual ones are kept.
+///   added and dropped to match the groups; manual ones are kept. The claims
+///   that a need-to-know group's conditions name replace the stored ones
+///   (`users.idp_claims`); other claims are not kept.
 /// * **Audit:** `user.provision` for a new user, `user.role_sync` when the
 ///   role changed.
 /// * **Notifications / webhooks:** none.
@@ -1100,6 +1129,7 @@ pub async fn upsert_oidc_user(pool: &PgPool, ident: OidcIdentity) -> AppResult<U
         user
     };
     sync_oidc_memberships(&mut tx, user.id, &ident.groups).await?;
+    crate::services::membership_conditions::store_claims(&mut tx, user.id, &ident.claims).await?;
     tx.commit().await?;
     Ok(user)
 }

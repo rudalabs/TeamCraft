@@ -567,3 +567,28 @@ pub async fn call(st: &AppState, me: &Actor, name: &str, args: &Value) -> Value 
         Err(e) => from_error(name, e),
     }
 }
+
+/// [`call`] on behalf of a real user, with the read log of need-to-know
+/// groups (`services::access_log::record_tool_read`): a successful read tool
+/// that named an item of a group that logs reads leaves an entry with the
+/// channel of `log` (MCP client or assistant). A read that cannot be logged
+/// is not handed out, like a download.
+///
+/// Calls made only to compare results (the assistant's outsider check) use
+/// [`call`] and log nothing.
+pub async fn call_logged(
+    st: &AppState,
+    me: &Actor,
+    name: &str,
+    args: &Value,
+    log: &crate::services::access_log::AccessCtx,
+) -> Value {
+    let result = call(st, me, name, args).await;
+    if result["isError"] == true || !is_read_only(name) {
+        return result;
+    }
+    match crate::services::access_log::record_tool_read(&st.db, log, me, name, args).await {
+        Ok(()) => result,
+        Err(e) => from_error(name, e),
+    }
+}

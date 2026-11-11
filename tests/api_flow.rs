@@ -926,6 +926,7 @@ async fn sso_groups_sync_project_memberships() {
         email: Some("max@example.org".into()),
         role: Role::Editor,
         groups: groups.iter().map(|g| g.to_string()).collect(),
+        claims: Default::default(),
     };
     let rocket = app.project_id("ROCKET").await;
     let rover = app.project_id("ROVER").await;

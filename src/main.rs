@@ -485,6 +485,12 @@ async fn serve(no_migrate: bool) -> Result<ExitCode> {
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e, "session cleanup failed"),
             }
+            // need-to-know groups whose access review is due (#151)
+            match services::access_review::remind_due(&pool).await {
+                Ok(n) if n > 0 => tracing::info!(groups = n, "reminded of due access reviews"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "access review reminders failed"),
+            }
             match services::imports::purge_stale(&pool, &vault).await {
                 Ok(n) if n > 0 => tracing::info!(removed = n, "removed stale staged imports"),
                 Ok(_) => {}

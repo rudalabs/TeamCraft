@@ -30,6 +30,10 @@
 * **Subagents** Only create subagents when explicitly specified.
 * **Branch** You do not have permissions to push to the `main` branch. Create feature branches instead, push there and
   open merge requests to `main` with the `gh` tool instead.
+* **Building and testing** Prefer to build and test using `cargo` as background processes. Those should not be blocking you from 
+  continuing your work. Prefer not to build and test in multiple processes at the same time. If you do that, you seem to rapidly
+  fill up the RAM and CPU. When that happens the whole computer slows and then it gets significantly harder to do other tasks in
+  parallel. If need-be build and test at the end of a task.
 
 ## Git rules
 

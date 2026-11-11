@@ -32,11 +32,13 @@ fn roles() -> Value {
 
 pub async fn projects(State(st): State<AppState>, ctx: WebCtx) -> AppResult<Response> {
     let list = projects::list_managed(&st.db, &ctx.me).await?;
+    // groups whose access review is due, among those the user manages
+    let review_due = access_review::due_for(&st.db, &ctx.me).await?;
     render(
         &st,
         &ctx,
         "projects/list.html",
-        json!({ "projects": list, "my_projects": ctx.me.projects }),
+        json!({ "projects": list, "my_projects": ctx.me.projects, "review_due": review_due }),
     )
 }
 
@@ -49,6 +51,7 @@ pub struct ProjectQuery {
 pub async fn project_show(
     State(st): State<AppState>,
     ctx: WebCtx,
+    origin: crate::auth::Origin,
     Path(id): Path<Uuid>,
     Query(q): Query<ProjectQuery>,
 ) -> AppResult<Response> {
@@ -91,6 +94,10 @@ pub async fn project_show(
             })
             .collect(),
         None => Vec::new(),
+    };
+    let review_schedule = match &policy {
+        Some(_) => Some(access_review::schedule(&st.db, id).await?),
+        None => None,
     };
     let access_entries = match &policy {
         Some(_) if readable => {
@@ -143,6 +150,11 @@ pub async fn project_show(
             "admin_modes": admin_modes,
             "interface_rows": interface_rows,
             "access_entries": access_entries,
+            "review_schedule": review_schedule,
+            "claim_lines": policy.as_ref().map(|p| {
+                crate::services::membership_conditions::claim_lines(&p.conditions.required_claims)
+            }),
+            "my_address": origin.client.map(|ip| ip.to_string()),
             "elevation_minutes": project_policy::ELEVATION_MINUTES,
             "result_templates": templates,
             "oidc_enabled": st.config.oidc.is_some(),
@@ -309,6 +321,19 @@ pub struct AccessForm {
     read_log: Option<String>,
     #[serde(default)]
     retention_days: String,
+    #[serde(default)]
+    review_interval_days: String,
+}
+
+/// An optional number of days from a form field (empty = none).
+fn optional_days(raw: &str, what: &str) -> AppResult<Option<i32>> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    raw.parse::<i32>()
+        .map(Some)
+        .map_err(|_| AppError::BadRequest(format!("The {what} is a number of days (or empty).")))
 }
 
 /// `POST /projects/{id}/access` – managers of the group, admins: interface
@@ -321,16 +346,14 @@ pub async fn update_access(
 ) -> AppResult<Response> {
     use project_policy::Interface;
     let back = format!("/projects/{id}");
-    let retention = form.retention_days.trim();
-    let days = if retention.is_empty() {
-        Ok(None)
-    } else {
-        retention.parse::<i32>().map(Some).map_err(|_| {
-            AppError::BadRequest("The retention is a number of days (or empty).".into())
-        })
-    };
+    let days = optional_days(&form.retention_days, "retention").and_then(|days| {
+        Ok((
+            days,
+            optional_days(&form.review_interval_days, "review interval")?,
+        ))
+    });
     let result = match days {
-        Ok(days) => {
+        Ok((days, review_days)) => {
             let update = project_policy::AccessUpdate {
                 interfaces: vec![
                     (Interface::ApiTokens, form.api_tokens.is_some()),
@@ -347,6 +370,7 @@ pub async fn update_access(
                 ],
                 read_log: Some(form.read_log.is_some()),
                 log_retention_days: Some(days),
+                review_interval_days: Some(review_days),
             };
             project_policy::set_access(&st.db, &ctx.me, id, update).await
         }
@@ -354,6 +378,64 @@ pub async fn update_access(
     };
     finish(&st, result, &back, |_| {
         (back.clone(), "Interfaces and read log saved.".to_string())
+    })
+}
+
+#[derive(Deserialize)]
+pub struct ConditionsForm {
+    /// One claim condition per line: `claim = value, value`.
+    #[serde(default)]
+    required_claims: String,
+    /// One address range per line (or separated by commas).
+    #[serde(default)]
+    allowed_networks: String,
+    #[serde(default)]
+    max_signin_age_hours: String,
+}
+
+/// The conditions update of the form; a malformed field is a 400.
+fn conditions_update(
+    form: &ConditionsForm,
+) -> AppResult<crate::services::membership_conditions::ConditionsUpdate> {
+    use crate::services::membership_conditions as mc;
+    let hours = match form.max_signin_age_hours.trim() {
+        "" => None,
+        raw => Some(raw.parse::<i32>().map_err(|_| {
+            AppError::BadRequest("The maximum sign-in age is a number of hours (or empty).".into())
+        })?),
+    };
+    Ok(mc::ConditionsUpdate {
+        required_claims: Some(mc::parse_claim_lines(&form.required_claims)?),
+        allowed_networks: Some(
+            form.allowed_networks
+                .split(['\n', ','])
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect(),
+        ),
+        max_signin_age_hours: Some(hours),
+    })
+}
+
+/// `POST /projects/{id}/conditions` – managers of the group, admins: the
+/// conditions on membership (#151, step 2).
+pub async fn update_conditions(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    origin: crate::auth::Origin,
+    Path(id): Path<Uuid>,
+    Form(form): Form<ConditionsForm>,
+) -> AppResult<Response> {
+    let back = format!("/projects/{id}");
+    let result = match conditions_update(&form) {
+        Ok(update) => {
+            crate::services::membership_conditions::set(&st.db, &ctx.me, id, update, &origin).await
+        }
+        Err(e) => Err(e),
+    };
+    finish(&st, result, &back, |_| {
+        (back.clone(), "Conditions on membership saved.".to_string())
     })
 }
 
@@ -1004,6 +1086,115 @@ pub async fn access_review(
         &ctx,
         "projects/access_review.html",
         json!({ "project_id": id, "report": report, "max_note": access_review::MAX_NOTE_CHARS }),
+    )
+}
+
+/// `GET /projects/{id}/access-log` – the read and download log of a group
+/// with filters and paging (managers and administrators who read it).
+pub async fn access_log_page(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Query(q): Query<access_log::FilterQuery>,
+) -> AppResult<Response> {
+    let project = projects::get_for_management(&st.db, &ctx.me, id).await?;
+    let (page, error) = match q.parse() {
+        Ok(filter) => (
+            Some(
+                access_log::page(
+                    &st.db,
+                    &ctx.me,
+                    id,
+                    &access_log::Filter {
+                        limit: Some(100),
+                        ..filter
+                    },
+                )
+                .await?,
+            ),
+            None,
+        ),
+        // a bad field is shown next to the form, the rights are still checked
+        Err(AppError::BadRequest(msg)) => {
+            access_log::list(
+                &st.db,
+                &ctx.me,
+                id,
+                &access_log::Filter {
+                    limit: Some(1),
+                    ..Default::default()
+                },
+            )
+            .await?;
+            (None, Some(msg))
+        }
+        Err(e) => return Err(e),
+    };
+    // the filter as a query string, for the paging links
+    let fields: Vec<(&str, Option<String>)> = vec![
+        ("user", q.user.clone()),
+        ("kind", q.kind.clone()),
+        ("channel", q.channel.clone()),
+        ("object", q.object.clone()),
+        ("since", q.since.clone()),
+        ("until", q.until.clone()),
+    ];
+    let filtered = fields
+        .iter()
+        .any(|(_, v)| v.as_deref().is_some_and(|v| !v.trim().is_empty()));
+    let base: String = fields
+        .iter()
+        .filter_map(|(k, v)| {
+            v.as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(|v| format!("{k}={}&", util::pct_encode(v)))
+        })
+        .collect();
+    let link = |before: Option<Uuid>| {
+        let query = match before {
+            Some(b) => format!("{base}before={b}"),
+            None => base.trim_end_matches('&').to_string(),
+        };
+        if query.is_empty() {
+            format!("/projects/{id}/access-log")
+        } else {
+            format!("/projects/{id}/access-log?{query}")
+        }
+    };
+    let read_log = {
+        let mut conn = st.db.acquire().await?;
+        project_policy::settings(&mut conn, id).await?.read_log
+    };
+    let kinds: Vec<Value> = access_log::Kind::ALL
+        .iter()
+        .map(|k| json!({ "value": k.as_str(), "label": k.label() }))
+        .collect();
+    let channels: Vec<Value> = access_log::Channel::ALL
+        .iter()
+        .map(|c| json!({ "value": c.as_str(), "label": c.label() }))
+        .collect();
+    let (entries, next) = match page {
+        Some(p) => (p.entries, p.next),
+        None => (Vec::new(), None),
+    };
+    render(
+        &st,
+        &ctx,
+        "projects/access_log.html",
+        json!({
+            "project": project,
+            "query": q,
+            "entries": entries,
+            "next_link": next.map(|n| link(Some(n))),
+            "first_page_link": q.before.map(|_| link(None)),
+            "filtered": filtered,
+            "read_log": read_log,
+            "error": error,
+            "kinds": kinds,
+            "channels": channels,
+            "collapse_minutes": access_log::COLLAPSE_MINUTES,
+        }),
     )
 }
 

@@ -45,9 +45,9 @@ use crate::{
     services::{
         access_log::{self, AccessCtx},
         access_review, attributes, audit, bom, bom_references, changes, checkouts, desktop, files,
-        impacts, imports, items, mass_properties, notifications, package, project_policy, projects,
-        references, requests, reviewers, revisions, similar, stats, structure, uploads, users,
-        workset, Page,
+        impacts, imports, items, mass_properties, membership_conditions, notifications, package,
+        project_policy, projects, references, requests, reviewers, revisions, similar, stats,
+        structure, uploads, users, workset, Page,
     },
     web, AppState,
 };
@@ -510,8 +510,8 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/projects                                  {code, name, description?, oidc_group?, visibility?}",
             "PUT    /api/v1/projects/{code}/visibility                {visibility: internal|restricted} – managers and admins",
             "GET    /api/v1/projects/{code}/policy                   need-to-know policy and elevation history – managers and admins",
-            "PUT    /api/v1/projects/{code}/policy   {admin_read?, interfaces?: {api_tokens|mcp|assistant|webhooks|packages|notification_content|external_llm|desktop_sync: bool}, read_log?, log_retention_days?} need-to-know policy – managers and admins",
-            "GET    /api/v1/projects/{code}/access-log               ?user=&kind=view|download|package|export&since=&until=&limit= read and download log (groups with read_log) – managers and admins",
+            "PUT    /api/v1/projects/{code}/policy   {admin_read?, interfaces?: {api_tokens|mcp|assistant|webhooks|packages|notification_content|external_llm|desktop_sync: bool}, read_log?, log_retention_days?, review_interval_days?, required_claims?: [{claim, values}], allowed_networks?: [cidr], max_signin_age_hours?} need-to-know policy – managers and admins",
+            "GET    /api/v1/projects/{code}/access-log               ?user=&kind=view|download|package|export|workset&channel=web|api|mcp|assistant|desktop&object=&since=&until=&limit=&before= read and download log (groups with read_log), one page with `next` – managers and admins",
             "GET    /api/v1/projects/{code}/review-policy            review policy: min approvals, required reviewers, role group",
             "PUT    /api/v1/projects/{code}/review-policy            {min_approvals?, required_reviewers: [username], role_group?, obsolete_requires_change?, requester_cannot_decide?, concessions_need_review?} – managers and admins",
             "POST   /api/v1/projects/{code}/elevations               {reason} administrator opens 60 minutes of access (policy with_reason)",
@@ -763,6 +763,7 @@ struct AssistantBody {
 async fn assistant_ask(
     State(st): State<AppState>,
     ApiUser(me): ApiUser,
+    origin: crate::auth::Origin,
     ApiJson(body): ApiJson<AssistantBody>,
 ) -> AppResult<Json<Value>> {
     let run = crate::services::assistant::chat(
@@ -773,6 +774,7 @@ async fn assistant_ask(
         &body.context,
         body.allow_drafts,
         body.thread,
+        origin,
     )
     .await?;
     Ok(Json(json!(run)))

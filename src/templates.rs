@@ -40,6 +40,7 @@ pub const TEMPLATES: &[(&str, &str)] = embed![
     "projects/list.html",
     "projects/show.html",
     "projects/access_review.html",
+    "projects/access_log.html",
     "files/preview.html",
     "admin/users.html",
     "admin/user_edit.html",
@@ -1496,7 +1497,9 @@ mod tests {
         render(
             &env,
             "projects/list.html",
-            with_common(json!({ "projects": [project()], "my_projects": [ROCKET] })),
+            with_common(
+                json!({ "projects": [project()], "my_projects": [ROCKET], "review_due": [] }),
+            ),
         );
         let html = render(
             &env,
@@ -1506,14 +1509,52 @@ mod tests {
                 "report": { "project_code": "ROVER", "project_name": "Rover <x>", "generated_at": TS,
                     "admin_read": "with_reason", "administrators_outside": 2, "stale_days": 90,
                     "members": [{ "username": "erika", "display_name": "Erika", "role": "editor", "manager": true,
-                                  "source": "oidc", "active": true, "added_at": TS, "last_login_at": null, "stale": true }],
+                                  "source": "oidc", "active": true, "added_at": TS, "last_login_at": null, "stale": true,
+                                  "conditions_met": false }],
+                    "conditions": { "required_claims": [{ "claim": "site", "values": ["a", "b"] }],
+                                    "allowed_networks": [], "max_signin_age_hours": null },
                     "elevations": [{ "id": OTHER, "project_id": OTHER, "user_id": OTHER, "username": "root", "reason": "audit <b>",
                                     "started_at": TS, "expires_at": TS, "ended_at": null, "active": false }],
                     "reviews": [{ "id": OTHER, "username": "root", "note": "ok", "reviewed_at": TS,
-                                  "admin_read": "none", "member_count": 1 }] },
+                                  "admin_read": "none", "member_count": 1 }],
+                    "schedule": { "interval_days": 90, "last_review_at": TS, "next_review_at": TS, "due": true } },
             })),
         );
         assert!(html.contains("no sign-in for 90 days") && html.contains("audit &lt;b&gt;"));
+        assert!(html.contains("review of this group is due") && html.contains("every 90 days"));
+        assert!(html.contains("is one of a, b") && html.contains("not met"));
+        let entry = json!({ "id": OTHER, "at": TS, "user_id": OTHER, "username": "erika",
+                            "channel": "assistant", "kind": "view", "object_type": "item",
+                            "object_id": OTHER, "label": "PRT-1 <x>", "client_address": "192.0.2.4",
+                            "detail": "get_bom" });
+        let html = render(
+            &env,
+            "projects/access_log.html",
+            with_common(json!({
+                "project": project(), "entries": [entry],
+                "query": { "user": "erika", "kind": "view", "channel": "assistant", "object": null,
+                           "since": "2026-11-01", "until": null, "limit": null, "before": null },
+                "next_link": "/projects/x/access-log?user=erika&before=y", "first_page_link": null,
+                "filtered": true, "read_log": true, "error": null, "collapse_minutes": 5,
+                "kinds": [{ "value": "view", "label": "View" }],
+                "channels": [{ "value": "assistant", "label": "Assistant" }],
+            })),
+        );
+        assert!(html.contains("PRT-1 &lt;x&gt;") && html.contains("get_bom"));
+        assert!(html.contains("Older entries") && !html.contains("Newest entries"));
+        assert!(html.contains("value=\"assistant\" selected"));
+        let html = render(
+            &env,
+            "projects/access_log.html",
+            with_common(json!({
+                "project": project(), "entries": [], "query": {}, "next_link": null,
+                "first_page_link": "/projects/x/access-log", "filtered": false, "read_log": false,
+                "error": "since must be a date", "collapse_minutes": 5, "kinds": [], "channels": [],
+            })),
+        );
+        assert!(
+            html.contains("the log of this group is off") && html.contains("since must be a date")
+        );
         let html = render(
             &env,
             "projects/show.html",
@@ -1576,11 +1617,16 @@ mod tests {
                 "can_edit": true, "oidc_enabled": false, "can_manage": true, "readable": true,
                 "result_templates": [],
                 "policy": { "admin_read": "implicit", "access": { "read_log": true, "log_retention_days": 90,
-                    "interfaces": { "api_tokens": true, "mcp": false, "assistant": true, "webhooks": true, "packages": true } } },
+                    "review_interval_days": 120,
+                    "interfaces": { "api_tokens": true, "mcp": false, "assistant": true, "webhooks": true, "packages": true } },
+                    "conditions": { "required_claims": [{ "claim": "site", "values": ["main-office"] }],
+                                    "allowed_networks": ["10.0.0.0/8", "192.168.1.0/24"], "max_signin_age_hours": 12 } },
+                "review_schedule": { "interval_days": 120, "last_review_at": null, "next_review_at": TS, "due": true },
+                "claim_lines": "site = main-office, <x>", "my_address": "10.1.2.3",
                 "admin_modes": [{ "value": "implicit", "label": "Implicit" }],
                 "interface_rows": [{ "name": "mcp", "label": "MCP <server>", "allowed": false }],
                 "access_entries": [{ "id": OTHER, "at": TS, "username": "erika", "channel": "api", "kind": "download",
-                    "label": "<b>secret.step</b>", "client_address": "10.0.0.1" }],
+                    "label": "<b>secret.step</b>", "client_address": "10.0.0.1", "detail": "" }],
                 "numbering": { "scheme": "{TYPE}-{SEQ:6}", "is_default": true, "next": [] },
                 "scheme_input": "", "previewing": false, "scheme_error": null, "default_scheme": "{TYPE}-{SEQ:6}",
             })),
@@ -1594,6 +1640,10 @@ mod tests {
             html.contains("&lt;b&gt;secret.step"),
             "log labels are escaped"
         );
+        assert!(html.contains("access review due") && html.contains("value=\"120\""));
+        assert!(html.contains("/access-log\""), "the whole log is linked");
+        assert!(html.contains("/conditions\"") && html.contains("main-office, &lt;x&gt;"));
+        assert!(html.contains("10.1.2.3") && html.contains("value=\"12\""));
         render(
             &env,
             "admin/users.html",

@@ -446,6 +446,7 @@ fn identity_from_claims(claims: &Value, config: &OidcConfig) -> AppResult<OidcId
         email: get("email"),
         role,
         groups,
+        claims: crate::services::membership_conditions::claim_values(claims),
     })
 }
 

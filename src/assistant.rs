@@ -159,6 +159,11 @@ pub struct Question {
     pub limits: String,
     /// `ResultValues`: names of the report files to read (a hint; empty = all).
     pub files: Vec<String>,
+    /// Where the request that asked comes from (client address, session,
+    /// token): every tool step applies the conditions on membership of
+    /// need-to-know groups with it, and the read log records the address.
+    /// Empty in tests and background runs.
+    pub origin: crate::auth::Origin,
 }
 
 fn clean(value: Option<&str>) -> Option<String> {
@@ -215,6 +220,7 @@ impl Question {
             thread: false,
             limits: String::new(),
             files: Vec::new(),
+            origin: Default::default(),
         };
         match action.needs() {
             "revision" if q.item.is_none() => {
@@ -580,6 +586,12 @@ pub struct McpTools<'a> {
     pub me: &'a Actor,
     /// A read returned restricted content (see above).
     pub tainted: std::sync::atomic::AtomicBool,
+    /// Channel (assistant) and client address for the read log of
+    /// need-to-know groups.
+    pub log: crate::services::access_log::AccessCtx,
+    /// The request the run serves: its conditions on membership apply to
+    /// every step again (see [`McpTools::with_origin`]).
+    pub origin: crate::auth::Origin,
 }
 
 impl<'a> McpTools<'a> {
@@ -588,7 +600,22 @@ impl<'a> McpTools<'a> {
             state,
             me,
             tainted: std::sync::atomic::AtomicBool::new(false),
+            log: crate::services::access_log::AccessCtx {
+                channel: crate::services::access_log::Channel::Assistant,
+                client: None,
+            },
+            origin: Default::default(),
         }
+    }
+
+    /// The same tools for a request: its client address goes into the read
+    /// log, and each step hides the groups whose network or session-age
+    /// condition the request does not meet (and, for a request with a
+    /// personal access token, the groups that switched tokens off).
+    pub fn with_origin(mut self, origin: crate::auth::Origin) -> McpTools<'a> {
+        self.log.client = origin.client;
+        self.origin = origin;
+        self
     }
 
     /// `me` without its restricted groups: every restricted group hidden,
@@ -741,14 +768,23 @@ impl Tools for McpTools<'_> {
                 return mcp::tools::failure("The tool is not available right now.");
             }
         };
-        // groups that switched the assistant off look non-existent to it
-        let me = match crate::services::project_policy::narrow(
-            &self.state.db,
-            me,
-            &crate::services::assistant::switches(self.state.config.assistant.as_ref()),
-        )
-        .await
-        {
+        // groups that switched the assistant off look non-existent to it, so
+        // do those that switched tokens off when a token asked, and those
+        // whose conditions on membership the request does not meet
+        let mut switches =
+            crate::services::assistant::switches(self.state.config.assistant.as_ref());
+        if self.origin.token {
+            switches.push(crate::services::project_policy::Interface::ApiTokens);
+        }
+        let narrowed =
+            match crate::services::project_policy::narrow(&self.state.db, me, &switches).await {
+                Ok(me) => {
+                    crate::services::membership_conditions::apply(&self.state.db, me, &self.origin)
+                        .await
+                }
+                Err(e) => Err(e),
+            };
+        let me = match narrowed {
             Ok(me) => me,
             Err(e) => {
                 tracing::warn!(error = %e, "narrowing the assistant's user failed");
@@ -758,7 +794,8 @@ impl Tools for McpTools<'_> {
         if TEXT_WRITE_TOOLS.contains(&name) && self.tainted.load(Ordering::SeqCst) {
             return mcp::tools::failure(TAINTED_WRITE);
         }
-        let result = mcp::tools::call(self.state, &me, name, input).await;
+        // the user's own call is logged; the outsider comparisons below are not
+        let result = mcp::tools::call_logged(self.state, &me, name, input, &self.log).await;
         if !self.tainted.load(Ordering::SeqCst) {
             let read_only = mcp::tools::definitions()
                 .iter()

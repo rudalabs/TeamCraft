@@ -278,6 +278,7 @@ async fn single_sign_on_accounts_have_no_password_to_change() {
             email: None,
             role: Role::Editor,
             groups: Vec::new(),
+            claims: Default::default(),
         },
     )
     .await

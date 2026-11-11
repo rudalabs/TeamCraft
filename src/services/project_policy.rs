@@ -67,6 +67,8 @@ pub struct PolicyView {
     pub updated_at: Option<DateTime<Utc>>,
     /// Interface switches and read log settings (the defaults without a row).
     pub access: AccessSettings,
+    /// Conditions on membership (step 2; none without a row).
+    pub conditions: crate::services::membership_conditions::Conditions,
     /// Newest first.
     pub elevations: Vec<Elevation>,
 }
@@ -167,9 +169,11 @@ pub async fn get(pool: &PgPool, actor: &Actor, project_id: Uuid) -> AppResult<Po
     .fetch_all(&mut *conn)
     .await?;
     let access = settings(&mut conn, project_id).await?;
+    let conditions = crate::services::membership_conditions::of(&mut conn, project_id).await?;
     Ok(PolicyView {
         project_id,
         access,
+        conditions,
         admin_read: row
             .as_ref()
             .and_then(|(m, _)| AdminRead::parse(m))
@@ -1090,26 +1094,37 @@ impl Interfaces {
     }
 }
 
-/// The interface switches and the log settings of a group.
+/// Longest accepted access review interval (ten years).
+pub const MAX_REVIEW_INTERVAL_DAYS: i32 = 3650;
+
+/// The interface switches, the log settings and the review interval of a
+/// group.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, sqlx::FromRow)]
 pub struct AccessSettings {
     #[sqlx(flatten)]
     pub interfaces: Interfaces,
     pub read_log: bool,
     pub log_retention_days: Option<i32>,
+    /// The access review is due every this many days (`None` = no schedule).
+    pub review_interval_days: Option<i32>,
 }
 
-/// A change of the switches and log settings; `None` leaves a value as it is.
+/// A change of the switches, log settings and review interval; `None`
+/// leaves a value as it is.
 #[derive(Clone, Debug, Default)]
 pub struct AccessUpdate {
     pub interfaces: Vec<(Interface, bool)>,
     pub read_log: Option<bool>,
     /// `Some(None)` keeps the log until it is purged by hand.
     pub log_retention_days: Option<Option<i32>>,
+    /// `Some(None)` removes the review schedule.
+    pub review_interval_days: Option<Option<i32>>,
 }
 
-const SETTINGS_SELECT: &str = "SELECT api_tokens, mcp, assistant, webhooks, packages, notification_content,
-            external_llm, desktop_sync, read_log, log_retention_days FROM project_policies WHERE project_id = $1";
+const SETTINGS_SELECT: &str =
+    "SELECT api_tokens, mcp, assistant, webhooks, packages, notification_content,
+            external_llm, desktop_sync, read_log, log_retention_days, review_interval_days
+     FROM project_policies WHERE project_id = $1";
 
 /// The switches and log settings of a group (defaults without a policy row).
 pub async fn settings(conn: &mut PgConnection, project_id: Uuid) -> AppResult<AccessSettings> {
@@ -1179,11 +1194,13 @@ pub async fn package_actor(
 /// * **Permission:** the actor manages the group (403; "not found" for a
 ///   group the actor may not know); the group must be restricted (409).
 /// * **Locks:** the group row (`FOR UPDATE`).
-/// * **Data:** the retention is 1 to 36500 days (400). Tightening (switching
-///   an interface off, the log on) is open to managers and administrators;
-///   loosening (switching one on, the log off, changing the retention) is
-///   for the managers while administrators are limited by the policy, like
-///   [`set_admin_read`]. No change, no audit entry.
+/// * **Data:** the retention is 1 to 36500 days, the review interval 1 to
+///   [`MAX_REVIEW_INTERVAL_DAYS`] (400). Tightening (switching an interface
+///   off, the log on, a shorter review interval) is open to managers and
+///   administrators; loosening (switching one on, the log off, changing the
+///   retention, a longer or no review interval) is for the managers while
+///   administrators are limited by the policy, like [`set_admin_read`]. No
+///   change, no audit entry.
 /// * **Audit:** `project.interfaces` with old and new values.
 /// * **Notifications / webhooks:** the other managers get an access alert; no
 ///   webhooks.
@@ -1199,6 +1216,13 @@ pub async fn set_access(
             return Err(AppError::BadRequest(
                 "The retention is 1 to 36500 days.".into(),
             ));
+        }
+    }
+    if let Some(Some(days)) = update.review_interval_days {
+        if !(1..=MAX_REVIEW_INTERVAL_DAYS).contains(&days) {
+            return Err(AppError::BadRequest(format!(
+                "The review interval is 1 to {MAX_REVIEW_INTERVAL_DAYS} days."
+            )));
         }
     }
     let mut tx = pool.begin().await?;
@@ -1227,15 +1251,25 @@ pub async fn set_access(
     if let Some(days) = update.log_retention_days {
         new.log_retention_days = days;
     }
+    if let Some(days) = update.review_interval_days {
+        new.review_interval_days = days;
+    }
     if new == old {
         tx.rollback().await?;
         return get(pool, actor, project_id).await;
     }
+    // a longer interval (or none) asks for fewer reviews: loosening
+    let fewer_reviews = match (old.review_interval_days, new.review_interval_days) {
+        (Some(_), None) => true,
+        (Some(o), Some(n)) => n > o,
+        _ => false,
+    };
     let loosens = Interface::ALL
         .into_iter()
         .any(|i| new.interfaces.allowed(i) && !old.interfaces.allowed(i))
         || (old.read_log && !new.read_log)
-        || new.log_retention_days != old.log_retention_days;
+        || new.log_retention_days != old.log_retention_days
+        || fewer_reviews;
     if loosens {
         require_member_manager_under_policy(
             &mut tx,
@@ -1248,8 +1282,9 @@ pub async fn set_access(
     sqlx::query(
         "INSERT INTO project_policies (project_id, api_tokens, mcp, assistant, webhooks, packages,
                                        notification_content, external_llm, desktop_sync,
-                                       read_log, log_retention_days, created_by, updated_by)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12)
+                                       read_log, log_retention_days, created_by, updated_by,
+                                       review_interval_days)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $12, $13)
          ON CONFLICT (project_id) DO UPDATE
          SET api_tokens = EXCLUDED.api_tokens, mcp = EXCLUDED.mcp,
              assistant = EXCLUDED.assistant, webhooks = EXCLUDED.webhooks,
@@ -1258,6 +1293,7 @@ pub async fn set_access(
              external_llm = EXCLUDED.external_llm, desktop_sync = EXCLUDED.desktop_sync,
              read_log = EXCLUDED.read_log,
              log_retention_days = EXCLUDED.log_retention_days,
+             review_interval_days = EXCLUDED.review_interval_days,
              updated_by = EXCLUDED.updated_by, updated_at = now()",
     )
     .bind(project_id)
@@ -1272,6 +1308,7 @@ pub async fn set_access(
     .bind(new.read_log)
     .bind(new.log_retention_days)
     .bind(actor.id)
+    .bind(new.review_interval_days)
     .execute(&mut *tx)
     .await?;
     audit::record(

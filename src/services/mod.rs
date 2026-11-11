@@ -32,6 +32,7 @@ pub mod interchange;
 pub mod items;
 pub mod mass_geometry;
 pub mod mass_properties;
+pub mod membership_conditions;
 pub mod notifications;
 pub mod ownership;
 pub mod package;
