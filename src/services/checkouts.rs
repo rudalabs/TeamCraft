@@ -317,7 +317,30 @@ pub async fn release_held(
     holder: Uuid,
     project: Option<Uuid>,
 ) -> AppResult<Vec<CheckInOutcome>> {
+    release_held_because(pool, actor, holder, project, None).await
+}
+
+/// [`release_held`] with a reason for every release: a manager then also
+/// releases the check-outs of an *active* member of their groups (issue #173,
+/// the season handover); the reason is audited and told to the holder.
+///
+/// # Invariants
+///
+/// * **Permission / visibility / bounds / atomic:** as [`release_held`];
+///   per revision `cancel_checkout` decides with the reason.
+/// * **Data:** a reason has `revisions::RELEASE_REASON_MIN` to
+///   `RELEASE_REASON_MAX` characters (400 before anything is released).
+/// * **Audit / notifications:** those of `cancel_checkout`, per revision,
+///   with the reason.
+pub async fn release_held_because(
+    pool: &PgPool,
+    actor: &Actor,
+    holder: Uuid,
+    project: Option<Uuid>,
+    reason: Option<&str>,
+) -> AppResult<Vec<CheckInOutcome>> {
     actor.require(domain::Role::Editor)?;
+    revisions::check_release_reason(reason)?;
     let managed: Option<Vec<Uuid>> = if actor.is_admin() {
         if let Some(p) = project {
             projects::get_for_management(pool, actor, p).await?;
@@ -360,7 +383,7 @@ pub async fn release_held(
     .await?;
     let mut outcomes = Vec::with_capacity(held.len());
     for rev in held {
-        let result = revisions::cancel_checkout(pool, actor, rev.id, None)
+        let result = revisions::cancel_checkout(pool, actor, rev.id, reason)
             .await
             .map(|_| ());
         outcomes.push(CheckInOutcome::of(&rev, result));

@@ -41,6 +41,7 @@ pub const TEMPLATES: &[(&str, &str)] = embed![
     "projects/show.html",
     "projects/access_review.html",
     "projects/access_log.html",
+    "projects/season.html",
     "files/preview.html",
     "admin/users.html",
     "admin/user_edit.html",
@@ -741,6 +742,9 @@ mod tests {
                             "thumbnail_file_id": if state == "released" { json!(ME) } else { json!(null) },
                         }] })
             };
+            // a manager looking at an active member's lock: the reason form
+            let mut can_rev = can_all.clone();
+            can_rev["release_with_reason"] = json!(checked_out);
             let html = render(
                 &env,
                 "revisions/show.html",
@@ -760,11 +764,7 @@ mod tests {
                     "references": references.clone(), "impact_groups": [impact_group()],
                     "resolved_impacts": [impact(Some("acknowledged"))],
                     "open_requests": [request("in_triage")], "similar": similar,
-                    "can": {
-                        let mut can = can_all.clone();
-                        can["release_with_reason"] = json!(checked_out);
-                        can
-                    },
+                    "can": can_rev,
                     "release_reason": { "min": 10, "max": 500 },
                     "max_upload_mb": 512, "assistant_enabled": state == "released",
                     "interchange": {
@@ -1617,6 +1617,39 @@ mod tests {
         assert!(html.contains("manager"), "project managers are marked");
         assert!(html.contains("Add member"), "managers add members");
         assert!(html.contains("/demote\""), "managers demote managers");
+        assert!(html.contains("/season\""), "managers find the season handover");
+        let html = render(
+            &env,
+            "projects/season.html",
+            with_common(json!({
+                "project": project(),
+                "members": [
+                    { "user_id": OTHER, "username": "erika", "display_name": "Erika", "role": "editor",
+                      "active": true, "source": "oidc", "manager": true, "checkouts": 0,
+                      "last_active_at": TS, "expires_at": null, "expired": false },
+                    { "user_id": ME, "username": "lena", "display_name": "Lena <gone>", "role": "editor",
+                      "active": false, "source": "manual", "manager": false, "checkouts": 40,
+                      "last_active_at": null, "expires_at": "2026-07-31", "expired": true },
+                ],
+                "chosen": [ME], "inactive_since": "2026-08-01",
+                "release_reason": { "min": 10, "max": 500 }, "max_members": 500,
+            })),
+        );
+        assert!(html.contains("Lena &lt;gone&gt;") && html.contains("expired"));
+        assert!(html.contains(&format!("name=\"release\" value=\"{ME}\"")));
+        assert!(
+            html.contains(&format!(
+                "name=\"remove\" value=\"{ME}\" aria-label=\"Remove lena\" checked"
+            )),
+            "a member whose membership expired is ticked"
+        );
+        assert!(
+            !html.contains(&format!(
+                "name=\"remove\" value=\"{OTHER}\" aria-label=\"Remove erika\" checked"
+            )),
+            "an active member is not"
+        );
+        assert!(html.contains("value=\"2026-08-01\""));
         assert!(
             html.contains("Release 40 check-outs") && html.contains("Lena &lt;gone&gt;"),
             "a deactivated member's check-outs can be released"

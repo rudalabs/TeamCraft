@@ -24,6 +24,7 @@
 <div class="grid grid-2">
   <section class="card">
     <h2>Members</h2>
+    {% if can_manage %}<p class="small"><a href="/projects/{{ project.id }}/season">Season handover</a> <span class="hint">– release, demote, remove or set "member until" for many members at once</span></p>{% endif %}
     {% if members %}
     <table>
       <thead><tr><th scope="col">Name</th><th scope="col">Role</th><th scope="col">Added</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>

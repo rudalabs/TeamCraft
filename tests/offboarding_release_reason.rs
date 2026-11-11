@@ -157,7 +157,11 @@ async fn a_manager_releases_an_active_members_lock_only_with_a_reason() {
     assert_eq!(details["reason"], REASON);
     let bodies = unlock_bodies(&app, lena.id).await;
     assert_eq!(bodies.len(), 1);
-    assert!(bodies[0].starts_with(&format!("Reason: {REASON}")), "{}", bodies[0]);
+    assert!(
+        bodies[0].starts_with(&format!("Reason: {REASON}")),
+        "{}",
+        bodies[0]
+    );
 }
 
 #[tokio::test]
@@ -190,12 +194,22 @@ async fn rest_and_web_take_the_reason() {
     assert_eq!(r.status, StatusCode::FORBIDDEN, "{}", r.text());
     assert!(r.text().contains("reason"), "{}", r.text());
     let r = app
-        .api(Method::POST, &uri, &tom_token, Some(json!({ "reason": "short" })))
+        .api(
+            Method::POST,
+            &uri,
+            &tom_token,
+            Some(json!({ "reason": "short" })),
+        )
         .await;
     assert_eq!(r.status, StatusCode::BAD_REQUEST, "{}", r.text());
     assert_eq!(holder(&app, rev).await, Some(lena.id));
     let r = app
-        .api(Method::POST, &uri, &tom_token, Some(json!({ "reason": REASON })))
+        .api(
+            Method::POST,
+            &uri,
+            &tom_token,
+            Some(json!({ "reason": REASON })),
+        )
         .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text());
     assert_eq!(holder(&app, rev).await, None);
@@ -221,7 +235,11 @@ async fn rest_and_web_take_the_reason() {
         .post_form(&action, Some(&cookie), Some(ORIGIN), &[])
         .await;
     assert_eq!(r.status, StatusCode::SEE_OTHER);
-    assert_eq!(holder(&app, rev).await, Some(lena.id), "no reason, no release");
+    assert_eq!(
+        holder(&app, rev).await,
+        Some(lena.id),
+        "no reason, no release"
+    );
     let r = app
         .post_form(&action, Some(&cookie), Some(ORIGIN), &[("reason", REASON)])
         .await;

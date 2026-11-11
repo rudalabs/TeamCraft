@@ -53,6 +53,7 @@ pub mod retention;
 pub mod reviewers;
 pub mod revisions;
 pub mod save_as;
+pub mod season;
 pub mod similar;
 pub mod simulations;
 pub mod stats;

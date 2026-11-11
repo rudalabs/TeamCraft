@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Season handover – {{ project.code }}{% endblock %}
+{% block nav_projects %}active{% endblock %}
+{% block content %}
+{% import "macros.html" as m %}
+<div class="page-head">
+  <div>
+    <h1>Season handover <span class="muted mono">{{ project.code }}</span></h1>
+    <p class="subtitle">For the end of a term: make the new lead a manager, release the check-outs of the people who leave, demote the old managers, note until when somebody stays a member, and remove those who left – in one run. Every step is checked and audited on its own; a refused step does not stop the others.</p>
+  </div>
+  <div class="actions"><a class="button" href="/projects/{{ project.id }}">← {{ project.code }}</a></div>
+</div>
+
+<section class="card">
+  <h2>Choose members</h2>
+  <form class="inline" method="get" action="/projects/{{ project.id }}/season">
+    <label>Tick members inactive since <input type="date" name="inactive_since" value="{{ inactive_since }}"></label>
+    <button type="submit">Tick</button>
+  </form>
+  <p class="hint">Inactive: deactivated, or no sign-in and no use of an API or desktop token since that date. Members whose "member until" date has passed are always ticked. Ticking only fills in the form below; nothing changes until you run it.</p>
+</section>
+
+<form method="post" action="/projects/{{ project.id }}/season"
+      data-confirm="Run the season handover for {{ project.code }}?">
+<section class="card">
+  <h2>Members ({{ members | length }})</h2>
+  {% if members %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr>
+      <th scope="col">Name</th><th scope="col">Last active</th><th scope="col" class="num">Check-outs</th><th scope="col">Member until</th>
+      <th scope="col">Release</th><th scope="col">Demote</th><th scope="col">Set until</th><th scope="col">Remove</th>
+    </tr></thead>
+    <tbody>
+    {% for u in members %}
+      {% set ticked = u.user_id in chosen %}
+      <tr>
+        <td>{{ u.display_name }} <span class="muted small mono">{{ u.username }}</span>{% if u.manager %} <span class="badge badge-member">manager</span>{% endif %}{% if not u.active %} <span class="badge badge-obsolete">deactivated</span>{% endif %}{% if u.source == "oidc" %} <span class="badge">IdP</span>{% endif %}</td>
+        <td class="small nowrap">{{ m.time(u.last_active_at) }}</td>
+        <td class="num">{{ u.checkouts }}</td>
+        <td class="small nowrap">{% if u.expires_at %}{{ u.expires_at }}{% if u.expired %} <span class="badge badge-rejected">expired</span>{% endif %}{% else %}<span class="dim">—</span>{% endif %}</td>
+        <td><input type="checkbox" name="release" value="{{ u.user_id }}" aria-label="Release the check-outs of {{ u.username }}"{% if ticked and u.checkouts > 0 %} checked{% endif %}{% if u.checkouts == 0 %} disabled{% endif %}></td>
+        <td><input type="checkbox" name="demote" value="{{ u.user_id }}" aria-label="Demote {{ u.username }}"{% if ticked and u.manager %} checked{% endif %}{% if not u.manager %} disabled{% endif %}></td>
+        <td><input type="checkbox" name="expire" value="{{ u.user_id }}" aria-label="Set member until for {{ u.username }}"></td>
+        <td><input type="checkbox" name="remove" value="{{ u.user_id }}" aria-label="Remove {{ u.username }}"{% if ticked %} checked{% endif %}></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}<p class="empty">No members.</p>{% endif %}
+</section>
+
+<section class="card">
+  <h2>Run</h2>
+  <div class="stack">
+    <label>New lead (made a manager first)
+      <select name="new_lead">
+        <option value="">nobody</option>
+        {% for u in members %}{% if u.active and not u.manager %}<option value="{{ u.username }}">{{ u.display_name }} ({{ u.username }})</option>{% endif %}{% endfor %}
+      </select>
+    </label>
+    <label>Reason for releasing check-outs <span class="hint">{{ release_reason.min }} to {{ release_reason.max }} characters; needed for the check-outs of active members, told to each holder</span>
+      <input type="text" name="reason" minlength="{{ release_reason.min }}" maxlength="{{ release_reason.max }}">
+    </label>
+    <label>Member until <span class="hint">for the members ticked under "Set until"; empty clears the date. Only a flag – nobody is removed automatically</span>
+      <input type="date" name="until">
+    </label>
+    <p class="hint">Order: new lead → releases → member until → removals → demotions. At least one active manager must remain unless you are an administrator; memberships synchronised from the identity provider can only be removed once their user is deactivated. At most {{ max_members }} members per action.</p>
+    <div class="actions"><button class="danger" type="submit">Run the season handover</button></div>
+  </div>
+</section>
+</form>
+{% endblock %}

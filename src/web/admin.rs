@@ -1319,7 +1319,9 @@ pub async fn offboard(
         crate::services::deactivation::deactivate(&st.db, &ctx.me, id, &opts).await
     }
     .await;
-    finish(&st, result, &back, |report| (back.clone(), report.summary()))
+    finish(&st, result, &back, |report| {
+        (back.clone(), report.summary())
+    })
 }
 
 /// Moves the work of a user to another one and shows what was moved.

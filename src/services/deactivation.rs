@@ -292,7 +292,10 @@ pub async fn deactivate(
                 "token.revoke_all",
                 "user",
                 Some(user_id),
-                format!("Revoked all {} API tokens of {}", report.tokens_revoked, leaver.username),
+                format!(
+                    "Revoked all {} API tokens of {}",
+                    report.tokens_revoked, leaver.username
+                ),
                 json!({ "count": report.tokens_revoked }),
             )
             .await?;

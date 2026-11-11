@@ -541,8 +541,7 @@ pub(crate) async fn hand_over_in(
             );
             continue;
         }
-        if let Some(conflict) =
-            changes::review_conflict(&mut *tx, &change, to, None, false).await?
+        if let Some(conflict) = changes::review_conflict(&mut *tx, &change, to, None, false).await?
         {
             report.skipped(
                 "review",

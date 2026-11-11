@@ -442,7 +442,11 @@ told to the holder in their notification; without one the release is refused
 (403). Other members cannot release it at all. *Release N check-outs* in the member list
 releases all of one person's check-outs in the group at once (each audited
 on its own); administrators release everything a user holds from the user
-page. See [When someone leaves](users.md#when-someone-leaves).
+page. *Season handover* (`/projects/{id}/season`) does the same for many
+members at once, with one reason for all of them, and also sets *member
+until*, removes and demotes – each step with the rules of the single action.
+See [When someone leaves](users.md#when-someone-leaves) and
+[The end of a season](users.md#the-end-of-a-season).
 
 Memberships synchronised from the identity provider change only at the
 user's next SSO login; a user removed from the IdP group keeps access until

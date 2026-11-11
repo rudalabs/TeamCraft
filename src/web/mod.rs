@@ -31,6 +31,7 @@ mod personal;
 mod references;
 mod requests;
 mod revisions;
+mod season;
 mod simulations;
 mod uploads;
 mod webhooks;
@@ -423,6 +424,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route(
             "/projects/{id}/members/{user_id}/release-checkouts",
             post(admin::release_member_checkouts),
+        )
+        .route(
+            "/projects/{id}/season",
+            get(season::page).post(season::run),
         )
         .route("/admin/users", get(admin::users).post(admin::create_user))
         .route(
