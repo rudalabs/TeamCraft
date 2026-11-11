@@ -38,6 +38,17 @@ see the notices in the README.
   them back), release the check-outs. Deactivating the only active manager of
   a group without a successor needs a confirmation; every step is audited.
   Audit entries of the command line are recorded as `system` without a user.
+- Desktop app, *Home* (#255): a **Files** view, the one Home starts with –
+  the folders of the active project group and the files in them, as in its
+  working folder: folders first, then the files by name as a file manager
+  orders them (`Part2` before `Part10`), the file name first in every row.
+  One folder is loaded at a time (`GET /api/v1/projects/{code}/files`: the
+  sub-folders with their file counts and the files of the latest revision of
+  every item, by name, 500 per request), so a group with more than 500 items
+  is listed completely – *All items* shows the first 500 by number. Items
+  without files follow the files at the top of the group. *New* and *Import
+  CAD Folder…* start with the active group. With an older server Home shows
+  *All items*.
 - Desktop app (#255): a **Projects** page (rail, `Ctrl/Cmd+5`) to choose the
   active project group, create one, get groups into the workspace and import
   a CAD folder. **Home** becomes a file browser of the active group: names

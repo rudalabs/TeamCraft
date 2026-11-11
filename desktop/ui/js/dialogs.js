@@ -4,7 +4,7 @@
 
 import { $, ITEM_TYPES, TAURI, api, call, dialog, errorText, field, h, label, materialField, setStatus, state, toast } from "./core.js";
 import { canEdit, canEditProject, freshProjects, refreshWorklistCount } from "./shell.js";
-import { selectView } from "./navigator.js";
+import { activeProject, selectView } from "./navigator.js";
 import { openRevision } from "./revision.js";
 
 // ======================================================================
@@ -38,6 +38,9 @@ export function openNewItemDialog() {
   if (!projects.length) { toast("You are not a member of any project group – ask an admin to add you.", "error"); return; }
   var type = h("select", null, ITEM_TYPES.map(function (t) { return h("option", { value: t.value, text: t.label }); }));
   var project = h("select", null, projects.map(function (p) { return h("option", { value: p.code, text: p.code + " – " + p.name }); }));
+  // the group one works in (Home), when one may create items in it
+  var active = activeProject();
+  if (active && projects.indexOf(active) !== -1) project.value = active.code;
   var name = h("input", { type: "text", maxlength: "200", required: true, placeholder: "from the first file" });
   var number = h("input", { type: "text", maxlength: "64", placeholder: "automatic (PRT-000042 …)" });
   var materialF = materialField(""), material = materialF.input;

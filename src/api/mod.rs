@@ -45,9 +45,9 @@ use crate::{
     services::{
         access_log::{self, AccessCtx},
         access_review, attributes, audit, bom, bom_references, changes, checkouts, desktop, files,
-        impacts, imports, items, mass_properties, membership_conditions, notifications, package,
-        project_policy, projects, references, requests, reviewers, revisions, similar, stats,
-        structure, uploads, users, workset, Page,
+        folders, impacts, imports, items, mass_properties, membership_conditions, notifications,
+        package, project_policy, projects, references, requests, reviewers, revisions, similar,
+        stats, structure, uploads, users, workset, Page,
     },
     web, AppState,
 };
@@ -306,6 +306,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
             get(get_structure_level),
         )
         .route("/projects/{code}/structure", get(get_structure_roots))
+        .route("/projects/{code}/files", get(project_files))
         .route("/items/{number}/revisions/{code}/similar", get(get_similar))
         .route(
             "/bom-imports",
@@ -581,6 +582,7 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/items/{number}/revisions/{code}/workset?rule=&references=true  desktop Get: files of the structure and the CAD files it references, with folder, version, sha256, lock",
             "GET    /api/v1/items/{number}/revisions/{code}/structure?rule=latest|released&limit=  one level of the structure view: BOM lines with resolved revision, state, lock owner, used_in",
             "GET    /api/v1/projects/{code}/structure?limit=&offset=  top-level items of a group (not used in any BOM of the group) for the structure view",
+            "GET    /api/v1/projects/{code}/files?folder=&limit=&offset=  file browser: the sub-folders and the files of one folder of a group (latest revision of every item; items without files at the top)",
             "POST   /api/v1/bom-imports                               multipart: file (CSV/Excel BOM or STEP assembly of a CAD program), project, name?, numbers=file|generate, match_existing=true|false, dry_run=true → plan only; creates a new assembly",
             "GET    /api/v1/items/{number}/revisions/{code}/bom/from-references  the BOM the CAD references lead to: children with instance counts, status (new/already_in_bom/differs/circular), unmatched names, hidden count",
             "POST   /api/v1/items/{number}/revisions/{code}/bom/from-references  {children: [item numbers], update_quantities?: false} – adds the chosen lines in one transaction (revision checked out by me)",

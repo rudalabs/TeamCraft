@@ -412,3 +412,31 @@ pub(super) async fn project_access_review_snapshot(
         access_review::snapshot(&st.db, &me, project.id, review_id).await?,
     ))
 }
+
+// ---------------------------------------------------------------------------
+// File browser
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub(super) struct FolderQuery {
+    /// Folder inside the group (`chassis/brackets`); empty = the top.
+    folder: Option<String>,
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+/// `GET /api/v1/projects/{code}/files?folder=` – one folder of a project
+/// group: its sub-folders and its files (see `services::folders`).
+pub(super) async fn project_files(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(code): Path<String>,
+    Query(q): Query<FolderQuery>,
+) -> AppResult<Json<Value>> {
+    let project = projects::get_by_code(&st.db, &me, &code).await?;
+    let folder = domain::normalize_folder(q.folder.as_deref().unwrap_or(""))?;
+    let page = Page::new(q.limit, q.offset);
+    Ok(Json(json!(
+        folders::level(&st.db, &me, project.id, &folder, page).await?
+    )))
+}
