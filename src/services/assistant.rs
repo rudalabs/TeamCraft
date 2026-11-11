@@ -475,6 +475,7 @@ pub async fn resolve_context(
 /// A request of the web sidebar or the REST API: validates the raw fields
 /// and the page context the client sent (`context`, see
 /// [`crate::pagecontext`]), then asks.
+#[allow(clippy::too_many_arguments)]
 pub async fn chat(
     st: &AppState,
     me: &Actor,
