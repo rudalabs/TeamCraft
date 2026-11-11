@@ -14,6 +14,7 @@ import { openRequest } from "./requests.js";
 import { newItemDialog } from "./dialogs.js";
 import { getProjectsDialog } from "./group-sync.js";
 import { importFolderDialog } from "./folder-import.js";
+import { renderFiles } from "./browser.js";
 import { cutLevel, describe, normalizeMode, pathKey, quantityText, rootNodes, usageBadge } from "./structure.js";
 
 // ======================================================================
@@ -47,7 +48,7 @@ export function itemNode(it, opts) {
   // the file browser of Home leads with the name: a long number prefix would
   // cut the real (file) names off (issue #255)
   var label = opts.nameFirst
-    ? [it.name || ref, h("span.dim.mono", { text: " " + ref })]
+    ? [h("span.fname", { text: it.name || ref }), h("span.dim.mono", { text: " " + ref })]
     : [h("span.mono", { text: ref }), " ", it.name];
   return h("li", null, h("div.node" + (state.active === key ? ".selected" : ""), {
     title: ref + " – " + it.name,
@@ -157,7 +158,11 @@ export function drawHome() {
     nav.appendChild(h("div.row.nav-sort", null, [sort, count]));
   }
   nav.appendChild(list);
-  loadProjectItems(p, list, count, { nameFirst: true, sort: homeSort() });
+  var items = function () { return loadProjectItems(p, list, count, { nameFirst: true, sort: homeSort() }); };
+  // Files: the folders and files of the group (browser.js); a server that
+  // cannot list them yet gets the items instead
+  if (navMode() === "files") renderFiles(p, list, { sort: homeSort(), count: count, olderServer: items });
+  else items();
 }
 
 /** A project group to choose; `active` marks the current one. */
@@ -423,10 +428,10 @@ export function renderSearch() {
 
 var MODE_KEY = "teamcraft.navigator.mode";
 
-/** All items (flat list) or Structure; remembered per computer. */
+/** Files (folders and files), All items (flat list) or Structure; remembered per computer. */
 export function navMode() {
   if (!state.navMode) {
-    try { state.navMode = normalizeMode(window.localStorage.getItem(MODE_KEY)); } catch (e) { state.navMode = "all"; }
+    try { state.navMode = normalizeMode(window.localStorage.getItem(MODE_KEY)); } catch (e) { state.navMode = normalizeMode(null); }
   }
   return state.navMode;
 }
@@ -440,9 +445,14 @@ export function setNavMode(mode) {
 /** The toggle in the head of the project list. */
 function modeToggle() {
   var mode = navMode();
-  return h("div.nav-filter", null, [["all", "All items"], ["structure", "Structure"]].map(function (m) {
+  var modes = [
+    ["files", "Files", "The folders and files of the group, as in its working folder"],
+    ["all", "All items", "Every item of the group in one list"],
+    ["structure", "Structure", "Assemblies with their parts; parts used nowhere else at the top"]
+  ];
+  return h("div.nav-filter", null, modes.map(function (m) {
     return h("button.chip" + (m[0] === mode ? ".active" : ""), {
-      type: "button", title: m[0] === "all" ? "Every item of a group, alphabetically" : "Assemblies with their parts; parts used nowhere else at the top",
+      type: "button", title: m[2],
       "aria-pressed": String(m[0] === mode), on: { click: function () { setNavMode(m[0]); } }
     }, m[1]);
   }));

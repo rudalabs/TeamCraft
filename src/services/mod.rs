@@ -26,6 +26,7 @@ pub mod desktop;
 pub mod duplicates;
 pub mod explorer;
 pub mod files;
+pub mod folders;
 pub mod impacts;
 pub mod imports;
 pub mod insights;

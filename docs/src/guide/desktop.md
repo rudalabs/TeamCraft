@@ -13,7 +13,9 @@ check-outs and reviews, and a **local working folder**:
   locked; parts you changed locally, or whose place is taken by another file,
   are never overwritten and are listed in the report (*Settings → Workspace*
   switches this off);
-* *All items / Structure* in the navigator head: *Structure* shows, per project
+* *Files / All items / Structure* in the navigator head: *Files* shows the
+  folders and files of the project group as in its working folder (see
+  below); *Structure* shows, per project
   group, the assemblies and the parts no BOM uses; an assembly expands into its
   parts one level at a time with quantity, state, lock owner and ⧉ N for a part
   used in several assemblies;
@@ -225,10 +227,27 @@ the page offers *Get…* (copy
 groups into your workspace) and *Import CAD folder…*. The choice is kept on
 this computer.
 
-**Home** is a file browser of the active group: every item with its name
-first and the number and revision dimmed after it, sorted by name (or by
-number, type or state – the choice is kept), or the *Structure* view with
-assemblies and their parts. *Change…* goes back to *Projects*.
+**Home** is a file browser of the active group, in three views:
+
+* *Files* (the view Home starts with): the **folders** of the group and the
+  **files** in them, as in its working folder – folders first, then the files
+  by name the way a file manager orders them (without regard to case, `Part2`
+  before `Part10`), each with the state and the lock of its item. The file
+  name comes first and the number and revision after it, so a narrow navigator
+  cuts the number, not the name. A folder opens its own level – a large group
+  is never loaded as a whole, and a folder with more than 500 files offers
+  *show … more*. The files are those of the latest revision of every item;
+  items without files are listed below the files at the top of the group.
+  The number next to the order is the rows of the whole group. A click on a
+  file opens its item;
+* *All items*: every item in one list, the name first (the first 500 by
+  number);
+* *Structure*: the assemblies with their parts.
+
+*Files* and *All items* are sorted by name (or by number, type or state – the
+choice is kept). *Change…* goes back to *Projects*. *New* and *Import CAD
+Folder…* start with the active group. With a server older than the *Files*
+view, Home shows *All items* instead.
 
 *Home*, *Projects*, *Refresh* and the dialogs that offer project groups (*New*, *Get Project Groups…*, *Import CAD
 Folder…*) load the groups and your
