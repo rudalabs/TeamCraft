@@ -839,12 +839,9 @@ async fn user_command(command: UserCommand) -> Result<ExitCode> {
             let user = services::users::find_by_username(&pool, &username)
                 .await?
                 .with_context(|| format!("no user named '{username}'"))?;
-            let report = services::offboarding::holdings(
-                &pool,
-                &teamcraft::auth::Actor::system(),
-                user.id,
-            )
-            .await?;
+            let report =
+                services::offboarding::holdings(&pool, &teamcraft::auth::Actor::system(), user.id)
+                    .await?;
             write!(
                 std::io::stdout(),
                 "{}",

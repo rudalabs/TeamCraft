@@ -550,7 +550,7 @@ mod tests {
         let text = to_text(&report());
         assert!(text.starts_with("Lena (lena), deactivated, last sign-in: never\n"));
         assert!(text.contains("Check-outs: 3\n  PRT-000001/B  Upright  [CHASSIS]"));
-        assert!(text.contains("… and 2 more"), "the list is cut: {text}");
+        assert!(text.contains("… and 2 more"), "the list is cut");
         assert!(text.contains("2 check-outs in NTK (content hidden"));
         assert!(text.contains("Pending reviews: 0\n"));
         assert!(text.contains("identity provider, manager – the ONLY active manager"));

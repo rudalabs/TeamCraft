@@ -102,8 +102,11 @@ async fn an_administrator_sees_one_of_each_kind() {
     let h = r.json();
     assert_eq!(h["username"], "lena");
     assert_eq!(h["scope"], "all");
-    assert_eq!(h["checkouts"]["total"], 1, "{h}");
+    // a new item's first revision is checked out to its creator: both parts,
+    // the older lock first
+    assert_eq!(h["checkouts"]["total"], 2, "{h}");
     assert_eq!(h["checkouts"]["shown"][0]["item_number"], upright.as_str());
+    assert_eq!(h["checkouts"]["shown"][1]["item_number"], hub.as_str());
     assert_eq!(h["checkouts"]["shown"][0]["project_code"], "ROCKET");
     assert!(h["checkouts"]["shown"][0]["checked_out_at"].is_string());
     assert_eq!(h["authored_changes"]["total"], 1, "{h}");
