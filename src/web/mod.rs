@@ -395,6 +395,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
             "/projects/{id}/access-review.csv",
             get(admin::access_review_csv),
         )
+        .route("/projects/{id}/access-log", get(admin::access_log_page))
         .route(
             "/projects/{id}/review-policy",
             post(admin::update_review_policy),

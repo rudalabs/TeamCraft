@@ -52,6 +52,7 @@ async fn log_file(
             object_type: "file",
             object_id: Some(file_id),
             label: filename,
+            detail: "",
         },
     )
     .await

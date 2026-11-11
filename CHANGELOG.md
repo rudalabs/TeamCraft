@@ -30,6 +30,19 @@ see the notices in the README.
   a fresh single sign-on (`prompt=login`, *Sign in again*) – to decide in the
   browser. Every decision records how it was signed off and an optional
   meaning ("approved as design owner"). Migration 0063.
+- The read log of need-to-know groups (#151, step 4) also records the read
+  tools of MCP clients and the built-in assistant that name an item (channel
+  `mcp` / `assistant`, the tool as detail) and the desktop app's Get (channel
+  `desktop`, kind `workset`); the assistant's own taint comparisons are not
+  logged. *The whole log, with filters* (`/projects/{id}/access-log`)
+  filters by user, kind, channel, object and dates and pages through the log;
+  `GET /api/v1/projects/{code}/access-log` takes the same filters and pages
+  with `next` / `before`. Migration 0066.
+- Periodic access review of need-to-know groups (#151, step 5): *Review the
+  access every (days)* flags a group "access review due" (group list, group
+  page, review page, evidence report) when no review was confirmed within the
+  interval, and the hourly housekeeping reminds the managers once it is due
+  and again after each further interval (audited). Migration 0067.
 
 ### Fixed
 

@@ -171,7 +171,8 @@
 {% if policy %}
 <section class="card" id="need-to-know">
   <h2>Need to know: administrator access</h2>
-  <p><a href="/projects/{{ project.id }}/access-review">Access review and evidence report</a></p>
+  <p><a href="/projects/{{ project.id }}/access-review">Access review and evidence report</a>
+    {% if review_schedule and review_schedule.due %}<span class="badge badge-in_review">access review due</span>{% endif %}</p>
   {% if not readable %}<p class="hint">Your administrator access to this group is closed: you manage it, but you cannot read its items, files or changes.</p>{% endif %}
   <form class="stack" method="post" action="/projects/{{ project.id }}/policy">
     <label>Administrators who are not members
@@ -227,21 +228,24 @@
     <label>Keep the log for (days) <span class="hint">empty keeps it until purged with <span class="mono">teamcraft access-log purge</span></span>
       <input type="number" name="retention_days" min="1" max="36500" value="{% if policy.access.log_retention_days %}{{ policy.access.log_retention_days }}{% endif %}">
     </label>
+    <label>Review the access every (days) <span class="hint">empty = no schedule; the managers are reminded when a review is due</span>
+      <input type="number" name="review_interval_days" min="1" max="3650" value="{% if policy.access.review_interval_days %}{{ policy.access.review_interval_days }}{% endif %}">
+    </label>
     <div class="actions"><button class="primary" type="submit">Save</button></div>
   </form>
   <h3>Read and download log</h3>
   {% if access_entries %}
   <div class="table-wrap">
   <table>
-    <thead><tr><th scope="col">When</th><th scope="col">Who</th><th scope="col">What</th><th scope="col">Object</th><th scope="col">Channel</th><th scope="col">Address</th></tr></thead>
+    <thead><tr><th scope="col">When</th><th scope="col">Who</th><th scope="col">What</th><th scope="col">Object</th><th scope="col">Through</th><th scope="col">Channel</th><th scope="col">Address</th></tr></thead>
     <tbody>
     {% for e in access_entries %}
-    <tr><td>{{ m.time(e.at) }}</td><td>{{ e.username }}</td><td>{{ e.kind }}</td><td>{{ e.label }}</td><td>{{ e.channel }}</td><td class="mono">{{ e.client_address or "" }}</td></tr>
+    <tr><td>{{ m.time(e.at) }}</td><td>{{ e.username }}</td><td>{{ e.kind }}</td><td>{{ e.label }}</td><td>{{ e.detail }}</td><td>{{ e.channel }}</td><td class="mono">{{ e.client_address or "" }}</td></tr>
     {% endfor %}
     </tbody>
   </table>
   </div>
-  <p class="hint">The newest 50 entries; the REST API lists more (<span class="mono">GET /api/v1/projects/{code}/access-log</span>).</p>
+  <p><a href="/projects/{{ project.id }}/access-log">The whole log, with filters</a> <span class="hint">(here: the newest 50 entries; also <span class="mono">GET /api/v1/projects/{code}/access-log</span>)</span></p>
   {% elif not readable %}
   <p class="muted">The log is shown to readers of the group; your administrator access to it is closed.</p>
   {% else %}

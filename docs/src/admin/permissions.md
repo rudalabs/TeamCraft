@@ -115,22 +115,40 @@ are not affected by `notification_content`.
 
 **Read and download log.** With `read_log` on, the group writes `access_log`
 entries (separate from the audit log): who (user name kept as text), when,
-channel (`web` or `api`), kind (`view` of an item or revision page,
-`download` of a file or file version, `package` for Pack and Go, `export` for
-a BOM CSV or Excel file), the object (number or file name, kept as text) and
-the client address (with the same reverse-proxy rule as the sign-in
-throttle). Repeated reads of the same object by the same user through the
-same channel within five minutes are one entry, so a resumed or ranged
-download is logged once. A read that cannot be logged does not happen. Groups
-that do not log write nothing. A Pack and Go or BOM export writes one
-entry for every logging group inside the structure, not only for the root
-item's group; a refused one writes nothing. The managers and administrators
-read the log, but only while they may read the group (an administrator shut
-out by `admin_read` gets "not found"; the labels are item content). They read the
-newest entries on the group page, or `GET
-/api/v1/projects/{code}/access-log?user=&kind=&since=&until=&limit=`. Not
-logged yet: MCP and assistant tool reads, desktop Get, thumbnails and
-previews.
+the channel, the kind, the object (number or file name, kept as text), what
+read it (the tool, for tool reads) and the client address (with the same
+reverse-proxy rule as the sign-in throttle).
+
+| Channel     | Reads                                                                                         |
+|-------------|-----------------------------------------------------------------------------------------------|
+| `web`       | item and revision pages, file downloads, Pack and Go and BOM exports in the browser           |
+| `api`       | the same over the REST API and the desktop app (personal access token)                        |
+| `mcp`       | read tools of an MCP client that name an item (`get_item`, `get_revision`, `get_bom`, `read_file_text`, …) |
+| `assistant` | the same read tools called by the built-in assistant                                           |
+| `desktop`   | the desktop app's Get (the working set; its file downloads follow as `api` downloads)          |
+
+Kinds: `view` (an item or revision page, the same data over the API, or a
+read tool), `download` (a file or file version), `package` (Pack and Go),
+`export` (a BOM CSV or Excel file), `workset` (a desktop Get). A tool read is
+one `view` of the item the tool was asked for, with the tool name as its
+detail (`read_file_text: spec.txt` names the file); searches, lists, change
+orders, write tools and failed tools log nothing, and the assistant's own
+comparison calls (the taint check) are not logged. Repeated reads of the same
+object by the same user through the same channel within five minutes are one
+entry, so a resumed or ranged download is logged once. A read that cannot be
+logged does not happen (a tool answers with an error). Groups that do not log
+write nothing. A Pack and Go, BOM export or desktop Get writes one entry for
+every logging group inside the structure, not only for the root item's group;
+a refused one writes nothing. The managers and administrators read the log,
+but only while they may read the group (an administrator shut out by
+`admin_read` gets "not found"; the labels are item content). The group page
+shows the newest 50 entries; *The whole log, with filters*
+(`/projects/{id}/access-log`) filters by user, kind, channel, object (part of
+the number, file name or tool), and a date range, 100 entries a page. The
+REST API pages the same way: `GET /api/v1/projects/{code}/access-log?user=&kind=&channel=&object=&since=&until=&limit=`
+answers `{"entries": […], "next": id}`; pass `next` as `before=` for the
+following page (`null` on the last). Times are RFC 3339 or `YYYY-MM-DD` (a
+date `until` includes that day). Not logged: thumbnails and 3D previews.
 
 **Retention and purge.** `log_retention_days` (1 to 36500, empty = keep) is
 applied by `teamcraft access-log purge` (run it from cron or a timer):
@@ -157,6 +175,20 @@ or the same data as JSON (`GET /api/v1/projects/{code}/access-review`, with
 `?format=csv` for the CSV). The page is for restricted groups only; elevations
 are listed up to the newest 100 and reviews up to the newest 50 (the audit log
 keeps all).
+
+**Review schedule.** *Review the access every (days)* (under *Interfaces and
+read log*, `{"review_interval_days": 90}`, 1 to 3650, `0` removes it) makes
+the review periodic: the group is **review due** when no review was
+confirmed within the interval (a group never reviewed is due at once). The
+flag shows on the group list (for the group's managers and administrators),
+on the group page and on the review page, which also names the next due date;
+the report and the CSV carry the schedule. The hourly housekeeping reminds
+the group's managers (an `access_alert` notification, which cannot be muted;
+the active administrators when the group has no manager) once when the review
+becomes due and again after each further interval without one; every
+reminder is audited (`project.review_reminder`). A shorter interval is
+tightening, a longer one or none is loosening (managers only while
+administrators are limited by the policy).
 
 Moving an item out of a restricted group, or copying it with *Save As*
 into another group, needs a manager of the source group or an administrator

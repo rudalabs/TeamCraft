@@ -196,7 +196,7 @@ async fn run_once(
     let allow_drafts = question.allow_drafts && me.can_edit();
     let system = assistant::system_prompt(me, allow_drafts);
     let instruction = question.instruction();
-    let tools = McpTools::new(st, me);
+    let tools = McpTools::new(st, me).with_origin(question.origin.clone());
     if prior_taint {
         tools
             .tainted
@@ -483,6 +483,7 @@ pub async fn chat(
     context: &Value,
     allow_drafts: bool,
     thread: bool,
+    origin: crate::auth::Origin,
 ) -> AppResult<Run> {
     if !enabled(st) {
         return Err(AssistantError::Disabled.into_app_error());
@@ -507,6 +508,7 @@ pub async fn chat(
         allow_drafts,
     )
     .map_err(AppError::BadRequest)?;
+    let question = Question { origin, ..question };
     ask_with_page(st, me, question, &page, thread).await
 }
 
