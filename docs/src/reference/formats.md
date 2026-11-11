@@ -95,6 +95,15 @@ are OLE files and are read as before. Assemblies stored with an older
 TeamCraft keep the references found then until the next check-in – or run
 `teamcraft rescan-references` once (see [Operations](../admin/operations.md)).
 
+**Instance counts.** For SOLIDWORKS 2015+ assemblies (component tree,
+instances with *exclude from BOM* not counted) and NX assemblies (placed
+components, hidden layers left out) the scan also stores how often each
+referenced file is placed (`file_references.instances`, `instances` in
+`GET …/references`); the desktop folder import uses it as the BOM quantity.
+Other formats – Inventor, Solid Edge, STEP – store no count (`null`): their
+references are found by name only. The current versions of SOLIDWORKS and NX
+files stored before this are read again once at the next start.
+
 `.prt` and `.asm` are told apart by content (Creo's `#UGC:` header, Solid
 Edge's OLE container); `.sc` must be a SolidCraft ZIP or JSON design.
 

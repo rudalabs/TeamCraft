@@ -111,7 +111,7 @@ fn nx_parts_carry_a_preview_image() {
 async fn the_nx_assembly_references_its_parts() {
     let dir = fixture("mtc-assembly/nx");
     let name = "NIST mtc crada assembly.prt";
-    let refs = cadrefs::scan_file(&dir.join(name), name).await;
+    let refs = cadrefs::scan_file(&dir.join(name), name, "nx-part").await;
     for part in [
         "NIST mtc crada box.prt",
         "NIST mtc crada cover.prt",
@@ -122,9 +122,20 @@ async fn the_nx_assembly_references_its_parts() {
         "91274A141 SHCS.prt",
         "91304A112 FHSCS.prt",
     ] {
-        assert!(refs.iter().any(|r| r == part), "{part} missing in {refs:?}");
+        assert!(
+            refs.iter().any(|r| r.name == part),
+            "{part} missing in {refs:?}"
+        );
         assert!(dir.join(part).is_file(), "{part} is part of the fixture");
     }
+    // How often the assembly places each part (#247) – the same counts as
+    // its SOLIDWORKS version.
+    let count = |part: &str| refs.iter().find(|r| r.name == part).unwrap().instances;
+    assert_eq!(count("90591A141 HEX NUT.prt"), Some(10));
+    assert_eq!(count("91274A118 SHCS.prt"), Some(14));
+    assert_eq!(count("91274A141 SHCS.prt"), Some(4));
+    assert_eq!(count("91304A112 FHSCS.prt"), Some(4));
+    assert_eq!(count("NIST mtc crada box.prt"), Some(1));
 }
 
 /// Every NX part gets a 3D preview from the JT tessellation NX stores in
@@ -461,7 +472,7 @@ async fn step_header_name_is_not_a_reference() {
             .unwrap()
             .to_string_lossy()
             .into_owned();
-        let refs = cadrefs::scan_file(&fixture(rel), &name).await;
+        let refs = cadrefs::scan_file(&fixture(rel), &name, "step").await;
         assert!(refs.is_empty(), "{rel}: {refs:?}");
     }
 }
@@ -499,8 +510,9 @@ async fn solidworks_files_carry_previews_and_references() {
     // The assembly names exactly its eight parts – not the old names of
     // renamed components that the rest of the file still contains.
     let name = "nist_mtc_crada_assembly_rev-D.SLDASM";
-    let mut refs = cadrefs::scan_file(&dir.join(name), name).await;
-    refs.sort();
+    let mut scanned = cadrefs::scan_file(&dir.join(name), name, "solidworks-assembly").await;
+    scanned.sort_by(|a, b| a.name.cmp(&b.name));
+    let refs: Vec<String> = scanned.iter().map(|r| r.name.clone()).collect();
     assert_eq!(refs.len(), 8, "{refs:?}");
     assert!(refs.iter().all(|r| dir.join(r).is_file()), "{refs:?}");
     // Scanning the bytes in memory gives the same result.
@@ -508,10 +520,13 @@ async fn solidworks_files_carry_previews_and_references() {
     let mut in_memory = cadrefs::find(&bytes, name);
     in_memory.sort();
     assert_eq!(in_memory, refs);
+    // How often the assembly places each part (#247).
+    let counts: Vec<Option<u32>> = scanned.iter().map(|r| r.instances).collect();
+    assert_eq!(counts, [10, 14, 4, 4, 1, 1, 1, 1].map(Some), "{scanned:?}");
     // Parts reference nothing (no noise from their compressed data).
     for path in files.iter().filter(|p| p != &&dir.join(name)) {
         let own = path.file_name().unwrap().to_string_lossy().into_owned();
-        let refs = cadrefs::scan_file(path, &own).await;
+        let refs = cadrefs::scan_file(path, &own, "solidworks-part").await;
         assert!(refs.is_empty(), "{own}: {refs:?}");
     }
 }
@@ -526,15 +541,20 @@ async fn nx_parts_report_no_false_references() {
         "91274A118 SHCS.prt",
         "90591A141 HEX NUT.prt",
     ] {
-        let refs = cadrefs::scan_file(&dir.join(part), part).await;
+        let refs = cadrefs::scan_file(&dir.join(part), part, "nx-part").await;
         assert!(refs.is_empty(), "{part}: {refs:?}");
     }
     let rel = "ctc-01/nx-1980/nist_ctc_01_asme1_nx1980_rd.prt";
-    let refs = cadrefs::scan_file(&fixture(rel), "nist_ctc_01_asme1_nx1980_rd.prt").await;
+    let refs =
+        cadrefs::scan_file(&fixture(rel), "nist_ctc_01_asme1_nx1980_rd.prt", "nx-part").await;
     assert!(refs.is_empty(), "{rel}: {refs:?}");
     // The assembly names exactly its eight components.
     let name = "NIST mtc crada assembly.prt";
-    let mut refs = cadrefs::scan_file(&dir.join(name), name).await;
+    let mut refs: Vec<String> = cadrefs::scan_file(&dir.join(name), name, "nx-part")
+        .await
+        .into_iter()
+        .map(|r| r.name)
+        .collect();
     refs.sort();
     assert_eq!(refs.len(), 8, "{refs:?}");
     assert!(refs.iter().all(|r| dir.join(r).is_file()), "{refs:?}");
@@ -569,7 +589,7 @@ async fn step_files_carry_their_export_name() {
             export,
             "{rel}"
         );
-        let refs = cadrefs::scan_file(&path, &own).await;
+        let refs = cadrefs::scan_file(&path, &own, "step").await;
         assert!(refs.is_empty(), "{rel}: {refs:?}");
     }
 }
@@ -580,7 +600,7 @@ async fn step_files_carry_their_export_name() {
 #[tokio::test]
 async fn jt_files_report_no_false_references() {
     let rel = "mtc-assembly/nx/NIST mtc crada assembly.jt";
-    let refs = cadrefs::scan_file(&fixture(rel), "NIST mtc crada assembly.jt").await;
+    let refs = cadrefs::scan_file(&fixture(rel), "NIST mtc crada assembly.jt", "jt").await;
     assert!(refs.is_empty(), "{rel}: {refs:?}");
     // the same file with a part reference of a shattered JT assembly
     // (UTF-16, as JT stores strings) between its segments

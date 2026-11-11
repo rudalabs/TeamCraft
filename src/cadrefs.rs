@@ -19,6 +19,10 @@
 //! manager's section – both inflated from their compressed sections). The
 //! rest of such a file (history, old names) is never scanned.
 //!
+//! For those two the scan also tells how often an assembly places each
+//! component ([`instance_counts`], stored as `file_references.instances`);
+//! every other format gives names only.
+//!
 //! For every other file this is a heuristic: a name that a CAD program keeps
 //! in its file after the component was removed is still found, and
 //! compressed sections of unknown containers are not read. The revision page
@@ -31,7 +35,7 @@
     clippy::unreachable
 )]
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Seek};
 use std::path::Path;
 
@@ -497,30 +501,108 @@ fn from_nx_streams(streams: &[Vec<u8>], own_name: &str) -> Vec<String> {
     finish(names, own_name)
 }
 
+/// A file name referenced by a CAD file, with how often the file places it
+/// where its format tells (see [`instance_counts`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileRef {
+    pub name: String,
+    /// Instances counted in the file; `Some(0)`: only instances excluded
+    /// from the BOM; `None`: not known.
+    pub instances: Option<u32>,
+}
+
+/// The lookup key of a referenced file name: normalised as [`finish`] does,
+/// lower case.
+fn count_key(name: &str) -> String {
+    cadformat::normalize_name(name).to_lowercase()
+}
+
+/// How often an assembly places each component file – keyed by the lower
+/// case, normalised file name – where its format tells:
+///
+/// * NX (`nx-part`): the placed components (`NAME.prt`), hidden layers left
+///   out as in the preview (`nxasm::kind_of`);
+/// * SOLIDWORKS 2015+ assemblies: the instances of the component tree
+///   without `swExcludeFromBOM` (`swpart::file_component_counts`; a file
+///   with only excluded instances counts 0).
+///
+/// `None` for every other format and for files without component data.
+/// Blocking (reads the file).
+pub fn instance_counts(path: &Path, format: &str) -> Option<HashMap<String, u32>> {
+    let mut counts: HashMap<String, u32> = HashMap::new();
+    match format {
+        "nx-part" => {
+            let comps = match crate::nxasm::kind_of(path).ok()? {
+                crate::nxasm::Kind::Assembly(c) | crate::nxasm::Kind::Part(c) => c,
+                crate::nxasm::Kind::Other => return None,
+            };
+            for c in comps {
+                let key = count_key(&format!("{}.prt", c.name));
+                let n = counts.entry(key).or_default();
+                *n = n.saturating_add(1);
+            }
+        }
+        "solidworks-assembly" => {
+            let file = std::io::BufReader::new(std::fs::File::open(path).ok()?);
+            for (p, n) in crate::swpart::file_component_counts(file, MAX_SCAN).ok()?? {
+                let key = count_key(p.rsplit(['\\', '/']).next().unwrap_or(&p).trim());
+                let total = counts.entry(key).or_default();
+                *total = total.saturating_add(n);
+            }
+        }
+        _ => return None,
+    }
+    Some(counts)
+}
+
+/// The names with their counts: a name the counts do not list is `None`
+/// (not known), as is every name when the file tells no counts.
+pub fn with_counts(names: Vec<String>, counts: Option<&HashMap<String, u32>>) -> Vec<FileRef> {
+    names
+        .into_iter()
+        .map(|name| {
+            let instances = counts.and_then(|c| c.get(&count_key(&name)).copied());
+            FileRef { name, instances }
+        })
+        .collect()
+}
+
 /// Reads a stored file and finds its references: NX parts through their
 /// stream directory and SOLIDWORKS 2015+ files through their sections (with
 /// seeks, so large files are read completely), everything else from its
-/// first [`MAX_SCAN`] bytes.
-pub async fn scan_file(path: &Path, own_name: &str) -> Vec<String> {
+/// first [`MAX_SCAN`] bytes. The instance counts come from
+/// [`instance_counts`] for the file's `format`.
+pub async fn scan_file(path: &Path, own_name: &str, format: &str) -> Vec<FileRef> {
     let path = path.to_path_buf();
     let own = own_name.to_string();
-    tokio::task::spawn_blocking(move || -> std::io::Result<Vec<String>> {
-        let mut file = std::io::BufReader::new(std::fs::File::open(&path)?);
-        if let Some(streams) = crate::nxpart::reference_streams(&mut file, MAX_SCAN)? {
-            return Ok(from_nx_streams(&streams, &own));
-        }
-        if let Some(data) = crate::swpart::reference_data(&mut file, MAX_SCAN)? {
-            return Ok(from_sw_sections(data, &own));
-        }
-        let mut content = Vec::new();
-        file.seek(std::io::SeekFrom::Start(0))?;
-        file.take(MAX_SCAN).read_to_end(&mut content)?;
-        Ok(find(&content, &own))
+    let format = format.to_string();
+    tokio::task::spawn_blocking(move || -> std::io::Result<Vec<FileRef>> {
+        let names = names_in_file(&path, &own)?;
+        let counts = if names.is_empty() {
+            None
+        } else {
+            instance_counts(&path, &format)
+        };
+        Ok(with_counts(names, counts.as_ref()))
     })
     .await
     .ok()
     .and_then(Result::ok)
     .unwrap_or_default()
+}
+
+fn names_in_file(path: &Path, own: &str) -> std::io::Result<Vec<String>> {
+    let mut file = std::io::BufReader::new(std::fs::File::open(path)?);
+    if let Some(streams) = crate::nxpart::reference_streams(&mut file, MAX_SCAN)? {
+        return Ok(from_nx_streams(&streams, own));
+    }
+    if let Some(data) = crate::swpart::reference_data(&mut file, MAX_SCAN)? {
+        return Ok(from_sw_sections(data, own));
+    }
+    let mut content = Vec::new();
+    file.seek(std::io::SeekFrom::Start(0))?;
+    file.take(MAX_SCAN).read_to_end(&mut content)?;
+    Ok(find(&content, own))
 }
 
 #[cfg(test)]
@@ -890,15 +972,70 @@ mod tests {
     async fn scan_file_reads_stored_files() {
         let path = std::env::temp_dir().join(format!("teamcraft-cadrefs-{}", uuid::Uuid::new_v4()));
         std::fs::write(&path, b"\x00bracket.SLDPRT\x00frame.SLDASM\x00").unwrap();
+        // not a SOLIDWORKS 2015+ container: names only, no counts
         assert_eq!(
-            scan_file(&path, "frame.sldasm").await,
-            vec!["bracket.SLDPRT"]
+            scan_file(&path, "frame.sldasm", "solidworks-assembly").await,
+            vec![FileRef {
+                name: "bracket.SLDPRT".into(),
+                instances: None
+            }]
         );
         std::fs::remove_file(&path).ok();
         assert!(
-            scan_file(&path, "frame.sldasm").await.is_empty(),
+            scan_file(&path, "frame.sldasm", "solidworks-assembly")
+                .await
+                .is_empty(),
             "missing file"
         );
+    }
+
+    #[test]
+    fn counts_are_matched_by_the_normalised_name_in_any_case() {
+        let counts: HashMap<String, u32> = [
+            ("bolt.sldprt".to_string(), 4),
+            ("glue.sldprt".to_string(), 0),
+            ("gear.prt".to_string(), 2),
+        ]
+        .into();
+        let names = vec![
+            "Bolt.SLDPRT".to_string(),
+            "glue.sldprt".to_string(),
+            // a Creo iteration suffix is not part of the name
+            "gear.prt.3".to_string(),
+            "nut.sldprt".to_string(),
+        ];
+        let refs = with_counts(names.clone(), Some(&counts));
+        let got: Vec<_> = refs
+            .iter()
+            .map(|r| (r.name.as_str(), r.instances))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("Bolt.SLDPRT", Some(4)),
+                ("glue.sldprt", Some(0)),
+                ("gear.prt.3", Some(2)),
+                ("nut.sldprt", None)
+            ]
+        );
+        assert!(with_counts(names, None)
+            .iter()
+            .all(|r| r.instances.is_none()));
+    }
+
+    #[test]
+    fn only_assemblies_with_component_data_have_counts() {
+        let path = std::env::temp_dir().join(format!("teamcraft-counts-{}", uuid::Uuid::new_v4()));
+        std::fs::write(&path, b"\x00bracket.SLDPRT\x00").unwrap();
+        for format in [
+            "solidworks-assembly",
+            "nx-part",
+            "inventor-assembly",
+            "step",
+        ] {
+            assert_eq!(instance_counts(&path, format), None, "{format}");
+        }
+        std::fs::remove_file(&path).ok();
     }
 
     /// Regression: the extension is compared in lower case, and the Kelvin

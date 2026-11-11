@@ -45,13 +45,12 @@ use crate::{
     auth::Actor,
     cadformat::FormatKind,
     error::{AppError, AppResult},
-    nxasm,
     services::{
         audit, bom,
         references::{self, FileWithReferences},
         revisions,
     },
-    swpart, util, AppState,
+    util, AppState,
 };
 
 /// Note of a line whose quantity the CAD file does not tell.
@@ -255,15 +254,6 @@ pub(crate) fn line_note(c: &Candidate) -> String {
     }
 }
 
-/// Lower case file name of a path as stored by a CAD program (either
-/// separator).
-fn basename(path: &str) -> String {
-    path.rsplit(['\\', '/'])
-        .next()
-        .unwrap_or(path)
-        .to_lowercase()
-}
-
 #[derive(sqlx::FromRow)]
 struct FileRow {
     id: Uuid,
@@ -279,40 +269,10 @@ async fn read_counts(
 ) -> AppResult<Option<HashMap<String, u32>>> {
     let path = st.vault.object_path(sha256)?;
     let format = format.to_string();
-    tokio::task::spawn_blocking(move || -> Option<HashMap<String, u32>> {
-        match format.as_str() {
-            "nx-part" => {
-                let kind = nxasm::kind_of(&path).ok()?;
-                let comps = match kind {
-                    nxasm::Kind::Assembly(c) | nxasm::Kind::Part(c) => c,
-                    nxasm::Kind::Other => return None,
-                };
-                let mut counts: HashMap<String, u32> = HashMap::new();
-                for c in comps {
-                    *counts
-                        .entry(format!("{}.prt", c.name.to_lowercase()))
-                        .or_default() += 1;
-                }
-                Some(counts)
-            }
-            "solidworks-assembly" => {
-                let file = std::fs::File::open(&path).ok()?;
-                let counts = swpart::file_component_counts(
-                    std::io::BufReader::new(file),
-                    crate::cadrefs::MAX_SCAN,
-                )
-                .ok()??;
-                let mut map: HashMap<String, u32> = HashMap::new();
-                for (p, n) in counts {
-                    *map.entry(basename(&p)).or_default() += n;
-                }
-                Some(map)
-            }
-            _ => None,
-        }
-    })
-    .await
-    .map_err(|e| AppError::Other(anyhow::anyhow!("reading the CAD file failed: {e}")))
+    // the same counts the reference scan stores (`file_references.instances`)
+    tokio::task::spawn_blocking(move || crate::cadrefs::instance_counts(&path, &format))
+        .await
+        .map_err(|e| AppError::Other(anyhow::anyhow!("reading the CAD file failed: {e}")))
 }
 
 /// Hidden items (project groups the actor may not see) among the names.
@@ -624,6 +584,7 @@ mod tests {
                 .into_iter()
                 .map(|(n, matches)| ReferencedName {
                     name: n.into(),
+                    instances: None,
                     matches,
                 })
                 .collect(),
@@ -734,12 +695,5 @@ mod tests {
         assert_eq!(status_of(Some(2.0), 4.0, false), ChildStatus::Differs);
         // an existing line is never "circular"
         assert_eq!(status_of(Some(2.0), 2.0, true), ChildStatus::AlreadyInBom);
-    }
-
-    #[test]
-    fn basename_takes_either_separator() {
-        assert_eq!(basename("Z:\\a\\Box.SLDPRT"), "box.sldprt");
-        assert_eq!(basename("/a/b/Box.SLDPRT"), "box.sldprt");
-        assert_eq!(basename("Box.SLDPRT"), "box.sldprt");
     }
 }

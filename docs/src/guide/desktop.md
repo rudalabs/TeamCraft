@@ -32,7 +32,12 @@ check-outs and reviews, and a **local working folder**:
   the same folder can also be imported into another group. BOM lines come
   from the references in the assembly files – for NX also from `.prt` files (such an assembly is imported as a part
   item, NX does not tell parts and
-  assemblies apart by the file type). *Help → How to
+  assemblies apart by the file type). Their quantity is how often the
+  assembly places the part where the file tells it (SOLIDWORKS 2015+ and NX
+  assemblies; instances excluded from the BOM do not count); for other
+  formats (Inventor, Solid Edge, …) it is 1 with the note *check the
+  quantity* – set the real quantities with *Import BOM…* from the CAD
+  program's BOM export. *Help → How to
   Import a CAD Folder* is the step-by-step tutorial (Pack and Go, unique file
   names, check and release);
 * *Import BOM…* (in the *Structure* tab and the *More* menu of a revision you

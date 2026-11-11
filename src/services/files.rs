@@ -49,7 +49,7 @@ pub struct Upload {
     /// Detected file format (see `cadformat`).
     pub format: Option<&'static CadFormat>,
     /// CAD files this file references (see `cadrefs`).
-    pub references: Vec<String>,
+    pub references: Vec<cadrefs::FileRef>,
     /// The name a STEP file was exported under, when it differs from
     /// `filename` (see `cadrefs::step_export_name`).
     pub export_name: Option<String>,
@@ -196,7 +196,9 @@ impl Upload {
                     (sum_head, sum_tail) = read_head_and_tail(&path, w, blob.size > w).await;
                 }
                 let references = match format {
-                    Some(f) if cadrefs::scans(f.id) => cadrefs::scan_file(&path, &filename).await,
+                    Some(f) if cadrefs::scans(f.id) => {
+                        cadrefs::scan_file(&path, &filename, f.id).await
+                    }
                     _ => Vec::new(),
                 };
                 if format.is_some_and(|f| f.id == "step") {
@@ -311,7 +313,7 @@ pub async fn scan_unscanned_references(pool: &PgPool, vault: &Vault) -> AppResul
     for row in rows {
         let (names, export_name) = match (row.format.as_deref(), vault.object_path(&row.sha256)) {
             (Some(format), Ok(path)) if cadrefs::scans(format) => (
-                cadrefs::scan_file(&path, &row.filename).await,
+                cadrefs::scan_file(&path, &row.filename, format).await,
                 export_name_of(format, &path, &row.filename).await,
             ),
             _ => (Vec::new(), None),
@@ -400,7 +402,7 @@ pub async fn rescan_references(pool: &PgPool, vault: &Vault, formats: &[String])
     for row in rows {
         let (names, export_name) = match vault.object_path(&row.sha256) {
             Ok(path) => (
-                cadrefs::scan_file(&path, &row.filename).await,
+                cadrefs::scan_file(&path, &row.filename, &row.format).await,
                 export_name_of(&row.format, &path, &row.filename).await,
             ),
             Err(_) => continue,
@@ -1398,8 +1400,8 @@ pub async fn restore_version(
     .await?;
     // The restored content references the same files.
     sqlx::query(
-        "INSERT INTO file_references (file_version_id, name)
-         SELECT $1, name FROM file_references WHERE file_version_id = $2",
+        "INSERT INTO file_references (file_version_id, name, instances)
+         SELECT $1, name, instances FROM file_references WHERE file_version_id = $2",
     )
     .bind(new_version_id)
     .bind(old.id)

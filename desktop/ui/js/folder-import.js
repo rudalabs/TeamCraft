@@ -151,33 +151,59 @@ export function adoptFolderImportLog(folder) {
   }, function () { /* deleted or not visible: the old log stays unused */ });
 }
 
-/** BOM lines for the parts the new items reference (quantity 1). Not only
+/** File kinds whose references describe the structure (NX: "model"). */
+export var REFERENCING_KINDS = ["assembly", "model"];
+/** Note of a BOM line whose quantity the CAD file does not tell. */
+export var ASSUMED_NOTE = "From the CAD references – check the quantity";
+/** Note of a BOM line with the instances counted in the CAD file. */
+export var COUNTED_NOTE = "From the CAD references (instances counted in the CAD file)";
+
+/** The BOM children of an assembly from its `GET …/references` answer: the
+ * first match of each referenced name that is another item, once per item,
+ * with the instance count the server read from the file (`instances`:
+ * SOLIDWORKS 2015+ and NX assemblies) or `null` when the file does not tell
+ * (Inventor, Solid Edge, …). A part with only instances excluded from the
+ * BOM (`instances: 0`) is left out. */
+export function referencedChildren(refs, ownNumber) {
+  var children = [];
+  (refs.files || []).forEach(function (f) {
+    if (REFERENCING_KINDS.indexOf(f.format_kind) < 0) return;
+    (f.references || []).forEach(function (r) {
+      var counted = typeof r.instances === "number" ? r.instances : null;
+      if (counted === 0) return;
+      var m = (r.matches || []).filter(function (x) { return !x.same_revision; })[0];
+      if (!m || m.item_number === ownNumber) return;
+      if (children.some(function (c) { return c.child === m.item_number; })) return;
+      children.push({ child: m.item_number, instances: counted });
+    });
+  });
+  return children;
+}
+
+/** BOM lines for the parts the new items reference, with the instance
+ * counts where the CAD file tells them (quantity 1 otherwise). Not only
  * the items planned as assemblies: NX keeps parts and assemblies in the
  * same `.prt` format (kind "model"), so an NX assembly is only recognised by
- * the references the server found in its file. */
-export var REFERENCING_KINDS = ["assembly", "model"];
+ * the references the server found in its file. Resolves to
+ * `{ lines, assumed }` – lines created, of them with an assumed quantity 1. */
 export function bomFromReferences(created, progress, failed) {
-  var lines = 0;
+  var lines = 0, assumed = 0;
   var assemblies = created.filter(function (c) { return c.item.type !== "document"; });
   return assemblies.reduce(function (chain, c, i) {
     return chain.then(function () {
       progress(i + 1, assemblies.length, "Structure of " + c.rev.item_number);
       var base = "/items/" + enc(c.rev.item_number) + "/revisions/" + enc(c.rev.code);
       return api("GET", base + "/references").then(function (refs) {
-        var children = [];
-        (refs.files || []).forEach(function (f) {
-          if (REFERENCING_KINDS.indexOf(f.format_kind) < 0) return;
-          (f.references || []).forEach(function (r) {
-            var m = (r.matches || []).filter(function (x) { return !x.same_revision; })[0];
-            if (m && m.item_number !== c.rev.item_number && children.indexOf(m.item_number) < 0) children.push(m.item_number);
-          });
-        });
+        var children = referencedChildren(refs, c.rev.item_number);
         if (!children.length) return;
         return api("POST", base + "/checkout").then(function () {
-          var added = children.reduce(function (ch, child) {
+          var added = children.reduce(function (ch, x) {
             return ch.then(function () {
-              return api("POST", base + "/bom", { child: child, quantity: 1, notes: "From the CAD references – check the quantity" })
-                .then(function () { lines++; }, function () { /* e.g. it would be circular */ });
+              var line = x.instances
+                ? { child: x.child, quantity: x.instances, notes: COUNTED_NOTE }
+                : { child: x.child, quantity: 1, notes: ASSUMED_NOTE };
+              return api("POST", base + "/bom", line)
+                .then(function () { lines++; if (!x.instances) assumed++; }, function () { /* e.g. it would be circular */ });
             });
           }, Promise.resolve());
           // whatever happened while adding the lines: the lock is released again
@@ -187,7 +213,7 @@ export function bomFromReferences(created, progress, failed) {
         }).catch(function (err) { failed.push(c.rev.item_number + ": BOM lines – " + errorText(err)); });
       }, function () { /* no references */ });
     });
-  }, Promise.resolve()).then(function () { return lines; });
+  }, Promise.resolve()).then(function () { return { lines: lines, assumed: assumed }; });
 }
 
 /** Check-in of an imported item without new files (releases the lock). */
@@ -353,10 +379,10 @@ export function openImportFolderDialog() {
       });
     }, Promise.resolve()).then(function () {
       // the assemblies are checked out once more for their BOM lines – and always checked in again
-      return bom.checked ? bomFromReferences(created, progress, failed) : 0;
+      return bom.checked ? bomFromReferences(created, progress, failed) : { lines: 0, assumed: 0 };
     }).catch(function (err) {
       failed.push(errorText(err));
-      return 0;
+      return { lines: 0, assumed: 0 };
     }).then(function (lines) {
       // Items of this folder that an earlier, interrupted run left checked out.
       return releaseImported(log, failed).then(function () { return lines; });
@@ -368,7 +394,7 @@ export function openImportFolderDialog() {
       d.close();
       importFinishedDialog({
         stopped: stop, created: created, files: files, skipped: plan.items.length - todo.length,
-        bom: bom.checked, lines: lines, checkedIn: checkedIn, failed: failed,
+        bom: bom.checked, lines: lines.lines, assumed: lines.assumed, checkedIn: checkedIn, failed: failed,
         folder: scanned.folder_name, project: group
       });
     });
@@ -381,13 +407,23 @@ export function openImportFolderDialog() {
     field("Project group", project),
     h("label.check", null, [fromNames, "Use file names as item numbers where they are valid – otherwise numbers are generated"]),
     h("label.check", null, [extras, "Put project files (.ipj …) and other documents into one document item"]),
-    h("label.check", null, [bom, "Create BOM lines from the references found in the assemblies (quantity 1 – check them)"]),
+    h("label.check", null, [bom, "Create BOM lines from the references found in the assemblies (instance counts of SOLIDWORKS and NX assemblies, otherwise quantity 1 – check those)"]),
     report, bar, status
   ]), [
     { label: "Close", onClick: function (d) { stop = true; d.close(); } },
     { label: "Scan", onClick: function (d) { if (!running) scanNow(d); } },
     { label: "Import", primary: true, submit: true, onClick: importNow }
   ], { wide: true });
+}
+
+/** The report line of the BOM lines created from the CAD references. */
+export function bomReportLine(lines, assumed) {
+  var text = lines + " BOM lines from the CAD references";
+  if (!lines) return text;
+  if (!assumed) return text + " – quantities counted in the CAD files";
+  if (assumed === lines) return text + " – quantity 1, the CAD files do not tell how often a part is used: please check them";
+  return text + " – " + (lines - assumed) + " with the quantity counted in the CAD files, " + assumed +
+    " with quantity 1 (not known from the CAD file): please check those";
 }
 
 /** The report at the end of a folder import (finished, stopped or with
@@ -405,7 +441,7 @@ export function importFinishedDialog(r) {
       h("li", { text: r.created.length + " new items in " + r.project + " – " + count("assembly") + " assemblies, " +
         count("part") + " parts, " + count("document") + " documents – with " + r.files + " files" }),
       r.skipped ? h("li", { text: r.skipped + " items were imported before and skipped" }) : null,
-      r.bom ? h("li", { text: r.lines + " BOM lines from the CAD references – quantity 1, please check them" }) : null,
+      r.bom ? h("li", { text: bomReportLine(r.lines, r.assumed) }) : null,
       h("li", { text: r.checkedIn === r.created.length
         ? "Every new item is checked in – nothing is locked"
         : r.checkedIn + " of " + r.created.length + " new items checked in – the others are still checked out to you" }),
@@ -447,7 +483,7 @@ export function importTutorial() {
       "When it is done, a report shows the new items and files, the BOM lines and any problems – with a button that opens the top assembly."
     ]),
     step("4 · Check and release", [
-      "Structure: assemblies get BOM lines for the parts they reference, with quantity 1. For exact quantities export the structured BOM from the CAD program (CSV or Excel) and use Import BOM on the assembly.",
+      "Structure: assemblies get BOM lines for the parts they reference. SOLIDWORKS (2015 and newer) and NX assemblies give the quantity – how often the part is placed; for other formats (Inventor, Solid Edge, …) the quantity is 1 and has to be checked. For exact quantities export the structured BOM from the CAD program (CSV or Excel) and use Import BOM on the assembly.",
       "Look at the preview images and 3D views, fix what is missing, then release the product with one change order.",
       "Team members get the files with Get… (Tools → Get Project Groups…) – one folder per project group."
     ])

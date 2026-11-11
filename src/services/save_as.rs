@@ -148,8 +148,8 @@ pub async fn save_as(
         .execute(&mut *tx)
         .await?;
         sqlx::query(
-            "INSERT INTO file_references (file_version_id, name)
-             SELECT nv.id, fr.name
+            "INSERT INTO file_references (file_version_id, name, instances)
+             SELECT nv.id, fr.name, fr.instances
              FROM files nf
              JOIN file_versions nv ON nv.file_id = nf.id
              JOIN files ofl ON ofl.revision_id = $2 AND ofl.filename = nf.filename
