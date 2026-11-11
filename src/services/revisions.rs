@@ -520,8 +520,8 @@ pub async fn revise(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<Revisio
     .await?;
     // The CAD file references of the current versions come along.
     sqlx::query(
-        "INSERT INTO file_references (file_version_id, name)
-         SELECT nv.id, fr.name
+        "INSERT INTO file_references (file_version_id, name, instances)
+         SELECT nv.id, fr.name, fr.instances
          FROM files nf
          JOIN file_versions nv ON nv.file_id = nf.id
          JOIN files ofl ON ofl.revision_id = $2 AND ofl.filename = nf.filename

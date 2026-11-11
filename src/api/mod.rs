@@ -581,7 +581,7 @@ async fn index() -> Json<Value> {
             "POST   /api/v1/items/{number}/revisions/{code}/bom/import  same multipart fields – imports below the revision (checked out by me)",
             "PATCH  /api/v1/bom-lines/{id}                            {quantity?, find_number?, notes?}",
             "DELETE /api/v1/bom-lines/{id}",
-            "GET    /api/v1/items/{number}/revisions/{code}/references  references, referrers, CAD file references, impacts",
+            "GET    /api/v1/items/{number}/revisions/{code}/references  references, referrers, CAD file references (files[].references[].instances: how often the file places it, null = not known), impacts",
             "POST   /api/v1/items/{number}/revisions/{code}/references  {item, kind: drawing|specification|reference, note?}",
             "DELETE /api/v1/references/{id}",
             "GET    /api/v1/items/{number}/revisions/{code}/simulation  basis links (out of date?), result values (pass/fail), summary",
