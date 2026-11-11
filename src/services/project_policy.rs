@@ -1121,7 +1121,8 @@ pub struct AccessUpdate {
     pub review_interval_days: Option<Option<i32>>,
 }
 
-const SETTINGS_SELECT: &str = "SELECT api_tokens, mcp, assistant, webhooks, packages, notification_content,
+const SETTINGS_SELECT: &str =
+    "SELECT api_tokens, mcp, assistant, webhooks, packages, notification_content,
             external_llm, desktop_sync, read_log, log_retention_days, review_interval_days
      FROM project_policies WHERE project_id = $1";
 

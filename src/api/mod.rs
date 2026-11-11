@@ -46,9 +46,8 @@ use crate::{
         access_log::{self, AccessCtx},
         access_review, attributes, audit, bom, bom_references, changes, checkouts, desktop, files,
         impacts, imports, items, mass_properties, membership_conditions, notifications, package,
-        project_policy, projects,
-        references, requests, reviewers, revisions, similar, stats, structure, uploads, users,
-        workset, Page,
+        project_policy, projects, references, requests, reviewers, revisions, similar, stats,
+        structure, uploads, users, workset, Page,
     },
     web, AppState,
 };

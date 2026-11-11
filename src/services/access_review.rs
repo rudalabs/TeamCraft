@@ -217,19 +217,20 @@ pub async fn remind_due(pool: &PgPool) -> AppResult<u64> {
             redacted: None,
         };
         notifications::notify(&mut tx, None, &to, &notice).await?;
-        sqlx::query(
-            "UPDATE project_policies SET review_reminded_at = now() WHERE project_id = $1",
-        )
-        .bind(project_id)
-        .execute(&mut *tx)
-        .await?;
+        sqlx::query("UPDATE project_policies SET review_reminded_at = now() WHERE project_id = $1")
+            .bind(project_id)
+            .execute(&mut *tx)
+            .await?;
         audit::record(
             &mut tx,
             None,
             "project.review_reminder",
             "project",
             Some(project_id),
-            format!("Access review of {code} is due: reminded {} people", to.len()),
+            format!(
+                "Access review of {code} is due: reminded {} people",
+                to.len()
+            ),
             json!({ "interval_days": days, "recipients": to.len() }),
         )
         .await?;
@@ -477,7 +478,11 @@ pub fn to_csv(report: &AccessReport) -> String {
                 None => "no schedule".to_string(),
                 Some(days) => format!(
                     "every {days} days, {}",
-                    if report.schedule.due { "due" } else { "not due" }
+                    if report.schedule.due {
+                        "due"
+                    } else {
+                        "not due"
+                    }
                 ),
             },
             conditions_text(&report.conditions)

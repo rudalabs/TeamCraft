@@ -496,8 +496,8 @@ pub async fn apply(pool: &PgPool, actor: Actor, origin: &Origin) -> AppResult<Ac
     let mut hide = Vec::new();
     let mut refused = Vec::new();
     for r in &rows {
-        let network = !r.allowed_networks.is_empty()
-            && !network_allows(&r.allowed_networks, origin.client);
+        let network =
+            !r.allowed_networks.is_empty() && !network_allows(&r.allowed_networks, origin.client);
         if network || r.session_too_old {
             hide.push(r.project_id);
         }
@@ -801,19 +801,31 @@ mod tests {
         for bad in ["10.0.0.1/8", "10.0.0.0/33", "nope", "10.0.0.0/x", "::/129"] {
             assert!(Network::parse(bad).is_err(), "{bad}");
         }
-        assert!(network_allows(&["10.0.0.0/8".into()], "10.1.1.1".parse().ok()));
-        assert!(!network_allows(&["10.0.0.0/8".into()], None), "unknown client");
+        assert!(network_allows(
+            &["10.0.0.0/8".into()],
+            "10.1.1.1".parse().ok()
+        ));
+        assert!(
+            !network_allows(&["10.0.0.0/8".into()], None),
+            "unknown client"
+        );
     }
 
     #[test]
     fn conditions_are_validated_and_normalised() {
         let c = validate(Conditions {
-            required_claims: vec![cond(" site ", &["Main-Office", " partner ", "main-office", ""])],
+            required_claims: vec![cond(
+                " site ",
+                &["Main-Office", " partner ", "main-office", ""],
+            )],
             allowed_networks: vec!["10.0.0.0/8".into(), " ".into(), "10.0.0.0/8".into()],
             max_signin_age_hours: Some(12),
         })
         .unwrap();
-        assert_eq!(c.required_claims, vec![cond("site", &["main-office", "partner"])]);
+        assert_eq!(
+            c.required_claims,
+            vec![cond("site", &["main-office", "partner"])]
+        );
         assert_eq!(c.allowed_networks, vec!["10.0.0.0/8".to_string()]);
         for bad in [
             Conditions {
@@ -848,7 +860,10 @@ mod tests {
     #[test]
     fn claim_lines_round_trip() {
         let parsed = parse_claim_lines("site = a, b\n\n nda=true \n").unwrap();
-        assert_eq!(parsed, vec![cond("site", &["a", "b"]), cond("nda", &["true"])]);
+        assert_eq!(
+            parsed,
+            vec![cond("site", &["a", "b"]), cond("nda", &["true"])]
+        );
         assert_eq!(claim_lines(&parsed), "site = a, b\nnda = true");
         assert!(parse_claim_lines("site").is_err());
     }
@@ -908,12 +923,15 @@ mod tests {
             "groups": ["A", "B", 7, {"x": 1}], "address": {"street": "y"},
         }));
         assert_eq!(claims["nda"], vec!["true".to_string()]);
-        assert_eq!(claims["groups"], vec!["A".to_string(), "B".into(), "7".into()]);
-        assert!(!claims.contains_key("address"));
-        let stored = claims_to_store(
-            &claims,
-            &["site".into(), "groups".into(), "missing".into()],
+        assert_eq!(
+            claims["groups"],
+            vec!["A".to_string(), "B".into(), "7".into()]
         );
-        assert_eq!(stored, json!({ "site": ["main-office"], "groups": ["a", "b", "7"] }));
+        assert!(!claims.contains_key("address"));
+        let stored = claims_to_store(&claims, &["site".into(), "groups".into(), "missing".into()]);
+        assert_eq!(
+            stored,
+            json!({ "site": ["main-office"], "groups": ["a", "b", "7"] })
+        );
     }
 }

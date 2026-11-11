@@ -127,9 +127,14 @@ async fn the_group_is_only_visible_from_the_allowed_networks() {
     let app = app_or_skip!();
     let f = group(&app).await;
     let uri = format!("/api/v1/items/{}", f.item);
-    set(&app, "erika", networks(&["10.20.0.0/16"]), &from("10.20.1.1"))
-        .await
-        .expect("set networks");
+    set(
+        &app,
+        "erika",
+        networks(&["10.20.0.0/16"]),
+        &from("10.20.1.1"),
+    )
+    .await
+    .expect("set networks");
 
     assert_eq!(
         get_from(&app, &f.vera, &uri, Some("10.20.9.9")).await,
@@ -243,7 +248,10 @@ async fn claims_of_the_last_single_sign_on_decide() {
     assert_eq!(err.status(), StatusCode::CONFLICT, "{err}");
     // … an administrator who is no member may (tightening)
     set(&app, "root", site, &Origin::default()).await.unwrap();
-    assert_eq!(get_from(&app, &f.vera, &uri, None).await, StatusCode::NOT_FOUND);
+    assert_eq!(
+        get_from(&app, &f.vera, &uri, None).await,
+        StatusCode::NOT_FOUND
+    );
 
     // vera signs in with single sign-on from the main office
     let sign_in = |site: &'static str| {
@@ -285,7 +293,10 @@ async fn claims_of_the_last_single_sign_on_decide() {
     assert_eq!(stored, json!({ "site": ["main-office"] }));
     // working from home: hidden again after the next sign-in
     sign_in("home").await;
-    assert_eq!(get_from(&app, &f.vera, &uri, None).await, StatusCode::NOT_FOUND);
+    assert_eq!(
+        get_from(&app, &f.vera, &uri, None).await,
+        StatusCode::NOT_FOUND
+    );
     app.teardown().await;
 }
 
@@ -307,11 +318,16 @@ async fn the_group_is_hidden_after_the_maximum_sign_in_age() {
     .unwrap();
     // tokens: the user's last sign-in
     assert_eq!(get_from(&app, &f.vera, &uri, None).await, StatusCode::OK);
-    sqlx::query("UPDATE users SET last_login_at = now() - interval '9 hours' WHERE username = 'vera'")
-        .execute(&app.pool)
-        .await
-        .unwrap();
-    assert_eq!(get_from(&app, &f.vera, &uri, None).await, StatusCode::NOT_FOUND);
+    sqlx::query(
+        "UPDATE users SET last_login_at = now() - interval '9 hours' WHERE username = 'vera'",
+    )
+    .execute(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        get_from(&app, &f.vera, &uri, None).await,
+        StatusCode::NOT_FOUND
+    );
 
     // the browser: the session's own start
     let cookie = app.login("vera").await; // a new sign-in
@@ -341,7 +357,9 @@ async fn managers_cannot_lock_themselves_out_and_admins_cannot_loosen() {
     assert_eq!(err.status(), StatusCode::CONFLICT, "{err}");
     // bad input
     for bad in [networks(&["10.0.0.1/8"]), networks(&["nonsense"])] {
-        let err = set(&app, "erika", bad, &from("10.0.0.1")).await.unwrap_err();
+        let err = set(&app, "erika", bad, &from("10.0.0.1"))
+            .await
+            .unwrap_err();
         assert_eq!(err.status(), StatusCode::BAD_REQUEST, "{err}");
     }
     set(&app, "erika", networks(&["10.0.0.0/8"]), &from("10.0.0.1"))
@@ -399,7 +417,10 @@ async fn the_api_sets_and_shows_the_conditions() {
     };
     let r = put(json!({ "allowed_networks": ["10.0.0.0/8"], "max_signin_age_hours": 12 })).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text());
-    assert_eq!(r.json()["conditions"]["allowed_networks"], json!(["10.0.0.0/8"]));
+    assert_eq!(
+        r.json()["conditions"]["allowed_networks"],
+        json!(["10.0.0.0/8"])
+    );
     assert_eq!(r.json()["conditions"]["max_signin_age_hours"], 12);
     let r = put(json!({ "max_signin_age_hours": 0 })).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text());
@@ -416,6 +437,9 @@ async fn the_api_sets_and_shows_the_conditions() {
         .unwrap();
     let r = app.send(req).await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text());
-    assert_eq!(r.json()["conditions"]["allowed_networks"], json!(["10.0.0.0/8"]));
+    assert_eq!(
+        r.json()["conditions"]["allowed_networks"],
+        json!(["10.0.0.0/8"])
+    );
     app.teardown().await;
 }

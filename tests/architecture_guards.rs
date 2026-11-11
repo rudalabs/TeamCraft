@@ -144,6 +144,10 @@ const NOT_AUDITED: &[(&str, &str)] = &[
         "the read log itself: one entry per group of a read structure, separate from the audit log",
     ),
     (
+        "access_log::record_tool_read",
+        "the read log itself: one entry per MCP or assistant tool read, separate from the audit log",
+    ),
+    (
         "package::build",
         "a read (Pack and Go); its only write is the read log entry (access_log::record_structure)",
     ),

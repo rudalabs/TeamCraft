@@ -771,19 +771,19 @@ impl Tools for McpTools<'_> {
         // groups that switched the assistant off look non-existent to it, so
         // do those that switched tokens off when a token asked, and those
         // whose conditions on membership the request does not meet
-        let mut switches = crate::services::assistant::switches(self.state.config.assistant.as_ref());
+        let mut switches =
+            crate::services::assistant::switches(self.state.config.assistant.as_ref());
         if self.origin.token {
             switches.push(crate::services::project_policy::Interface::ApiTokens);
         }
-        let narrowed = match crate::services::project_policy::narrow(&self.state.db, me, &switches)
-            .await
-        {
-            Ok(me) => {
-                crate::services::membership_conditions::apply(&self.state.db, me, &self.origin)
-                    .await
-            }
-            Err(e) => Err(e),
-        };
+        let narrowed =
+            match crate::services::project_policy::narrow(&self.state.db, me, &switches).await {
+                Ok(me) => {
+                    crate::services::membership_conditions::apply(&self.state.db, me, &self.origin)
+                        .await
+                }
+                Err(e) => Err(e),
+            };
         let me = match narrowed {
             Ok(me) => me,
             Err(e) => {

@@ -1497,7 +1497,9 @@ mod tests {
         render(
             &env,
             "projects/list.html",
-            with_common(json!({ "projects": [project()], "my_projects": [ROCKET], "review_due": [] })),
+            with_common(
+                json!({ "projects": [project()], "my_projects": [ROCKET], "review_due": [] }),
+            ),
         );
         let html = render(
             &env,
@@ -1550,7 +1552,9 @@ mod tests {
                 "error": "since must be a date", "collapse_minutes": 5, "kinds": [], "channels": [],
             })),
         );
-        assert!(html.contains("the log of this group is off") && html.contains("since must be a date"));
+        assert!(
+            html.contains("the log of this group is off") && html.contains("since must be a date")
+        );
         let html = render(
             &env,
             "projects/show.html",

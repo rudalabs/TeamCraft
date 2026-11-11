@@ -336,7 +336,11 @@ impl FromRequestParts<AppState> for Origin {
         parts: &mut Parts,
         _state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        Ok(parts.extensions.get::<Origin>().cloned().unwrap_or_default())
+        Ok(parts
+            .extensions
+            .get::<Origin>()
+            .cloned()
+            .unwrap_or_default())
     }
 }
 

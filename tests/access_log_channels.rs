@@ -78,12 +78,10 @@ async fn logged_group(app: &common::TestApp) -> Fixture {
 
 /// `(channel, kind, label, detail, username)` of every entry, oldest first.
 async fn entries(app: &common::TestApp) -> Vec<(String, String, String, String, String)> {
-    sqlx::query_as(
-        "SELECT channel, kind, label, detail, username FROM access_log ORDER BY at, id",
-    )
-    .fetch_all(&app.pool)
-    .await
-    .unwrap()
+    sqlx::query_as("SELECT channel, kind, label, detail, username FROM access_log ORDER BY at, id")
+        .fetch_all(&app.pool)
+        .await
+        .unwrap()
 }
 
 async fn mcp(app: &common::TestApp, token: &str, tool: &str, args: Value) -> Value {

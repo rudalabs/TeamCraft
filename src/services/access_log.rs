@@ -233,7 +233,10 @@ pub async fn record_tool_read(
     };
     // `PRT-000012/B`: item numbers never contain a slash
     let (number, code) = match raw.trim().split_once('/') {
-        Some((n, c)) => (n.trim(), Some(c.trim().to_string()).filter(|c| !c.is_empty())),
+        Some((n, c)) => (
+            n.trim(),
+            Some(c.trim().to_string()).filter(|c| !c.is_empty()),
+        ),
         None => (raw.trim(), None),
     };
     if number.is_empty() {
@@ -417,7 +420,11 @@ fn filter_time(field: &str, raw: &str, end: bool) -> AppResult<DateTime<Utc>> {
             "{field} must be a date (YYYY-MM-DD) or an RFC 3339 time."
         ))
     })?;
-    let day = if end { day.succ_opt().unwrap_or(day) } else { day };
+    let day = if end {
+        day.succ_opt().unwrap_or(day)
+    } else {
+        day
+    };
     Ok(day.and_time(chrono::NaiveTime::MIN).and_utc())
 }
 
@@ -710,9 +717,15 @@ mod tests {
     fn the_names_match_the_check_constraints() {
         // migrations/0066: the CHECK constraints list exactly these
         let sql = include_str!("../../migrations/0066_access_log_tools_and_desktop.sql");
-        let channels: Vec<_> = Channel::ALL.iter().map(|c| format!("'{}'", c.as_str())).collect();
+        let channels: Vec<_> = Channel::ALL
+            .iter()
+            .map(|c| format!("'{}'", c.as_str()))
+            .collect();
         assert!(sql.contains(&format!("channel IN ({})", channels.join(", "))));
-        let kinds: Vec<_> = Kind::ALL.iter().map(|k| format!("'{}'", k.as_str())).collect();
+        let kinds: Vec<_> = Kind::ALL
+            .iter()
+            .map(|k| format!("'{}'", k.as_str()))
+            .collect();
         assert!(sql.contains(&format!("kind IN ({})", kinds.join(", "))));
     }
 }

@@ -33,7 +33,12 @@ async fn restricted_group(app: &common::TestApp, token: &str) {
 
 async fn put_policy(app: &common::TestApp, token: &str, body: serde_json::Value) -> StatusCode {
     let r = app
-        .api(Method::PUT, "/api/v1/projects/NTK/policy", token, Some(body))
+        .api(
+            Method::PUT,
+            "/api/v1/projects/NTK/policy",
+            token,
+            Some(body),
+        )
         .await;
     r.status
 }

@@ -430,8 +430,7 @@ pub async fn update_conditions(
     let back = format!("/projects/{id}");
     let result = match conditions_update(&form) {
         Ok(update) => {
-            crate::services::membership_conditions::set(&st.db, &ctx.me, id, update, &origin)
-                .await
+            crate::services::membership_conditions::set(&st.db, &ctx.me, id, update, &origin).await
         }
         Err(e) => Err(e),
     };
