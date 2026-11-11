@@ -42,8 +42,8 @@ release.
     * **Reject** – no change (reason required).
       While no item is named, any CAD editor may triage; once the request is
       decided, an item is added only by a member of its project group (or an
-      admin). A group can keep requesters from deciding their own requests
-      (*Review policy*, see [Read permissions](../admin/permissions.md)).
+      admin). A group can keep requesters from deciding their own requests (*Review policy*,
+      see [Read permissions](../admin/permissions.md)).
 4. **Implement** – an accepted request gets its change order: *Create change
    order* creates a draft with the in-work revisions of the affected items (items without a revision in work are
    listed – revise them and add the
@@ -186,8 +186,8 @@ delays a request.
 with the full title and text; nothing is posted into a channel. Enter your
 Mattermost username on the account page if it differs from your TeamCraft
 login. If it is wrong (or your Mattermost account is deactivated), the
-notification shows *Mattermost failed* with the reason on the page
-*Notifications*, for example *Mattermost user "xy" not found – check your
+notification shows *Mattermost failed* with the reason on the page *Notifications*, for example *Mattermost user "xy"
+not found – check your
 Mattermost username*. **Send a test** on the account page checks the setting.
 
 With e-mail switched on, CAD editors also get a **digest of the change

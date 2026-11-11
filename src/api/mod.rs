@@ -93,6 +93,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/branding/name", put(branding_name_set))
         .route("/branding/{kind}", get(branding_logo))
         .route("/projects", get(list_projects).post(create_project))
+        .route("/projects/manager-gaps", get(project_manager_gaps))
         .route("/projects/{code}/visibility", put(set_project_visibility))
         .route(
             "/projects/{code}/policy",
@@ -512,6 +513,7 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/users/{id}/holdings                     what a user still holds: check-outs, open change orders, pending reviews, change requests, owned items, memberships, tokens – admins; group managers for their groups",
             "GET    /api/v1/projects                                  the groups you may see (restricted groups only for members and admins)",
             "POST   /api/v1/projects                                  {code, name, description?, oidc_group?, visibility?}",
+            "GET    /api/v1/projects/manager-gaps                     active groups without an active manager (kind none) or whose managers were inactive for 90 days (kind stale) – admins",
             "PUT    /api/v1/projects/{code}/visibility                {visibility: internal|restricted} – managers and admins",
             "GET    /api/v1/projects/{code}/policy                   need-to-know policy and elevation history – managers and admins",
             "PUT    /api/v1/projects/{code}/policy   {admin_read?, interfaces?: {api_tokens|mcp|assistant|webhooks|packages|notification_content|external_llm|desktop_sync: bool}, read_log?, log_retention_days?, review_interval_days?, required_claims?: [{claim, values}], allowed_networks?: [cidr], max_signin_age_hours?} need-to-know policy – managers and admins",

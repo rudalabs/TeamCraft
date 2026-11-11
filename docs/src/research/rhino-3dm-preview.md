@@ -10,27 +10,26 @@ and what does it take?
 ## Findings
 
 * The `.3dm` format is publicly documented through McNeel's openNURBS
-  toolkit (C++ source on GitHub): a 32-byte header with the version
-  (1, 2, 3, 4, 5, 50, 60, 70, 80), then nested chunks (`u32` type code and a
+  toolkit (C++ source on GitHub): a 32-byte header with the version (1, 2, 3, 4, 5, 50, 60, 70, 80), then nested chunks
+  (`u32` type code and a
   32-bit length, 64-bit from version 50; short chunks carry their value in
   the length field; chunks whose type code has bit `0x8000` end in a CRC-32).
   Tables (properties, settings, layers, block definitions, objects) are
   sequences of records; every object is a class-tagged record (class UUID +
   data) followed by its attributes.
 * What is stored for display:
-  * **Mesh objects** – the mesh itself (float vertices, quads/triangles;
-    vertex arrays zlib-compressed with a CRC).
-  * **Polysurfaces (B-reps)** – one *render mesh* per face, saved after the
-    exact geometry, when the file was saved with display data (Rhino 4 and
-    later do this by default; "Save Small" and files written by scripts or
-    the openNURBS examples do not). Most Rhino 2/3 files have none.
-  * **Extrusions** – a mesh cache since Rhino 6 (user data in Rhino 5).
-  * **SubD objects** (Rhino 7, 8) – never a mesh, only the control net
-    (vertices with tags, edges with crease tags, faces as edge loops).
+    * **Mesh objects** – the mesh itself (float vertices, quads/triangles;
+      vertex arrays zlib-compressed with a CRC).
+    * **Polysurfaces (B-reps)** – one *render mesh* per face, saved after the
+      exact geometry, when the file was saved with display data (Rhino 4 and
+      later do this by default; "Save Small" and files written by scripts or
+      the openNURBS examples do not). Most Rhino 2/3 files have none.
+    * **Extrusions** – a mesh cache since Rhino 6 (user data in Rhino 5).
+    * **SubD objects** (Rhino 7, 8) – never a mesh, only the control net (vertices with tags, edges with crease tags,
+      faces as edge loops).
 * **Blocks** are the assemblies of Rhino: a block definition lists the ids
   of its objects (stored in the object table, flagged as definition
-  objects); a block instance holds the definition id and a 4 × 4 transform
-  (column vectors, `p' = M p`). Instances nest.
+  objects); a block instance holds the definition id and a 4 × 4 transform (column vectors, `p' = M p`). Instances nest.
 * Visibility: objects can be hidden themselves or through their layer.
 * A prototype read all 165 openNURBS and rhino3dm example files (Rhino 1
   to 8) without an error. 104 contain surface geometry; 55 of them give a
@@ -81,5 +80,4 @@ NURBS surfaces, linked blocks (external files), colours and materials.
   test models.
 * E. Catmull, J. Clark, *Recursively generated B-spline surfaces on
   arbitrary topological meshes*, Computer-Aided Design 10(6), 1978;
-  H. Hoppe et al., *Piecewise smooth surface reconstruction*, SIGGRAPH 1994
-  (crease rules).
+  H. Hoppe et al., *Piecewise smooth surface reconstruction*, SIGGRAPH 1994 (crease rules).

@@ -9,21 +9,21 @@ without Fusion, an Autodesk account or a translation service?
 
 ## Findings
 
-* A `.f3d` file is a **ZIP archive**. Most entries are compressed with
-  **Zstandard** (ZIP method 93); a few small ones are stored. Common ZIP
+* A `.f3d` file is a **ZIP archive**. Most entries are compressed with **Zstandard** (ZIP method 93); a few small ones
+  are stored. Common ZIP
   tools that know only Deflate refuse these entries. The archive holds one
   folder per document (`FusionAssetName[Active]/…`) with:
-  * `Breps.BlobParts/BREP.<uuid>.smb` / `.smbh`: the exact geometry as
-    binary **Autodesk ShapeManager** save files (ASM, the ACIS-derived
-    kernel; `.smbh` with history). Tessellating them needs a B-rep kernel.
-    `truck` cannot read them, and no open kernel does.
-  * `FusionDesignSegmentType1/…`: the design (timeline, sketches, features).
-  * `Previews/small.png`, `Previews/big.png`: thumbnails Fusion rendered when
-    saving.
-  * `OGS.BlobFolder/OGS/DefaultScene/world` and `stream_mesh_000`: the
-    **display scene** of Fusion's graphics system (OGS). Fusion stores it so
-    that the design opens quickly. It holds the triangles Fusion draws for
-    every face of every body.
+    * `Breps.BlobParts/BREP.<uuid>.smb` / `.smbh`: the exact geometry as
+      binary **Autodesk ShapeManager** save files (ASM, the ACIS-derived
+      kernel; `.smbh` with history). Tessellating them needs a B-rep kernel.
+      `truck` cannot read them, and no open kernel does.
+    * `FusionDesignSegmentType1/…`: the design (timeline, sketches, features).
+    * `Previews/small.png`, `Previews/big.png`: thumbnails Fusion rendered when
+      saving.
+    * `OGS.BlobFolder/OGS/DefaultScene/world` and `stream_mesh_000`: the **display scene** of Fusion's graphics system
+      (OGS). Fusion stores it so
+      that the design opens quickly. It holds the triangles Fusion draws for
+      every face of every body.
 * `world` is a binary serialisation of the scene graph. Class names are
   stored as `u32 length` + UTF-16LE: `GroupNode`, `GeometryNode`,
   `OgsSimpleMesh`, `TransformAttribute`, `VisibilityAttribute`, and the
@@ -55,13 +55,13 @@ without Fusion, an Autodesk account or a translation service?
   faces in all) was compared with the STL and STEP files Fusion exported from the
   same design:
 
-  | | display mesh of the `.f3d` | STL export of Fusion |
-  |---|---|---|
-  | triangles | 1,108 | 4,490 |
-  | open edges after welding | 0 | 0 |
-  | connected shells | 4 | 4 |
-  | volume | 0.98459 cm³ | 0.98485 cm³ (−0.03 %) |
-  | bounding box | identical | identical |
+  |                          | display mesh of the `.f3d` | STL export of Fusion  |
+  |--------------------------|----------------------------|-----------------------|
+  | triangles                | 1,108                      | 4,490                 |
+  | open edges after welding | 0                          | 0                     |
+  | connected shells         | 4                          | 4                     |
+  | volume                   | 0.98459 cm³                | 0.98485 cm³ (−0.03 %) |
+  | bounding box             | identical                  | identical             |
 
   The STEP export has the same box in millimetres (14.8 × 14.8 × 15.4 mm).
   The display mesh is coarser than an export, but it has exact normals, so

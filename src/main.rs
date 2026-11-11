@@ -519,6 +519,12 @@ async fn serve(no_migrate: bool) -> Result<ExitCode> {
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e, "access review reminders failed"),
             }
+            // groups that lost their last present manager (#173)
+            match services::manager_gaps::alert_admins(&pool).await {
+                Ok(n) if n > 0 => tracing::info!(groups = n, "manager gap alerts sent"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "manager gap alerts failed"),
+            }
             match services::imports::purge_stale(&pool, &vault).await {
                 Ok(n) if n > 0 => tracing::info!(removed = n, "removed stale staged imports"),
                 Ok(_) => {}

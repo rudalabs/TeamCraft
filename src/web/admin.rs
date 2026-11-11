@@ -34,11 +34,24 @@ pub async fn projects(State(st): State<AppState>, ctx: WebCtx) -> AppResult<Resp
     let list = projects::list_managed(&st.db, &ctx.me).await?;
     // groups whose access review is due, among those the user manages
     let review_due = access_review::due_for(&st.db, &ctx.me).await?;
+    // administrators: groups without a present manager (#173)
+    let gaps = if ctx.me.is_admin() {
+        crate::services::manager_gaps::list(&st.db, &ctx.me).await?
+    } else {
+        Vec::new()
+    };
     render(
         &st,
         &ctx,
         "projects/list.html",
-        json!({ "projects": list, "my_projects": ctx.me.projects, "review_due": review_due }),
+        json!({
+            "projects": list,
+            "my_projects": ctx.me.projects,
+            "review_due": review_due,
+            "manager_gaps": crate::services::manager_gaps::to_json(&gaps),
+            "manager_gap_ids": gaps.iter().map(|g| g.project_id).collect::<Vec<_>>(),
+            "stale_days": crate::services::manager_gaps::STALE_DAYS,
+        }),
     )
 }
 

@@ -42,8 +42,8 @@ names must be unique within an import. The desktop app gets an **Import folder�
   the end, so nothing stays
   locked; the server scans the assemblies for the files they reference.
 * **Structure:** optionally BOM lines from the references found in the
-  assemblies, with the instance count the server read from the assembly
-  (`instances` of `GET …/references`: SOLIDWORKS 2015+ component tree, NX
+  assemblies, with the instance count the server read from the assembly (`instances` of `GET …/references`: SOLIDWORKS
+  2015+ component tree, NX
   structure); where the format does not tell (Inventor, Solid Edge, …)
   quantity 1, to be checked – exact quantities come from the BOM export of
   the CAD program (*Import BOM…*).

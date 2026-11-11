@@ -43,8 +43,8 @@
   process with a time limit. The browser only draws the compact
   `TCMESH01` buffer; `simmesh.rs` turns VTK/VTU/VTP (`simmesh/vtk_legacy.rs`,
   `simmesh/vtk_xml.rs`) and CalculiX `.frd` (`simmesh/frd.rs`) results, over
-  a shared cell grid (`simmesh/grid.rs`) and number parsing
-  (`simmesh/numbers.rs`), into their outer surface with scalar fields (an optional, flagged
+  a shared cell grid (`simmesh/grid.rs`) and number parsing (`simmesh/numbers.rs`), into their outer surface with scalar
+  fields (an optional, flagged
   section of the same format) that the viewer colours with a colour map.
   The same child process writes the shape signature of the
   [similar part search](../guide/similar-parts.md) (`shape.rs`), stored once

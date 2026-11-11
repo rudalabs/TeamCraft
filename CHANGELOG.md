@@ -24,6 +24,11 @@ see the notices in the README.
 
 ### Added
 
+- Offboarding (#173, step 7): **groups without an active manager** – or
+  whose managers have neither signed in nor used a token for 90 days – are
+  listed for administrators on *Project groups* and at
+  `GET /api/v1/projects/manager-gaps`; the hourly housekeeping notifies the
+  administrators once per gap (audited as `project.manager_gap_alert`).
 - Offboarding (#173, step 6): a group manager can release the check-out of
   an **active** member with a reason (*Release with reason* on the revision
   page, `{"reason": …}` on `cancel-checkout`). The reason is audited and told

@@ -405,6 +405,12 @@ real files and belong to section 3 once such files are at hand.
   revocation, release of check-outs; *Offboard and deactivate* on the user page, `POST /api/v1/users/{id}/offboard`,
   `teamcraft user deactivate`).
 - [x] Step 5: managers of every affected group withdraw, reopen, cancel or take over a deactivated author's change.
+- [ ] Step 6: manager release of an active member's lock with a reason (PR #261).
+- [x] Step 7: groups without an active manager, or whose managers showed no activity for 90 days
+  (`services::manager_gaps`: *Groups without an active manager* on the project overview of administrators,
+  `GET /api/v1/projects/manager-gaps`; the hourly housekeeping tells the administrators once per gap). Left: the
+  access review page for all groups (with step 8).
+- [ ] Steps 8–10: season handover, IdP-driven offboarding, desktop working folder.
 - [x] Step 6: a manager releases an active member's check-out with a reason (`revisions::cancel_checkout` with
   `reason`: audited, told to the holder; *Release with reason* on the revision page, `{reason}` in REST). Lock age is
   shown in the explorer, on the revision page and in the holdings report. Open: a timed stale-lock rule
@@ -565,7 +571,8 @@ real files and belong to section 3 once such files are at hand.
 - [ ] Test preview images of SOLIDWORKS 2014 and older (OLE files) with real files – 2015 and newer: done
 - [ ] Test the SOLIDWORKS 2015+ reader with drawings (`.slddrw`, also a real drawing for the document-manager
   fallback), nested sub-assemblies and other versions than 2018
-- [x] Use the instance counts of the component tree (`swReference`, without `swExcludeFromBOM`) for BOM quantities (#180: Create BOM from CAD references)
+- [x] Use the instance counts of the component tree (`swReference`, without `swExcludeFromBOM`) for BOM quantities
+  (#180: Create BOM from CAD references)
 - [ ] Take configurations and Toolbox parts into account in the import and the reference scan
 - [ ] Test the BOM import with real BOM exports
 
@@ -602,11 +609,11 @@ needs an issue with a reason first (see *Direction*).
   to a managed mode (Save As, revise, structure, numbering)
 - [ ] ECAD/EPLAN integration: electrical design files and their BOM connectivity as first-class data, not
   attachments
-- [ ] Derivatives generated on check-in or release – STEP, drawing PDF, DXF, Parasolid – through the CAD programs
-  (the desktop app's Inventor/Solid Edge STEP export is a first step)
+- [ ] Derivatives generated on check-in or release – STEP, drawing PDF, DXF, Parasolid – through the CAD programs (the
+  desktop app's Inventor/Solid Edge STEP export is a first step)
 - [ ] Restore drills: back up and restore the data of each release in CI, not only the current one
-- [ ] Mass properties, follow-ups of the first version (`services::mass_properties`, research page
-  *Mass properties from exported meshes*): placements per BOM line instance (4×4 transforms, e.g. from the NX /
+- [ ] Mass properties, follow-ups of the first version (`services::mass_properties`, research page *Mass properties from
+  exported meshes*): placements per BOM line instance (4×4 transforms, e.g. from the NX /
   SOLIDWORKS assembly placements the 3D preview reads) for parts exported in their own frame; a REST/MCP write
   for the mass settings and the material library; measured masses on released revisions (as-built units);
   the unit a 3MF or STEP file declares as the default unit; desktop view
@@ -618,8 +625,8 @@ needs an issue with a reason first (see *Direction*).
 - [ ] Personal search presets (filters, columns, defaults); configurable result columns with per-user layouts,
   classification attributes as columns
 - [ ] Search across classification attributes; important metadata on the summary page; full long descriptions
-- [ ] Richer custom attribute types (date, unit, reference, formula) with validation; full regex naming rules
-  (negative lookahead)
+- [ ] Richer custom attribute types (date, unit, reference, formula) with validation; full regex naming rules (negative
+  lookahead)
 - [ ] Hierarchical numbering (from parent or project), document numbering apart from parts, custom document types,
   generated cover sheets
 - [ ] Administrator-configurable forms (hide unused fields), role-specific views, low-code validation rules
@@ -641,8 +648,8 @@ needs an issue with a reason first (see *Direction*).
   BOMs that include hidden or reference-only content, workflow expansion filters
 - [ ] Dissolve/promote a subassembly, pack identical lines, substitutes per occurrence, supersession propagated to all
   assemblies, reference designators in electrical searches; proofing of quantity/unit edge cases
-- [ ] Sourcing: supplier price breaks, currency conversion, inventory, distributor search and metadata import
-  (DigiKey, Nexar)
+- [ ] Sourcing: supplier price breaks, currency conversion, inventory, distributor search and metadata import (DigiKey,
+  Nexar)
 - [ ] Workflows: NPI process, parallel and conditional routing, dynamic participants, notify earlier reviewers,
   target vs. reference attachments at submission, editable task names, templates, a no-code designer, versioned
   definitions, delegation, due dates and escalation

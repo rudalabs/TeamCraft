@@ -115,18 +115,17 @@ lena` on the server) deactivates the user and, in the same step:
   needed), the leaver stops being one (`project.manager_handover` per
   group);
 * **revokes the API tokens** (ticked by default): they are deleted, so
-  activating the account again does not bring old tokens back
-  (`token.revoke_all`);
+  activating the account again does not bring old tokens back (`token.revoke_all`);
 * **releases the check-outs** (ticked when there are any), each in its own
   transaction and audited like *Release all*.
 
 Deactivation, hand-over and token revocation run in one transaction; the
 check-outs are released afterwards and the message reports both. If the user
 is the **only active manager** of a group and no successor is named, the step
-is refused until you confirm that the group is left without an active manager
-(administrators can still manage it). An administrator cannot offboard
-themselves, and the last active administrator is kept. Every run is audited
-(`user.offboard`, with the choices). On the command line the options are
+is refused until you confirm that the group is left without an active manager (administrators can still manage it). An
+administrator cannot offboard
+themselves, and the last active administrator is kept. Every run is audited (`user.offboard`, with the choices). On the
+command line the options are
 `--hand-over-to USERNAME`, `--release-checkouts`, `--revoke-tokens` and
 `--confirm-no-manager`; the command exits with 2 when a check-out could not be
 released and is recorded as `system` in the audit log. The plain *Active*
@@ -168,7 +167,11 @@ Or work through these steps by hand, in this order:
    plain member, also for memberships synchronised from the identity
    provider. At least one *active* manager must remain (only
    administrators may demote or remove the last one); deactivated managers
-   do not count.
+   do not count. Administrators see the groups left without an active
+   manager – or whose managers have neither signed in nor used a token for
+   90 days – under *Groups without an active manager* on *Project groups*
+   (`GET /api/v1/projects/manager-gaps`); the hourly housekeeping notifies
+   them once per group when that happens.
 8. **Revoke their tokens** on the user page.
 9. **Deactivate the user.** For SSO users both are needed: remove them at
    the identity provider **and** deactivate them in TeamCraft. A synchronised
