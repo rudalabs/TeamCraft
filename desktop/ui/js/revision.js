@@ -12,7 +12,7 @@ import { graphBackControl, revGraph } from "./graph.js";
 import { addFilesDialog, checkinDialog, doCancelCheckout, doCheckout, doObsolete, doRevise, editDialog, filesHint, getStructureDialog, openFile, openWorkspaceFolder, releaseDialog, revViewer, revWorkspace } from "./workspace.js";
 import { openChange } from "./change.js";
 import { openRequest, requestChangeDialog } from "./requests.js";
-import { importBomDialog } from "./bom-import.js";
+import { bomFromCadDialog, importBomDialog } from "./bom-import.js";
 
 /** Opens a revision tab; `viewerFile` (a file id) picks the file of its 3D viewer. */
 export function openRevision(number, code, sub, viewerFile) {
@@ -187,6 +187,7 @@ export function renderRevision(tab, body, toolbar) {
       { label: "Pack and Go…", icon: "package", run: function () { savePackage(rev, null); }, title: "Save this revision with all files of its structure as ZIP (bom.csv, manifest.json) – for sending, not for working" },
       { label: "Add files…", icon: "plus", run: function () { addFilesDialog(tab); }, disabled: !filesHint(d).ok, title: filesHint(d).text },
       { label: "Import BOM…", icon: "download", run: function () { importBomDialog(rev); }, disabled: !can.edit, title: can.edit ? "Add the lines of a BOM exported by the CAD program (CSV, Excel, STEP assembly)" : why.edit },
+      { label: "Quantities from CAD…", icon: "refresh", run: function () { bomFromCadDialog(rev); }, disabled: !can.edit, title: can.edit ? "Add missing BOM lines and correct quantities from the instances counted in the CAD files (SOLIDWORKS, NX, STEP)" : why.edit },
       { label: "Open in browser", icon: "web", run: function () { call("open_web", { path: "/revisions/" + rev.id }).catch(function (e) { toast(errorText(e), "error"); }); }, title: "Open this revision in the web UI" },
       { label: "Refresh", icon: "refresh", run: reloadActive, shortcut: "F5", title: "Load this revision again" },
       { label: "Mark obsolete…", icon: "obsolete", run: function () { doObsolete(tab); }, disabled: !can.obsolete, danger: true, separated: true, title: can.obsolete ? "Retire this released revision – cannot be undone" : why.obsolete }
@@ -527,6 +528,12 @@ export function revStructure(tab, el) {
           : rev.checked_out_by ? "Checked out by " + rev.checked_out_by_name : "Check out first – the BOM is imported under your check-out",
         on: { click: function () { importBomDialog(rev); } }
       }, "Import BOM…") : null,
+      canEdit() ? h("button.small", {
+        type: "button", disabled: rev.checked_out_by !== state.me.id,
+        title: rev.checked_out_by === state.me.id ? "Add missing lines and correct quantities from the instances counted in the CAD files (SOLIDWORKS, NX, STEP)"
+          : rev.checked_out_by ? "Checked out by " + rev.checked_out_by_name : "Check out first – the BOM is changed under your check-out",
+        on: { click: function () { bomFromCadDialog(rev); } }
+      }, "Quantities from CAD…") : null,
       h("button.small", { type: "button", on: { click: function () { setExpandAll(tab, true); renderActive(); } } }, "Expand all"),
       h("button.small", { type: "button", on: { click: function () { setExpandAll(tab, false); renderActive(); } } }, "Collapse all")
     ])

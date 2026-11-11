@@ -9,13 +9,15 @@
 //!
 //! * Files of an **assembly** format (SOLIDWORKS `.SLDASM`, Inventor, …) and
 //!   NX files **that have component instances** (an NX `.prt` is a part or an
-//!   assembly by its content, not by its extension). Drawings and every other
+//!   assembly by its content, not by its extension), and STEP assemblies
+//!   whose occurrences lead to **external files**. Drawings and every other
 //!   file do not count: a drawing's link to its model is a *drawing of*
 //!   reference.
 //! * **Quantity:** NX – the placed instances of the component (hidden layers
 //!   left out, as in the preview); SOLIDWORKS – the instances of the
 //!   component tree without `swExcludeFromBOM` (a component with only
-//!   excluded instances is left out); otherwise 1, flagged *assumed*.
+//!   excluded instances is left out); STEP – the assembly occurrences of the
+//!   external file; otherwise 1, flagged *assumed*.
 //! * A child is listed once per item. Unmatched names are listed as *not in
 //!   TeamCraft* (never created). Children in project groups the actor may not
 //!   see are only counted.
@@ -172,6 +174,10 @@ fn is_structure(src: &SourceFile<'_>) -> bool {
         Some(FormatKind::Assembly) => true,
         // NX: an assembly by content (it has component instances)
         Some(FormatKind::Model) if src.format == "nx-part" => {
+            src.counts.is_some_and(|c| !c.is_empty())
+        }
+        // STEP: an assembly with external references (occurrences counted)
+        Some(FormatKind::Exchange) if src.format == "step" => {
             src.counts.is_some_and(|c| !c.is_empty())
         }
         _ => false,
@@ -685,6 +691,27 @@ mod tests {
         let c = collect(&sources(Some(&counts)));
         assert_eq!(c.children.len(), 1);
         assert_eq!(c.children[0].quantity, 6.0);
+    }
+
+    #[test]
+    fn step_files_count_only_with_external_occurrences() {
+        let step = file(
+            "pump.stp",
+            FormatKind::Exchange,
+            vec![("bolt.stp", vec![m(1, "PRT-1", "bolt.stp", false)])],
+        );
+        let source = |counts| SourceFile {
+            file: &step,
+            format: "step",
+            counts,
+        };
+        // a STEP file that only names other files is no structure
+        assert!(collect(&[source(None)]).children.is_empty());
+        let counts: HashMap<String, u32> = [("bolt.stp".to_string(), 4)].into();
+        let c = collect(&[source(Some(&counts))]);
+        assert_eq!(c.children.len(), 1);
+        assert_eq!(c.children[0].quantity, 4.0);
+        assert_eq!(c.children[0].source, QuantitySource::CadInstances);
     }
 
     #[test]

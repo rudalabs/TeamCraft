@@ -64,7 +64,9 @@ the BOM is empty) shows what the BOM would be, one row per child:
 
 * item, name, **quantity** and where it comes from – *CAD instances* (NX:
   the placed instances of the component, hidden layers left out; SOLIDWORKS:
-  the instances in the component tree without *exclude from BOM*) or
+  the instances in the component tree without *exclude from BOM*; STEP
+  assemblies with external part files: the assembly occurrences of each
+  file) or
   *assumed 1* (the file does not tell; the line gets the note *quantity not
   known from the CAD file – check it*);
 * the CAD file that references it;
@@ -73,7 +75,8 @@ the BOM is empty) shows what the BOM would be, one row per child:
   *circular* (refused, as when adding a line by hand).
 
 Only assembly files count (NX files only when they have component
-instances); a drawing's link to its model stays a *drawing of* reference.
+instances, STEP files only when their occurrences lead to external part
+files); a drawing's link to its model stays a *drawing of* reference.
 Referenced files TeamCraft does not have are listed as *not in TeamCraft* and
 never created; parts in project groups you cannot see are only counted.
 *Add the ticked lines* needs the revision checked out by you (the page

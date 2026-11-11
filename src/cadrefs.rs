@@ -19,9 +19,10 @@
 //! manager's section – both inflated from their compressed sections). The
 //! rest of such a file (history, old names) is never scanned.
 //!
-//! For those two the scan also tells how often an assembly places each
-//! component ([`instance_counts`], stored as `file_references.instances`);
-//! every other format gives names only.
+//! For those two – and for STEP assemblies with external references – the
+//! scan also tells how often an assembly places each component
+//! ([`instance_counts`], stored as `file_references.instances`); every
+//! other format gives names only.
 //!
 //! For every other file this is a heuristic: a name that a CAD program keeps
 //! in its file after the component was removed is still found, and
@@ -524,7 +525,9 @@ fn count_key(name: &str) -> String {
 ///   out as in the preview (`nxasm::kind_of`);
 /// * SOLIDWORKS 2015+ assemblies: the instances of the component tree
 ///   without `swExcludeFromBOM` (`swpart::file_component_counts`; a file
-///   with only excluded instances counts 0).
+///   with only excluded instances counts 0);
+/// * STEP assemblies with external references: the assembly occurrences of
+///   each external file (`stepbom::external_instance_counts`).
 ///
 /// `None` for every other format and for files without component data.
 /// Blocking (reads the file).
@@ -547,6 +550,18 @@ pub fn instance_counts(path: &Path, format: &str) -> Option<HashMap<String, u32>
             for (p, n) in crate::swpart::file_component_counts(file, MAX_SCAN).ok()?? {
                 let key = count_key(p.rsplit(['\\', '/']).next().unwrap_or(&p).trim());
                 let total = counts.entry(key).or_default();
+                *total = total.saturating_add(n);
+            }
+        }
+        "step" => {
+            let mut content = Vec::new();
+            std::fs::File::open(path)
+                .ok()?
+                .take(MAX_SCAN)
+                .read_to_end(&mut content)
+                .ok()?;
+            for (name, n) in crate::stepbom::external_instance_counts(&content)? {
+                let total = counts.entry(count_key(&name)).or_default();
                 *total = total.saturating_add(n);
             }
         }
