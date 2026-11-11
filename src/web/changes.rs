@@ -14,7 +14,7 @@ use super::{
     PER_PAGE,
 };
 use crate::{
-    domain::{ChangeStatus, Decision, LifecycleState, LineAction, Priority, Role},
+    domain::{ChangeStatus, Decision, LifecycleState, LineAction, Priority, Role, SignOffMethod},
     error::{AppError, AppResult},
     services::{audit, changes, items, notifications, requests, reviewers, revisions, users, Page},
     AppState,
@@ -170,6 +170,7 @@ pub async fn show(
     State(st): State<AppState>,
     ctx: WebCtx,
     Path(id): Path<Uuid>,
+    headers: axum::http::HeaderMap,
 ) -> AppResult<Response> {
     let me = &ctx.me;
     let change = changes::get(&st.db, me, id).await?;
@@ -242,6 +243,25 @@ pub async fn show(
         "review": my_pending_review,
         "replace_reviewer": can_replace,
     });
+    // what the review form asks for to sign a decision off
+    let reauth = st.config.approval_reauth;
+    let sign_off = if my_pending_review && reauth != crate::domain::ApprovalReauth::Off {
+        let sso = users::get(&st.db, me.id).await?.auth_source != "local";
+        let reauthenticated = match crate::auth::cookie_value(&headers, crate::auth::SESSION_COOKIE)
+        {
+            Some(token) => users::session_recently_reauthenticated(&st.db, me.id, &token).await?,
+            None => false,
+        };
+        json!({
+            "reauth": reauth.as_str(),
+            "rejections_too": reauth == crate::domain::ApprovalReauth::EveryDecision,
+            "sso": sso,
+            "reauthenticated": reauthenticated,
+            "window_minutes": users::REAUTH_WINDOW_MINUTES,
+        })
+    } else {
+        json!({ "reauth": reauth.as_str() })
+    };
     render(
         &st,
         &ctx,
@@ -266,6 +286,7 @@ pub async fn show(
             "history": history,
             "priorities": priorities(),
             "can": can,
+            "sign_off": sign_off,
         }),
     )
 }
@@ -495,17 +516,58 @@ pub struct ReviewForm {
     decision: String,
     #[serde(default)]
     comment: String,
+    /// What the sign-off means ("approved as design owner").
+    #[serde(default)]
+    meaning: String,
+    /// The account password, when the server asks for a fresh sign-in.
+    #[serde(default)]
+    password: String,
+}
+
+/// How the browser signs off a decision: a single sign-on within the last
+/// minutes, the password typed with the decision, or the session alone.
+async fn sign_off_method(
+    st: &AppState,
+    ctx: &WebCtx,
+    headers: &axum::http::HeaderMap,
+    password: &str,
+) -> AppResult<SignOffMethod> {
+    if let Some(token) = crate::auth::cookie_value(headers, crate::auth::SESSION_COOKIE) {
+        if users::session_recently_reauthenticated(&st.db, ctx.me.id, &token).await? {
+            return Ok(SignOffMethod::Sso);
+        }
+    }
+    if !password.is_empty() {
+        users::confirm_own_password(&st.db, &st.sign_in, &ctx.me, password).await?;
+        return Ok(SignOffMethod::Password);
+    }
+    Ok(SignOffMethod::Session)
 }
 
 pub async fn review(
     State(st): State<AppState>,
     ctx: WebCtx,
     Path(id): Path<Uuid>,
+    headers: axum::http::HeaderMap,
     Form(form): Form<ReviewForm>,
 ) -> AppResult<Response> {
     let back = format!("/changes/{id}");
     let result = match Decision::parse(&form.decision) {
-        Some(decision) => changes::review(&st.db, &ctx.me, id, decision, &form.comment).await,
+        Some(decision) => match sign_off_method(&st, &ctx, &headers, &form.password).await {
+            Ok(method) => {
+                changes::review(
+                    &st.db,
+                    &ctx.me,
+                    id,
+                    decision,
+                    &form.comment,
+                    &changes::SignOff::new(method, &form.meaning),
+                    st.config.approval_reauth,
+                )
+                .await
+            }
+            Err(e) => Err(e),
+        },
         None => Err(AppError::BadRequest("Choose approve or reject.".into())),
     };
     finish(&st, result, &back, |c| {

@@ -66,6 +66,13 @@ The first corpus directory collects new inputs. It is git-ignored, like
 nightly toolchain: Linux and macOS work. On Windows run the corpus test
 instead (`cargo test --test parser_corpus`). The fuzz workflow does the rest.
 
+The workflow pins `--target x86_64-unknown-linux-gnu`. The prebuilt
+`cargo-fuzz` it installs is a musl binary, and `cargo fuzz` otherwise defaults
+the target to its own build triple (musl), which is not installed on the
+runner and whose static libc the AddressSanitizer refuses. A local
+`cargo install cargo-fuzz` builds a host (GNU) binary, so local runs need no
+flag; only CI does.
+
 ## When a target crashes
 
 1. Download the artifact *fuzz-crash-&lt;target&gt;* of the failed run (or take

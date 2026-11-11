@@ -30,6 +30,10 @@
 * **Subagents** Only create subagents when explicitly specified.
 * **Branch** You do not have permissions to push to the `main` branch. Create feature branches instead, push there and
   open merge requests to `main` with the `gh` tool instead.
+* **Building and testing** Prefer to build and test using `cargo` as background processes. Those should not be blocking you from 
+  continuing your work. Prefer not to build and test in multiple processes at the same time. If you do that, you seem to rapidly
+  fill up the RAM and CPU. When that happens the whole computer slows and then it gets significantly harder to do other tasks in
+  parallel. If need-be build and test at the end of a task.
 
 ## Git rules
 
@@ -65,7 +69,8 @@ src/services/      business logic – the only code that writes to the database
                     notifications.rs: in-app notifications, watch lists, settings – created in the event's transaction;
                     imports.rs: BOM import – one plan for preview and import, one transaction; staged_imports for the web flow;
                     insights.rs: read-only BOM health check and duplicate files;
-                    attributes.rs: custom attribute definitions (admins), values per revision in revisions.attributes)
+                    attributes.rs: custom attribute definitions (admins), values per revision in revisions.attributes;
+                    mass_properties.rs: material library, mass settings of revisions/files, mass/CG/inertia roll-up)
 src/web/           HTML handlers (cookie sessions, flash messages, CSRF origin check, error pages,
                    explorer.rs = /vault, auth_pages.rs incl. first-start /setup, imports.rs = BOM import)
 src/api/           JSON REST API (bearer tokens only, never cookies)
@@ -79,14 +84,22 @@ src/llm/           provider-neutral LLM layer (no TeamCraft types): Turn/ToolCal
                    (encode/decode/error table), Transport trait; http.rs = the one reqwest client (no redirects),
                    anthropic.rs = Messages API, openai.rs = Chat Completions (OpenAI, Azure, Mistral, Ollama, vLLM …)
 src/assistant.rs   built-in assistant ("Ask TeamCraft"): tool loop over src/llm with the MCP tools,
-                   Tools trait (fake in tests), markdown-lite → safe HTML;
+                   Tools trait (fake in tests), markdown-lite → safe HTML, "Open 3D preview" links from the
+                   open hints of open_3d_preview (mcp/tools/preview_tools.rs; URL checked: own viewer page only);
                    services/assistant.rs runs it for a user and writes the audit record (no content); resolves the page
                    context with the user's rights; services/assistant_threads.rs = the per-user conversation (text only)
 src/pagecontext.rs the page the user is on (kind, ids, view, rule, query, rows shown): parsing and caps only – ids are hints
 src/vault.rs       content-addressed file storage (objects/ab/cd/<sha256>)
 src/httprange.rs   Range / If-Range of file downloads (ETag = SHA-256, 206 / 416): resumable downloads
-src/mesh.rs        pure-Rust 3D readers (STL, OBJ, PLY, OFF, 3MF, AMF, glTF, 3DS, PTS/XYZ/LAS, STEP via truck, NX parts via their JT stream: mesh/jt.rs, SOLIDWORKS parts via their display lists: mesh/sw.rs, Inventor parts via their graphics segment: mesh/inventor.rs, all + PN refinement mesh/pn.rs) → TCMESH01
+src/mesh.rs        pure-Rust 3D readers (STL, OBJ, PLY, OFF, 3MF, AMF, glTF, 3DS, PTS/XYZ/LAS, STEP via truck, NX parts via their JT stream: mesh/jt.rs, SOLIDWORKS parts via their display lists: mesh/sw.rs, Inventor parts via their graphics segment: mesh/inventor.rs, all + PN refinement mesh/pn.rs,
+                   Rhino .3dm: stored meshes, SubD subdivided, blocks placed: mesh/rhino.rs) → TCMESH01;
+                   mesh.rs = read() dispatch only; mesh/model.rs = Mesh, fields, TCMESH01 encode/decode;
+                   mesh/helpers.rs = bounded byte access and limits; one file per simple format with its own tests
+                   (stl, obj, ply, off, three_mf = 3MF+AMF, gltf, three_ds, points = PTS/XYZ/LAS)
+src/simmesh.rs     simulation results with fields: simmesh/vtk_legacy.rs, vtk_xml.rs, frd.rs over simmesh/grid.rs (cells → outer surface) and numbers.rs
 src/preview.rs     preview cache (vault/previews/), isolated conversion in a child process with time limit
+                   (also the shape signatures and the mass integrals, cached per content hash)
+src/massprops.rs   pure mass properties of closed meshes (Eberly), edge check, inverted-mesh fix, parallel axis
 src/textindex.rs   text extraction from uploads for the full-text search (plain text with its numbers, STEP/IGES strings;
                    PDF via pdftext, HTML via htmltext – both in the isolated `text-extract` child)
 src/pdftext.rs     text layer of PDF reports and the isolated `teamcraft text-extract [--format pdf|html]` child
@@ -102,7 +115,7 @@ src/nxasm.rs       NX assemblies: components + placements from /Root/FastLoad/St
 src/swpart.rs      SOLIDWORKS 2015+ section container: Deflate sections (bounded, CRC-checked), PreviewPNG, component tree (COMPINSTANCETREE):
                    referenced files and placements (assembly previews, also via services/assemblies.rs)
 src/invpart.rs     Inventor files: OLE storage RSeStorage, zlib segments (meta stream: section lengths + class UUID table),
-                   sections, typed arrays; src/invasm.rs: assembly components (UFRxDoc: files, visibility) + placements
+                   sections, typed arrays; src/invplace.rs: assembly components (UFRxDoc: files, visibility) + placements
                    (AmRxSegment), composed by services/assemblies.rs
 src/thumbnail.rs   preview images stored in Inventor / Solid Edge / SolidWorks / NX files (OLE via cfb, PNG, DIB → BMP, JPEG), cached in previews/;
                    NX, SOLIDWORKS and Inventor parts/assemblies: a PNG rendered from the 3D preview instead (mesh/render.rs, software z-buffer)
@@ -111,6 +124,7 @@ src/stepbom.rs     product structure of STEP assemblies (own Part 21 reader: PRO
 src/assets.rs      embedded CSS/JS/logos/fonts, cache busting (?v=<asset hash>, ETag)
 src/notify.rs      Mattermost error webhook (rate limited)
 src/delivery.rs    e-mail (SMTP via lettre) and Mattermost delivery of notifications from the outbox
+src/mattermost.rs Mattermost bot client: direct messages only (user lookup, direct channel, post), failure classification
 src/webhooks.rs    outgoing event webhooks: outbox worker (SKIP LOCKED), HMAC signature, backoff, SSRF guard;
                    services/webhooks.rs = admin CRUD + emit() inside the event's transaction
 templates/         MiniJinja templates, embedded via include_str!

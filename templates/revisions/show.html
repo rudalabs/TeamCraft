@@ -55,7 +55,17 @@
         {% if can.add_to_change %}<a href="/changes/new?revision={{ rev.id }}">Release via new change…</a>{% endif %}
         <a href="/requests/new?revision={{ rev.id }}" title="Report a problem or propose a change to {{ rev.item_number }}/{{ rev.code }} (change request)">Request change…{% if open_requests %}<span class="badge badge-count" title="{{ open_requests|length }} open change request(s)">{{ open_requests|length }}</span>{% endif %}</a>
         <a href="/revisions/{{ rev.id }}/package.zip" title="This revision with all files of its structure (BOM), bom.csv and manifest.json">Pack and Go (ZIP)</a>
-        {% if can.cancel_checkout or can.obsolete or can.delete %}<div class="menu-sep" role="separator"></div>{% endif %}
+        {% if can.cancel_checkout or can.release_with_reason or can.obsolete or can.delete %}<div class="menu-sep" role="separator"></div>{% endif %}
+        {% if can.release_with_reason %}
+        {#- A manager releases an active member's lock only with a reason, which the holder is told. -#}
+        <form class="stack" method="post" action="/revisions/{{ rev.id }}/cancel-checkout"
+              data-confirm="Release the check-out held by {{ rev.checked_out_by_name }}? They are told your reason.">
+          <label>Reason for releasing the lock of {{ rev.checked_out_by_name }}
+            <input type="text" name="reason" minlength="{{ release_reason.min }}" maxlength="{{ release_reason.max }}" required>
+          </label>
+          <button class="danger" type="submit" title="As a manager of the group: release the lock held by {{ rev.checked_out_by_name }}, who is told your reason">Release with reason</button>
+        </form>
+        {% endif %}
         {% if can.cancel_checkout %}
         {#- Cancelling your own check-out takes effect at once; releasing someone else's lock is confirmed. -#}
         <form method="post" action="/revisions/{{ rev.id }}/cancel-checkout"
@@ -265,11 +275,19 @@
     <a class="button small" href="/revisions/{{ rev.id }}/package.zip" title="This revision with all files of its structure (BOM), bom.csv and manifest.json – released revisions as released">Pack and Go (ZIP)</a>
   </div>
   {% if files %}
+  {#- file_groups: the files as usual, then (with a preferred CAD program set
+      in the account) the native files of other CAD programs, collapsed -#}
+  {% for group in file_groups %}
+  {% if group.collapsed %}
+  <details class="other-formats" id="other-cad-formats">
+    <summary>{{ group.count }} file{% if group.count != 1 %}s{% endif %} in other CAD formats ({{ group.families }})</summary>
+  {% endif %}
   <div class="table-wrap">
   <table class="dense files-table">
+    {% if group.collapsed %}<caption class="visually-hidden">Files in other CAD formats</caption>{% endif %}
     <thead><tr><th scope="col">File</th><th scope="col" title="Place inside the project group – the desktop working folder mirrors it">Folder</th><th scope="col">Version</th><th scope="col" class="num">Size</th><th scope="col">Uploaded</th><th scope="col">SHA-256</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
     <tbody>
-    {% for f in files %}
+    {% for f in group.files %}
       <tr>
         <td><div class="file-cell">
           {% if f.format_info and f.format_info.thumbnail %}<a class="thumb-link" href="/files/{{ f.id }}/thumbnail" title="Preview image stored in the file"><img class="file-thumb" src="/files/{{ f.id }}/thumbnail?v={{ f.sha256 }}" alt="" loading="lazy" data-hide-broken></a>{% else %}<span class="file-icon" aria-hidden="true"><svg class="icon" viewBox="0 0 16 16"><path d="M4 1.75h5.25L12.5 5v9.25h-8.5z"/><path d="M9 1.75V5.25h3.5"/></svg></span>{% endif %}
@@ -330,7 +348,7 @@
       <tr id="versions-{{ f.id }}" class="hidden">
         <td colspan="7">
           <table>
-            <thead><tr><th scope="col">Version</th><th scope="col">Comment</th><th scope="col" class="num">Size</th><th scope="col">Uploaded</th><th scope="col"></th></tr></thead>
+            <thead><tr><th scope="col">Version</th><th scope="col">Comment</th><th scope="col" class="num">Size</th><th scope="col">Uploaded</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
             <tbody>
             {% for v in f.versions %}
               <tr class="{% if v.version == f.version %}current{% endif %}">
@@ -360,6 +378,8 @@
     </tbody>
   </table>
   </div>
+  {% if group.collapsed %}</details>{% endif %}
+  {% endfor %}
   {% else %}<p class="empty">No files attached.</p>{% endif %}
   <p class="hint">Downloads in the browser are for single files and for viewing. For CAD work use the
     TeamCraft desktop app: it keeps one working folder per project group with the folder structure shown here
@@ -440,7 +460,7 @@
   {% if simulation.bases %}
   <div class="table-wrap">
   <table>
-    <thead><tr><th scope="col">Role</th><th scope="col">Item</th><th scope="col">Name</th><th scope="col">Simulated</th><th scope="col">Status</th>{% if can.edit %}<th scope="col"></th>{% endif %}</tr></thead>
+    <thead><tr><th scope="col">Role</th><th scope="col">Item</th><th scope="col">Name</th><th scope="col">Simulated</th><th scope="col">Status</th>{% if can.edit %}<th scope="col"><span class="visually-hidden">Actions</span></th>{% endif %}</tr></thead>
     <tbody>
     {% for b in simulation.bases %}
       <tr>
@@ -533,7 +553,7 @@
   </p>
   <div class="table-wrap">
   <table>
-    <thead><tr><th scope="col">Result</th><th scope="col">Load case</th><th scope="col" class="num">Value</th><th scope="col">Unit</th><th scope="col" class="num">Lower limit</th><th scope="col" class="num">Upper limit</th><th scope="col">Status</th><th scope="col">Solver</th>{% if can.edit %}<th scope="col"></th>{% endif %}</tr></thead>
+    <thead><tr><th scope="col">Result</th><th scope="col">Load case</th><th scope="col" class="num">Value</th><th scope="col">Unit</th><th scope="col" class="num">Lower limit</th><th scope="col" class="num">Upper limit</th><th scope="col">Status</th><th scope="col">Solver</th>{% if can.edit %}<th scope="col"><span class="visually-hidden">Actions</span></th>{% endif %}</tr></thead>
     <tbody>
     {% for r in simulation.results %}
       <tr class="result-{{ r.status }}">
@@ -583,7 +603,7 @@
   <p class="hint">Drafts from the assistant, read from a report of this revision – they are not results until you accept them{% if simulation.can_decide and not can.edit %} (check the revision out to accept){% endif %}. Compare each with the quoted text.</p>
   <div class="table-wrap">
   <table>
-    <thead><tr><th scope="col">Result</th><th scope="col">Load case</th><th scope="col" class="num">Value</th><th scope="col">Unit</th><th scope="col" class="num">Limits</th><th scope="col">From the report</th>{% if simulation.can_decide %}<th scope="col"></th>{% endif %}</tr></thead>
+    <thead><tr><th scope="col">Result</th><th scope="col">Load case</th><th scope="col" class="num">Value</th><th scope="col">Unit</th><th scope="col" class="num">Limits</th><th scope="col">From the report</th>{% if simulation.can_decide %}<th scope="col"><span class="visually-hidden">Actions</span></th>{% endif %}</tr></thead>
     <tbody>
     {% for p in simulation.proposals %}
       <tr>
@@ -706,7 +726,17 @@
         <td>{{ d.feature }}</td>
         <td class="mono small">{% if d.designed %}{{ d.designed }}{% else %}<span class="muted">—</span>{% endif %}</td>
         <td class="mono small">{% if d.built %}{{ d.built }}{% else %}<span class="muted">—</span>{% endif %}</td>
-        <td class="nowrap">{% for o in as_built.dispositions %}{% if o.value == d.disposition %}<span class="badge {% if o.value == "open" %}badge-out_of_date{% elif o.value == "scrap" %}badge-fail{% else %}badge-pass{% endif %}">{{ o.label }}</span>{% endif %}{% endfor %}</td>
+        <td class="nowrap">{% for o in as_built.dispositions %}{% if o.value == d.disposition %}<span class="badge {% if o.value == "open" %}badge-out_of_date{% elif o.value == "scrap" %}badge-fail{% else %}badge-pass{% endif %}">{{ o.label }}</span>{% endif %}{% endfor %}
+          {% if d.disposition == "use_as_is" and as_built.concessions.needed %}
+            {% if d.concession_confirmed_by_name %}<span class="small muted">confirmed by {{ d.concession_confirmed_by_name }}</span>
+            {% elif as_built.concessions.can_confirm and d.created_by != me.id %}
+            <form class="inline" method="post" action="/as-built-deviations/{{ d.id }}/confirm">
+              <input type="hidden" name="back" value="{{ back }}#deviations">
+              <button class="small" type="submit" title="Accept this concession as a reviewer of the change order">Confirm</button>
+            </form>
+            {% else %}<span class="small muted">needs a reviewer's confirmation</span>{% endif %}
+          {% endif %}
+        </td>
         <td class="small">{{ d.note }}</td>
         {% endif %}
       </tr>
@@ -736,6 +766,7 @@
     <h2>Bill of materials (single level)</h2>
     <div class="actions">
       <a class="button small" href="/revisions/{{ rev.id }}/bom">Multi-level view &amp; roll-up</a>
+      <a class="button small" href="/revisions/{{ rev.id }}/mass" title="Mass, centre of gravity and inertia from the 3D files, densities and measured masses">Mass properties</a>
       <a class="button small" href="/revisions/{{ rev.id }}/bom.csv">CSV</a>
       {% if can.edit %}<a class="button small" href="/import?into={{ rev.id }}" title="Add the structure of a BOM table exported from a CAD program (CSV, Excel)">Import BOM…</a>{% endif %}
       {% if cad_structure %}<a class="button small" href="/revisions/{{ rev.id }}/bom/from-references" title="{% if can.edit %}Preview the parts the CAD files use and add them as BOM lines{% else %}Check out to create the BOM from the CAD references{% endif %}">Create BOM from CAD references…</a>{% endif %}
@@ -747,7 +778,7 @@
   {% if lines %}
   <div class="table-wrap">
   <table>
-    <thead><tr><th scope="col" class="num">Find no.</th><th scope="col">Item</th><th scope="col">Name</th><th scope="col">Latest</th><th scope="col" class="num">Qty</th><th scope="col">Notes</th>{% if can.edit %}<th scope="col"></th>{% endif %}</tr></thead>
+    <thead><tr><th scope="col" class="num">Find no.</th><th scope="col">Item</th><th scope="col">Name</th><th scope="col">Latest</th><th scope="col" class="num">Qty</th><th scope="col">Notes</th>{% if can.edit %}<th scope="col"><span class="visually-hidden">Actions</span></th>{% endif %}</tr></thead>
     <tbody>
     {% for l in lines %}
       <tr>

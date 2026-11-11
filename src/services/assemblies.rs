@@ -4,8 +4,9 @@
 //! component files, with the placements the assembly stores: NX in its
 //! structure stream (`nxasm`), SOLIDWORKS in its component tree
 //! (`swpart::placements`, sub-assemblies already resolved there), Inventor
-//! in `UFRxDoc` and `AmRxSegment` (`invasm`, sub-assemblies are files of
-//! their own).
+//! in `UFRxDoc` and `AmRxSegment` (`invplace`, sub-assemblies are files of
+//! their own; a parent may re-pose children of a flexible
+//! sub-assembly, `invplace::Override`).
 //!
 //! 1. The components are found **by file name** (`NAME.prt` for NX, the
 //!    file name of the stored path for SOLIDWORKS and Inventor), the way file
@@ -43,6 +44,7 @@ use crate::{
     error::{AppError, AppResult},
     mesh::{Mesh, MAX_TRIANGLES},
     nxasm::{self, Kind},
+    invplace::Override,
     preview::PreviewFormat,
     services::access,
     AppState,
@@ -173,7 +175,7 @@ async fn kind(st: &AppState, sha256: &str, format: &str) -> AppResult<Kind> {
         "solidworks-part" => Kind::Part(Vec::new()),
         "solidworks-assembly" => solidworks_assembly(&path).unwrap_or(Kind::Other),
         "inventor-part" => Kind::Part(Vec::new()),
-        "inventor-assembly" => crate::invasm::kind_of(&path).unwrap_or(Kind::Other),
+        "inventor-assembly" => crate::invplace::kind_of(&path).unwrap_or(Kind::Other),
         _ => nxasm::kind_of(&path).unwrap_or(Kind::Other),
     })
     .await
@@ -220,14 +222,21 @@ pub async fn plan(
     };
     let mut hasher = Sha256::new();
     hasher.update(sha256.as_bytes());
-    // (components, placement of the assembly, its revision, path of hashes)
-    let mut stack = vec![(top, identity, revision_id, vec![sha256.to_string()])];
-    while let Some((components, parent, revision, path)) = stack.pop() {
+    // (components, placement of the assembly, its revision, path of hashes,
+    // poses the levels above give components further down – Inventor)
+    let mut stack = vec![(
+        top,
+        identity,
+        revision_id,
+        vec![sha256.to_string()],
+        Vec::new(),
+    )];
+    while let Some((components, parent, revision, path, overrides)) = stack.pop() {
         let keys: Vec<String> = components.iter().map(|c| family.key(&c.name)).collect();
         let found = resolve(&st.db, actor, revision, &keys).await?;
         let mut kinds: HashMap<String, Kind> = HashMap::new();
         for c in components.iter().rev() {
-            let placement = c.within(&parent);
+            let placement = Override::pose(&overrides, c).within(&parent);
             let Some(file) = found.get(&family.key(&c.name)) else {
                 plan.missing.push(c.name.clone());
                 hasher.update(b"\0missing:");
@@ -264,7 +273,8 @@ pub async fn plan(
                 if path.len() < MAX_DEPTH {
                     let mut deeper = path.clone();
                     deeper.push(file.sha256.clone());
-                    stack.push((children.clone(), placement, file.revision_id, deeper));
+                    let below = Override::passed_down(&overrides, c);
+                    stack.push((children.clone(), placement, file.revision_id, deeper, below));
                 } else {
                     plan.missing.push(c.name.clone());
                 }

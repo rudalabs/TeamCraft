@@ -66,6 +66,22 @@ virtual components are left out, and components are found by the file
 name of their stored path. Files saved before 2015 (OLE compound files) and
 drawings have no 3D preview.
 
+Rhino models (`.3dm`, versions 1 to 8) are read as openNURBS archives (`src/mesh/rhino.rs`): nested chunks, the object,
+layer, block-definition
+and settings tables. The 3D preview shows what Rhino stored for display –
+mesh objects, the render meshes of polysurfaces (one per face, welded at
+1 µm), the mesh cache of extrusions (Rhino 6 and later) and the quantised
+meshes of Rhino 1 files – and refines SubD objects, which store only their
+control net, by Catmull-Clark subdivision (crease edges and corners kept,
+up to about 200 000 quads per SubD) onto the limit surface. Block
+instances place the objects of their definition with the stored 4 × 4
+transform (nested up to 8 levels). Hidden objects, objects on hidden layers
+and block-definition objects themselves are left out; coordinates are
+converted from the model unit to millimetres. Polysurfaces, extrusions and
+NURBS surfaces saved without render meshes, curves, points, annotations,
+linked blocks and colours are not shown; such a model keeps the preview
+bitmap Rhino stored as its thumbnail.
+
 Inventor parts and assemblies are OLE compound files whose data lives in
 zlib-compressed segments below `RSeStorage` (`src/invpart.rs`). The 3D
 preview of a part is the display tessellation in `PmGraphicsSegment`
@@ -77,13 +93,13 @@ preview of a part is the display tessellation in `PmGraphicsSegment`
   like NX parts, and shown in millimetres.
 
 An assembly is put together from the previews of its part and
-sub-assembly files (`src/invasm.rs`): the referenced files and the
+sub-assembly files (`src/invplace.rs`): the referenced files and the
 visibility of each occurrence come from the stream `UFRxDoc`, the
-placements from `AmRxSegment`. Hidden components are left out, and
-components are found by the file name of their stored path. Not covered:
-re-posed flexible sub-assemblies (shown as stored in their own file),
-design views other than the saved one, weld beads, drawings and
-presentations.
+placements from `AmRxSegment`, including the poses a parent gives the
+children of flexible sub-assemblies. Hidden and suppressed components are
+left out, and components are found by the file name of their stored path.
+Not covered: design views other than the saved one, weld beads, drawings
+and presentations.
 
 SOLIDWORKS files from 2015 on are no OLE files any more but a sequence of
 Deflate-compressed sections (`src/swpart.rs`; verified with SOLIDWORKS 2018
@@ -97,6 +113,27 @@ this was not verified with a real drawing. SOLIDWORKS 2014 and older files
 are OLE files and are read as before. Assemblies stored with an older
 TeamCraft keep the references found then until the next check-in – or run
 `teamcraft rescan-references` once (see [Operations](../admin/operations.md)).
+
+**Instance counts.** For SOLIDWORKS 2015+ assemblies (component tree,
+instances with *exclude from BOM* not counted), NX assemblies (placed
+components, hidden layers left out) and STEP assemblies with external part
+files (`NEXT_ASSEMBLY_USAGE_OCCURRENCE` per child whose definition is linked
+to a `DOCUMENT_FILE` – through `APPLIED_DOCUMENT_REFERENCE`,
+`PRODUCT_DEFINITION_WITH_ASSOCIATED_DOCUMENTS` or
+`DOCUMENT_PRODUCT_EQUIVALENCE`; sub-assemblies inside the file count with
+their own occurrences) and Inventor assemblies (the occurrences of each
+referenced file from the file descriptor table in `UFRxDoc`, suppressed
+occurrences left out – a file with only suppressed ones counts 0, see
+[the research note](../research/inventor-instance-counts.md))
+the scan also stores how often each referenced file is
+placed (`file_references.instances`, `instances` in `GET …/references`); the
+desktop folder import uses it as the BOM quantity, *Quantities from CAD…*
+corrects existing lines with it. Other formats – Solid Edge, Creo, CATIA, … –
+store no count (`null`): their references are found by name only. The current
+versions of SOLIDWORKS, NX and referencing STEP files stored before this are
+read again once at the next start; for Inventor assemblies stored before run
+`teamcraft rescan-references --format inventor-assembly` once (*Quantities
+from CAD…* reads the counts from the file and works without it).
 
 `.prt` and `.asm` are told apart by content (Creo's `#UGC:` header, Solid
 Edge's OLE container); `.sc` must be a SolidCraft ZIP or JSON design.

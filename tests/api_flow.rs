@@ -926,6 +926,7 @@ async fn sso_groups_sync_project_memberships() {
         email: Some("max@example.org".into()),
         role: Role::Editor,
         groups: groups.iter().map(|g| g.to_string()).collect(),
+        claims: Default::default(),
     };
     let rocket = app.project_id("ROCKET").await;
     let rover = app.project_id("ROVER").await;
@@ -3630,6 +3631,59 @@ async fn nx_part_thumbnails_are_rendered_from_the_3d_preview() {
     app.teardown().await;
 }
 
+/// A Rhino model gets a 3D preview from the meshes it stores (here a SubD,
+/// refined from its control net) and a thumbnail rendered from it.
+#[tokio::test]
+async fn rhino_models_get_a_3d_preview_and_a_rendered_thumbnail() {
+    let app = app_or_skip!();
+    let (_, eng) = app.user_in("eng", Role::Editor, &["GEARBOX"]).await;
+    app.api(
+        Method::POST,
+        "/api/v1/items",
+        &eng,
+        Some(json!({ "item_type": "part", "name": "Fairing", "project": "GEARBOX" })),
+    )
+    .await;
+    let model = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/cad/rhino3dm/subd_creases.3dm"),
+    )
+    .unwrap();
+    let files = app
+        .api_multipart(
+            "/api/v1/items/PRT-000001/revisions/A/files",
+            &eng,
+            &[("fairing.3dm", &model)],
+            &[],
+        )
+        .await;
+    assert_eq!(files.status, StatusCode::CREATED, "{}", files.text());
+    let file = &files.json()[0];
+    assert_eq!(file["format"], "rhino");
+    let id = file["id"].as_str().unwrap().to_string();
+
+    let r = app
+        .api(Method::GET, &format!("/api/v1/files/{id}/mesh"), &eng, None)
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let mesh = teamcraft::mesh::Mesh::decode(&r.body).unwrap();
+    assert_eq!(mesh.triangle_count(), 3_072);
+
+    let thumb = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/files/{id}/thumbnail"),
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(thumb.status, StatusCode::OK, "{}", thumb.text());
+    assert_eq!(thumb.header("content-type").as_deref(), Some("image/png"));
+    // IHDR: the rendered size
+    assert_eq!(&thumb.body[16..24], &[0, 0, 2, 0, 0, 0, 2, 0]);
+    app.teardown().await;
+}
+
 /// An NX assembly has no tessellation of its own: its 3D preview is put
 /// together from the previews of its part files, found by file name and
 /// placed as the assembly says (the NIST assembly: 36 instances of 8
@@ -3843,9 +3897,16 @@ async fn solidworks_assemblies_are_put_together_from_their_parts() {
 }
 
 /// An Inventor assembly as Inventor stores it, reduced to what the preview
-/// reads: the placement segment and `UFRxDoc` (see `src/invasm.rs`).
-/// `occurrences`: (index into `files`, visible, translation in cm).
-fn inventor_assembly(files: &[&str], occurrences: &[(usize, bool, [f64; 3])]) -> Vec<u8> {
+/// reads: the placement segment and `UFRxDoc` (see `src/invplace.rs`).
+/// `occurrences`: (index into `files`, "shown" / "hidden" / "suppressed",
+/// translation in cm); occurrence k has the id k + 1 and the key k + 101.
+/// `overrides`: (path of occurrence ids, key of the re-posed child,
+/// translation in cm) for flexible sub-assemblies.
+fn inventor_assembly(
+    files: &[&str],
+    occurrences: &[(usize, &str, [f64; 3])],
+    overrides: &[(&[u32], u32, [f64; 3])],
+) -> Vec<u8> {
     use std::io::Write;
     let zlib = |data: &[u8]| {
         let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
@@ -3858,26 +3919,58 @@ fn inventor_assembly(files: &[&str], occurrences: &[(usize, bool, [f64; 3])]) ->
         out.extend(units.iter().flat_map(|u| u.to_le_bytes()));
         out
     };
-    // AmRxSegment: one placement (class 0x232792BC) per occurrence
-    let mut sections = Vec::new();
-    for (k, (_, _, t)) in occurrences.iter().enumerate() {
-        let mut p = vec![0u8; 10];
-        if k == 0 {
-            p.extend(0x203u32.to_le_bytes());
-        }
+    let shift = |t: &[f64; 3]| {
         let ones: u32 = 1 | 1 << 5 | 1 << 10 | 1 << 15;
         let zeros: u32 = [1, 2, 4, 6, 8, 9, 12, 13, 14]
             .iter()
             .map(|b| 1u32 << b)
             .sum();
-        p.extend((ones | zeros << 16).to_le_bytes());
+        let mut p = (ones | zeros << 16).to_le_bytes().to_vec();
         for v in t {
             p.extend(v.to_le_bytes());
         }
+        p
+    };
+    let u32s = |v: &[u32]| {
+        let mut p = 0x3000_0002u32.to_le_bytes().to_vec();
+        p.extend((v.len() as u32).to_le_bytes());
+        if !v.is_empty() {
+            p.extend((v.len() as u32).to_le_bytes());
+            p.extend(0u32.to_le_bytes());
+            p.extend(v.iter().flat_map(|w| w.to_le_bytes()));
+        }
+        p
+    };
+    // AmRxSegment: one placement (class 0) per occurrence, then per override
+    // a pose (class 1) and a set with its path (class 2)
+    let mut sections: Vec<(u8, Vec<u8>)> = Vec::new();
+    for (k, (_, _, t)) in occurrences.iter().enumerate() {
+        let mut p = vec![0u8; 10];
+        if k == 0 {
+            p.extend(0x203u32.to_le_bytes());
+        }
+        p.extend(shift(t));
         let mut tail = vec![0u8; 124];
         tail[112..116].copy_from_slice(&(k as u32 + 1).to_le_bytes());
+        tail[120..124].copy_from_slice(&(k as u32 + 101).to_le_bytes());
         p.extend(tail);
-        sections.push(p);
+        sections.push((0, p));
+    }
+    for (k, (path, key, t)) in overrides.iter().enumerate() {
+        let mut p = vec![0u8; 6];
+        p.extend(key.to_le_bytes());
+        p.extend(2u32.to_le_bytes());
+        if k == 0 {
+            p.extend(0x203u32.to_le_bytes());
+        }
+        p.extend(shift(t));
+        p.extend([0u8; 120]);
+        let pose = sections.len() as u32;
+        sections.push((1, p));
+        let mut set = vec![0u8; 6];
+        set.extend(u32s(path));
+        set.extend(u32s(&[(pose + 1) | 0x8000_0000]));
+        sections.push((2, set));
     }
     let mut meta = b"\x19\x00\x00\x00RSe Meta Stream Version 8\x08\x00".to_vec();
     meta.extend([0; 16]);
@@ -3890,19 +3983,21 @@ fn inventor_assembly(files: &[&str], occurrences: &[(usize, bool, [f64; 3])]) ->
     meta.push(1);
     let mut body = vec![0u8; 14];
     body.extend((sections.len() as u32).to_le_bytes());
-    for s in &sections {
+    for (_, s) in &sections {
         body.extend((0x8000_0000 | s.len() as u32).to_le_bytes());
     }
     // list size; no revision entries, no third list (each with its size)
     body.extend([0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0]);
-    // the class table: one class
-    body.extend(1u32.to_le_bytes());
-    body.extend(0x2327_92BCu32.to_le_bytes());
-    body.extend([0; 24]);
+    // the class table: placement, override, override set
+    body.extend(3u32.to_le_bytes());
+    for class in [0x2327_92BCu32, 0x2238_DCC5, 0xF17A_4562] {
+        body.extend(class.to_le_bytes());
+        body.extend([0; 24]);
+    }
     meta.extend(zlib(&body));
     let mut data = Vec::new();
-    for s in &sections {
-        data.extend([0, 1, 0, 0]);
+    for (class, s) in &sections {
+        data.extend([*class, 1, 0, 0]);
         data.extend(s);
         data.extend((s.len() as u32).to_le_bytes());
         data.push(0);
@@ -3928,14 +4023,24 @@ fn inventor_assembly(files: &[&str], occurrences: &[(usize, bool, [f64; 3])]) ->
     }
     doc.extend([0; 6]);
     doc.extend((occurrences.len() as u32).to_le_bytes());
-    for (k, (file, visible, _)) in occurrences.iter().enumerate() {
+    for (k, (file, state, _)) in occurrences.iter().enumerate() {
         doc.extend([0; 4]);
         for v in [*file as u32 + 1, k as u32 + 1, k as u32 + 1, 1] {
             doc.extend(v.to_le_bytes());
         }
         doc.extend(text16(&format!("{}:{}", files[*file], k + 1)));
-        doc.extend([0, 0, 0, 0, 0, 0, 0x80, if *visible { 0x20 } else { 0x60 }]);
+        let hidden = *state == "hidden";
+        doc.extend([0, 0, 0, 0, 0, 0, 0x80, if hidden { 0x60 } else { 0x20 }]);
+        // property block: name record, identifier, suppression record
         doc.extend([0xEE; 40]);
+        doc.extend([1, 5, 1, 0, 0, 0, 5]);
+        doc.extend(text16(files[*file]));
+        doc.extend([0; 4]);
+        doc.extend([1, 2, 1, 0, 0, 0, 2]);
+        doc.extend([0x33; 20]);
+        doc.extend([1, 7, 1, 0, 0, 0, 7]);
+        doc.push(u8::from(*state == "suppressed"));
+        doc.extend([0xEE; 12]);
     }
     doc.extend([0; 29]);
     let mut ole = cfb::CompoundFile::create(std::io::Cursor::new(Vec::new())).unwrap();
@@ -3953,7 +4058,8 @@ fn inventor_assembly(files: &[&str], occurrences: &[(usize, bool, [f64; 3])]) ->
 
 /// Inventor parts get a thumbnail rendered from their 3D preview; an
 /// assembly is put together from its parts and sub-assemblies, without
-/// the components it hides.
+/// the components it hides or suppresses, and re-poses a child of a
+/// flexible sub-assembly.
 #[tokio::test]
 async fn inventor_assemblies_are_put_together_from_their_parts() {
     let Some(app) = common::setup_with(&[("TEAMCRAFT_MAX_UPLOAD_MB", "8")]).await else {
@@ -3973,16 +4079,19 @@ async fn inventor_assemblies_are_put_together_from_their_parts() {
     let ftc =
         std::fs::read(nist.join("ftc-11/inventor-2021/INV_nist_ftc_11_asme1_2021.ipt")).unwrap();
     // Station: ctc-01 at the origin, the sub-assembly 1 m along x, a
-    // hidden ftc-11 1 m along -x; Holder: ftc-11 at its origin
+    // hidden ftc-11 1 m along -x, a suppressed ctc-01 5 m down; it re-poses
+    // Holder's ftc-11 (key 101) 0.5 m along y. Holder: ftc-11 at its origin
     let station = inventor_assembly(
         &["ctc.ipt", "Holder.iam", "ftc.ipt"],
         &[
-            (0, true, [0.0; 3]),
-            (1, true, [100.0, 0.0, 0.0]),
-            (2, false, [-100.0, 0.0, 0.0]),
+            (0, "shown", [0.0; 3]),
+            (1, "shown", [100.0, 0.0, 0.0]),
+            (2, "hidden", [-100.0, 0.0, 0.0]),
+            (0, "suppressed", [0.0, 0.0, -500.0]),
         ],
+        &[(&[2], 101, [0.0, 50.0, 0.0])],
     );
-    let holder = inventor_assembly(&["FTC.IPT"], &[(0, true, [0.0; 3])]);
+    let holder = inventor_assembly(&["FTC.IPT"], &[(0, "shown", [0.0; 3])], &[]);
     let mut ids = Vec::new();
     for (name, data) in [
         ("Station.iam", &station),
@@ -4020,6 +4129,9 @@ async fn inventor_assemblies_are_put_together_from_their_parts() {
     let b = mesh.bounds();
     // ctc-01 spans x 0..800 mm, ftc-11 ends 1 000 + 31.5 mm out
     assert!(b[0].abs() < 0.1 && (b[3] - 1031.5).abs() < 0.1, "{b:?}");
+    // the re-posed ftc-11 reaches y 500 + 31.5 mm; nothing is 5 m down
+    assert!((b[4] - 531.5).abs() < 0.1, "{b:?}");
+    assert!((b[2] + 100.0).abs() < 0.1, "{b:?}");
     for id in [&ids[0], &ids[2]] {
         let r = app
             .api(

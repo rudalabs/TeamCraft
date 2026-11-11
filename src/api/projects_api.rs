@@ -14,6 +14,18 @@ pub(super) async fn list_projects(
     Ok(Json(json!(projects::list(&st.db, &me, false).await?)))
 }
 
+/// Groups without a present manager (#173 step 7) – administrators.
+pub(super) async fn project_manager_gaps(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+) -> AppResult<Json<Value>> {
+    let gaps = crate::services::manager_gaps::list(&st.db, &me).await?;
+    Ok(Json(json!({
+        "stale_days": crate::services::manager_gaps::STALE_DAYS,
+        "groups": crate::services::manager_gaps::to_json(&gaps),
+    })))
+}
+
 #[derive(Deserialize)]
 pub(super) struct CreateProject {
     code: String,
@@ -158,6 +170,16 @@ pub(super) struct SetPolicy {
     /// 1 to 36500 days; `0` removes the retention (the log is kept until
     /// purged by hand).
     log_retention_days: Option<i32>,
+    /// The access review is due every this many days (1 to 3650); `0`
+    /// removes the schedule.
+    review_interval_days: Option<i32>,
+    /// Conditions on membership: `[{claim, values}]` from the last single
+    /// sign-on (`[]` removes them).
+    required_claims: Option<Vec<membership_conditions::ClaimCondition>>,
+    /// Client address ranges (CIDR); `[]` = any address.
+    allowed_networks: Option<Vec<String>>,
+    /// Hours after signing in that the group stays visible; `0` removes it.
+    max_signin_age_hours: Option<i32>,
 }
 
 /// `PUT /api/v1/projects/{code}/policy` – managers and admins. Every field
@@ -165,6 +187,7 @@ pub(super) struct SetPolicy {
 pub(super) async fn project_policy_set(
     State(st): State<AppState>,
     ApiUser(me): ApiUser,
+    origin: crate::auth::Origin,
     Path(code): Path<String>,
     ApiJson(body): ApiJson<SetPolicy>,
 ) -> AppResult<Json<Value>> {
@@ -181,6 +204,7 @@ pub(super) async fn project_policy_set(
     let mut update = project_policy::AccessUpdate {
         read_log: body.read_log,
         log_retention_days: body.log_retention_days.map(|d| (d != 0).then_some(d)),
+        review_interval_days: body.review_interval_days.map(|d| (d != 0).then_some(d)),
         ..Default::default()
     };
     for (name, allowed) in body.interfaces.iter().flatten() {
@@ -193,58 +217,51 @@ pub(super) async fn project_policy_set(
     }
     let access_changes = !update.interfaces.is_empty()
         || update.read_log.is_some()
-        || update.log_retention_days.is_some();
-    if mode.is_none() && !access_changes {
+        || update.log_retention_days.is_some()
+        || update.review_interval_days.is_some();
+    let conditions = membership_conditions::ConditionsUpdate {
+        required_claims: body.required_claims,
+        allowed_networks: body.allowed_networks,
+        max_signin_age_hours: body.max_signin_age_hours.map(|h| (h != 0).then_some(h)),
+    };
+    let condition_changes = conditions.required_claims.is_some()
+        || conditions.allowed_networks.is_some()
+        || conditions.max_signin_age_hours.is_some();
+    if mode.is_none() && !access_changes && !condition_changes {
         return Err(AppError::BadRequest(
-            "Give admin_read, interfaces, read_log or log_retention_days.".into(),
+            "Give admin_read, interfaces, read_log, log_retention_days, review_interval_days, \
+             required_claims, allowed_networks or max_signin_age_hours."
+                .into(),
         ));
     }
-    let mut view = None;
     if let Some(mode) = mode {
-        view = Some(project_policy::set_admin_read(&st.db, &me, project.id, mode).await?);
+        project_policy::set_admin_read(&st.db, &me, project.id, mode).await?;
     }
     if access_changes {
-        view = Some(project_policy::set_access(&st.db, &me, project.id, update).await?);
+        project_policy::set_access(&st.db, &me, project.id, update).await?;
     }
-    Ok(Json(json!(view)))
-}
-
-#[derive(Deserialize)]
-pub(super) struct AccessLogQuery {
-    user: Option<String>,
-    kind: Option<String>,
-    since: Option<chrono::DateTime<chrono::Utc>>,
-    until: Option<chrono::DateTime<chrono::Utc>>,
-    limit: Option<i64>,
+    if condition_changes {
+        membership_conditions::set(&st.db, &me, project.id, conditions, &origin).await?;
+    }
+    Ok(Json(json!(
+        project_policy::get(&st.db, &me, project.id).await?
+    )))
 }
 
 /// `GET /api/v1/projects/{code}/access-log` – managers and admins: who read
-/// or downloaded what (groups with a read log), newest first.
+/// or downloaded what (groups with a read log), newest first, one page;
+/// `next` is the `before` of the following page (`null` on the last).
+/// Filters: `user`, `kind`, `channel`, `object`, `since`, `until`
+/// (RFC 3339 or `YYYY-MM-DD`), `limit`.
 pub(super) async fn project_access_log(
     State(st): State<AppState>,
     ApiUser(me): ApiUser,
     Path(code): Path<String>,
-    Query(q): Query<AccessLogQuery>,
+    Query(q): Query<access_log::FilterQuery>,
 ) -> AppResult<Json<Value>> {
     let project = projects::get_by_code_for_management(&st.db, &me, &code).await?;
-    let kind = q
-        .kind
-        .as_deref()
-        .map(|raw| {
-            access_log::Kind::parse(raw).ok_or_else(|| {
-                AppError::BadRequest("kind must be view, download, package or export.".into())
-            })
-        })
-        .transpose()?;
-    let filter = access_log::Filter {
-        username: q.user,
-        kind,
-        since: q.since,
-        until: q.until,
-        limit: q.limit,
-    };
-    let entries = access_log::list(&st.db, &me, project.id, &filter).await?;
-    Ok(Json(json!({ "entries": entries })))
+    let page = access_log::page(&st.db, &me, project.id, &q.parse()?).await?;
+    Ok(Json(json!({ "entries": page.entries, "next": page.next })))
 }
 
 /// `GET /api/v1/projects/{code}/review-policy` – anybody who sees the group.
@@ -272,6 +289,12 @@ pub(super) struct SetReviewPolicy {
     /// Obsolete and supersede only through a change order (omitted: unchanged).
     #[serde(default)]
     obsolete_requires_change: Option<bool>,
+    /// The requester of a change request does not decide it (omitted: unchanged).
+    #[serde(default)]
+    requester_cannot_decide: Option<bool>,
+    /// "Use as is" deviations need a reviewer's confirmation (omitted: unchanged).
+    #[serde(default)]
+    concessions_need_review: Option<bool>,
 }
 
 /// `PUT /api/v1/projects/{code}/review-policy` – managers and admins.
@@ -287,6 +310,8 @@ pub(super) async fn review_policy_set(
         required_usernames: body.required_reviewers,
         role_group_code: body.role_group,
         obsolete_requires_change: body.obsolete_requires_change,
+        requester_cannot_decide: body.requester_cannot_decide,
+        concessions_need_review: body.concessions_need_review,
     };
     Ok(Json(json!(
         project_policy::set_review_policy(&st.db, &me, project.id, &input).await?

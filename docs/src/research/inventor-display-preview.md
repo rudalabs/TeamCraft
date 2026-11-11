@@ -108,12 +108,27 @@ elements. The element type names a class of the table: a point (3 ×
   * The misses are six cable and harness assemblies, whose wires are
     virtual components, and one at 0.9 %.
   * The visibility bit agrees with Inventor's own DWFx exports.
+* **Flexible sub-assemblies** (addendum 2026-11-11). A parent re-poses
+  children deeper down with override sets (class `F17A4562`): a path of
+  occurrence ids from the parent to the sub-assembly, and refs to override
+  sections (class `2238DCC5`). Each override holds the child's persistent
+  key (offset 120 of its placement tail) and a packed matrix that replaces
+  the child's local placement. The overrides of the outermost assembly win.
+  Applying them makes the Test Station bounding box exact (1e-8; 7.2 % off
+  without), and the Blower pulleys turn. Kind 1 overrides (positional
+  representations, with an empty path) are not applied.
+* **Suppressed components** (addendum 2026-11-11). Each occurrence record's
+  property block holds a name record `01 05 01 00 00 00 05` and, 31 bytes
+  after its end, the record `01 07 01 00 00 00 07` whose byte is 1 for a
+  suppressed occurrence. That is the layout
+  [Instance counts of Inventor assemblies](inventor-instance-counts.md)
+  verified with real suppressed components; in the sample set it sits at
+  that place for 2 564 of 2 565 occurrences (all with the byte 0).
+  Suppressed components are left out.
 * **Not decoded:**
-  * re-posed flexible sub-assemblies: the parent stores override
-    transforms for children deeper down. The preview shows the
-    sub-assembly as it is stored in its own file.
-  * design views other than the one active when the file was saved;
-  * suppression (no sample has a suppressed component);
+  * design views other than the one active when the file was saved
+    (`DesignViewSegment`): in the sample set only Buffer Prep Skid shows a
+    difference, a room enclosure hidden in its *Default* view;
   * the weld beads of weldments, which are stored in the assembly itself.
 
 ### The exact geometry
@@ -152,12 +167,12 @@ elements. The element type names a class of the table: a point (3 ×
 * `inventor-assembly`:
   * compose the preview from the part and sub-assembly files, found by file
     name;
-  * use the placements of `AmRxSegment` and leave out the occurrences that
-    `UFRxDoc` marks as not visible;
+  * use the placements of `AmRxSegment`, with the poses a parent gives
+    children of flexible sub-assemblies, and leave out the occurrences that
+    `UFRxDoc` marks as not visible or suppressed;
   * this is the same pipeline as NX and SOLIDWORKS assemblies
     (`services/assemblies.rs`).
 * The thumbnails of Inventor parts and assemblies are rendered from the 3D
   preview instead of the stored PNG. An assembly none of whose parts are in
   TeamCraft keeps the stored image.
-* Later, if needed: flexible sub-assembly poses, design views, weld beads,
-  and the ShapeManager geometry.
+* Later, if needed: design views, weld beads and the ShapeManager geometry.

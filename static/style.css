@@ -498,6 +498,14 @@ h2 .count, .count { color: var(--text-dim); font-weight: 500; }
 .pre { white-space: pre-wrap; }
 .hidden { display: none !important; }
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+/* the first stop of every page; visible only while it has the focus */
+.skip-link {
+  position: absolute; left: 8px; top: 8px; z-index: 1000;
+  padding: 8px 12px; border: 1px solid var(--border-strong); border-radius: var(--radius);
+  background: var(--surface); color: var(--text);
+  transform: translateY(-200%);
+}
+.skip-link:focus { transform: none; }
 /* shown only on phones (the 760px block), e.g. a priority under a title */
 .show-narrow { display: none; }
 
@@ -944,6 +952,10 @@ details.menu > summary.button::marker { content: ""; }
 .event-choices label.check { break-inside: avoid; padding: 2px 0; }
 .event-choices .mono { color: var(--text-dim); font-size: 12px; font-weight: 400; }
 details.payload summary { cursor: pointer; color: var(--link); font-size: 13px; }
+/* native files of other CAD programs (preferred CAD program in the account) */
+details.other-formats { margin-top: var(--space-2); }
+details.other-formats > summary { cursor: pointer; color: var(--text-muted); font-size: 13px; padding: var(--space-1) 0; }
+details.other-formats > summary:hover { color: var(--link); }
 details.payload pre {
   max-height: 22rem;
   overflow: auto;
@@ -1281,6 +1293,7 @@ ul.notification-list li.unread::before { content: ""; position: absolute; left: 
 .assistant-text table { margin: 6px 0 var(--space-3); }
 .assistant-text hr { border: none; border-top: 1px solid var(--border); margin: var(--space-4) 0; }
 .assistant-meta .badge { margin: 0 2px 4px 0; }
+.assistant-links { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 
 /* ===========================================================================
    Narrow screens: the nav scrolls; on phones it gets a row of its own

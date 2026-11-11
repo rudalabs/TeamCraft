@@ -9,13 +9,17 @@
 //!
 //! * Files of an **assembly** format (SOLIDWORKS `.SLDASM`, Inventor, …) and
 //!   NX files **that have component instances** (an NX `.prt` is a part or an
-//!   assembly by its content, not by its extension). Drawings and every other
+//!   assembly by its content, not by its extension), and STEP assemblies
+//!   whose occurrences lead to **external files**. Drawings and every other
 //!   file do not count: a drawing's link to its model is a *drawing of*
 //!   reference.
 //! * **Quantity:** NX – the placed instances of the component (hidden layers
 //!   left out, as in the preview); SOLIDWORKS – the instances of the
 //!   component tree without `swExcludeFromBOM` (a component with only
-//!   excluded instances is left out); otherwise 1, flagged *assumed*.
+//!   excluded instances is left out); STEP – the assembly occurrences of the
+//!   external file; Inventor – the occurrences in the file descriptor table
+//!   (suppressed ones left out; a part with only suppressed ones is left
+//!   out); otherwise 1, flagged *assumed*.
 //! * A child is listed once per item. Unmatched names are listed as *not in
 //!   TeamCraft* (never created). Children in project groups the actor may not
 //!   see are only counted.
@@ -45,13 +49,12 @@ use crate::{
     auth::Actor,
     cadformat::FormatKind,
     error::{AppError, AppResult},
-    nxasm,
     services::{
         audit, bom,
         references::{self, FileWithReferences},
         revisions,
     },
-    swpart, util, AppState,
+    util, AppState,
 };
 
 /// Note of a line whose quantity the CAD file does not tell.
@@ -175,6 +178,10 @@ fn is_structure(src: &SourceFile<'_>) -> bool {
         Some(FormatKind::Model) if src.format == "nx-part" => {
             src.counts.is_some_and(|c| !c.is_empty())
         }
+        // STEP: an assembly with external references (occurrences counted)
+        Some(FormatKind::Exchange) if src.format == "step" => {
+            src.counts.is_some_and(|c| !c.is_empty())
+        }
         _ => false,
     }
 }
@@ -255,15 +262,6 @@ pub(crate) fn line_note(c: &Candidate) -> String {
     }
 }
 
-/// Lower case file name of a path as stored by a CAD program (either
-/// separator).
-fn basename(path: &str) -> String {
-    path.rsplit(['\\', '/'])
-        .next()
-        .unwrap_or(path)
-        .to_lowercase()
-}
-
 #[derive(sqlx::FromRow)]
 struct FileRow {
     id: Uuid,
@@ -279,40 +277,10 @@ async fn read_counts(
 ) -> AppResult<Option<HashMap<String, u32>>> {
     let path = st.vault.object_path(sha256)?;
     let format = format.to_string();
-    tokio::task::spawn_blocking(move || -> Option<HashMap<String, u32>> {
-        match format.as_str() {
-            "nx-part" => {
-                let kind = nxasm::kind_of(&path).ok()?;
-                let comps = match kind {
-                    nxasm::Kind::Assembly(c) | nxasm::Kind::Part(c) => c,
-                    nxasm::Kind::Other => return None,
-                };
-                let mut counts: HashMap<String, u32> = HashMap::new();
-                for c in comps {
-                    *counts
-                        .entry(format!("{}.prt", c.name.to_lowercase()))
-                        .or_default() += 1;
-                }
-                Some(counts)
-            }
-            "solidworks-assembly" => {
-                let file = std::fs::File::open(&path).ok()?;
-                let counts = swpart::file_component_counts(
-                    std::io::BufReader::new(file),
-                    crate::cadrefs::MAX_SCAN,
-                )
-                .ok()??;
-                let mut map: HashMap<String, u32> = HashMap::new();
-                for (p, n) in counts {
-                    *map.entry(basename(&p)).or_default() += n;
-                }
-                Some(map)
-            }
-            _ => None,
-        }
-    })
-    .await
-    .map_err(|e| AppError::Other(anyhow::anyhow!("reading the CAD file failed: {e}")))
+    // the same counts the reference scan stores (`file_references.instances`)
+    tokio::task::spawn_blocking(move || crate::cadrefs::instance_counts(&path, &format))
+        .await
+        .map_err(|e| AppError::Other(anyhow::anyhow!("reading the CAD file failed: {e}")))
 }
 
 /// Hidden items (project groups the actor may not see) among the names.
@@ -624,6 +592,7 @@ mod tests {
                 .into_iter()
                 .map(|(n, matches)| ReferencedName {
                     name: n.into(),
+                    instances: None,
                     matches,
                 })
                 .collect(),
@@ -727,6 +696,27 @@ mod tests {
     }
 
     #[test]
+    fn step_files_count_only_with_external_occurrences() {
+        let step = file(
+            "pump.stp",
+            FormatKind::Exchange,
+            vec![("bolt.stp", vec![m(1, "PRT-1", "bolt.stp", false)])],
+        );
+        let source = |counts| SourceFile {
+            file: &step,
+            format: "step",
+            counts,
+        };
+        // a STEP file that only names other files is no structure
+        assert!(collect(&[source(None)]).children.is_empty());
+        let counts: HashMap<String, u32> = [("bolt.stp".to_string(), 4)].into();
+        let c = collect(&[source(Some(&counts))]);
+        assert_eq!(c.children.len(), 1);
+        assert_eq!(c.children[0].quantity, 4.0);
+        assert_eq!(c.children[0].source, QuantitySource::CadInstances);
+    }
+
+    #[test]
     fn status_compares_with_the_bom() {
         assert_eq!(status_of(None, 2.0, false), ChildStatus::New);
         assert_eq!(status_of(None, 2.0, true), ChildStatus::Circular);
@@ -734,12 +724,5 @@ mod tests {
         assert_eq!(status_of(Some(2.0), 4.0, false), ChildStatus::Differs);
         // an existing line is never "circular"
         assert_eq!(status_of(Some(2.0), 2.0, true), ChildStatus::AlreadyInBom);
-    }
-
-    #[test]
-    fn basename_takes_either_separator() {
-        assert_eq!(basename("Z:\\a\\Box.SLDPRT"), "box.sldprt");
-        assert_eq!(basename("/a/b/Box.SLDPRT"), "box.sldprt");
-        assert_eq!(basename("Box.SLDPRT"), "box.sldprt");
     }
 }

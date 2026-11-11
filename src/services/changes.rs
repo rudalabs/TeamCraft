@@ -33,6 +33,90 @@ use crate::{
     },
 };
 
+/// How a reviewer signs off a decision (#152 step 4).
+#[derive(Clone, Debug)]
+pub struct SignOff {
+    pub method: domain::SignOffMethod,
+    /// What the approval means, e.g. "approved as design owner" (may be empty).
+    pub meaning: String,
+}
+
+impl SignOff {
+    pub fn new(method: domain::SignOffMethod, meaning: &str) -> SignOff {
+        SignOff {
+            method,
+            meaning: meaning.to_string(),
+        }
+    }
+}
+
+/// The change order that released each of these revisions, with its
+/// approvers (for the package manifest, #152 step 8): revision id →
+/// `{change, title, released_at, approvals: [{reviewer, name, approved_at}]}`,
+/// or `{"restricted": true}` when the actor may not see that change order.
+/// Revisions released before change orders tracked them (or not released
+/// at all) are missing.
+pub(crate) async fn releases_of(
+    pool: &PgPool,
+    actor: &Actor,
+    revision_ids: &[Uuid],
+) -> AppResult<std::collections::HashMap<Uuid, serde_json::Value>> {
+    let mut out = std::collections::HashMap::new();
+    if revision_ids.is_empty() {
+        return Ok(out);
+    }
+    let changes = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            Uuid,
+            String,
+            String,
+            Option<chrono::DateTime<chrono::Utc>>,
+            bool,
+        ),
+    >(&format!(
+        "SELECT ci.revision_id, c.id, c.number, c.title, c.closed_at, {visible}
+         FROM change_items ci JOIN changes c ON c.id = ci.change_id
+         WHERE ci.revision_id = ANY($1) AND ci.action = 'release' AND c.status = 'released'",
+        visible = access::change_visible("c", 2, 3),
+    ))
+    .bind(revision_ids)
+    .bind(actor.id)
+    .bind(&actor.hidden_projects)
+    .fetch_all(pool)
+    .await?;
+    let visible_ids: Vec<Uuid> = changes.iter().filter(|c| c.5).map(|c| c.1).collect();
+    let approvals =
+        sqlx::query_as::<_, (Uuid, String, String, Option<chrono::DateTime<chrono::Utc>>)>(
+            "SELECT cr.change_id, u.username, u.display_name, cr.decided_at
+         FROM change_reviews cr JOIN users u ON u.id = cr.reviewer_id
+         WHERE cr.change_id = ANY($1) AND cr.decision = 'approved'
+         ORDER BY cr.decided_at, u.username",
+        )
+        .bind(&visible_ids)
+        .fetch_all(pool)
+        .await?;
+    for (revision_id, change_id, number, title, released_at, visible) in changes {
+        let value = if visible {
+            json!({
+                "change": number,
+                "title": title,
+                "released_at": released_at,
+                "approvals": approvals
+                    .iter()
+                    .filter(|a| a.0 == change_id)
+                    .map(|a| json!({ "reviewer": a.1, "name": a.2, "approved_at": a.3 }))
+                    .collect::<Vec<_>>(),
+            })
+        } else {
+            json!({ "restricted": true })
+        };
+        out.insert(revision_id, value);
+    }
+    Ok(out)
+}
+
 pub(crate) const CHANGE_SELECT: &str = "
     SELECT c.id, c.number, c.title, c.description, c.priority, c.status,
            c.created_by, u.display_name AS created_by_name,
@@ -215,7 +299,7 @@ pub(crate) async fn items_unchecked(pool: &PgPool, change_id: Uuid) -> AppResult
 pub async fn reviews(pool: &PgPool, change_id: Uuid) -> AppResult<Vec<ChangeReview>> {
     Ok(sqlx::query_as::<_, ChangeReview>(&format!(
         "SELECT cr.reviewer_id, u.username AS reviewer_username, u.display_name AS reviewer_name,
-                cr.decision, cr.comment, cr.decided_at,
+                cr.decision, cr.comment, cr.decided_at, cr.sign_off_method, cr.sign_off_meaning,
                 CASE WHEN cr.decision <> 'pending' THEN NULL
                      WHEN NOT u.active THEN 'deactivated'
                      WHEN u.role NOT IN ('editor', 'admin') THEN 'not_editor'
@@ -250,7 +334,8 @@ pub async fn review_round(pool: &PgPool, change_id: Uuid) -> AppResult<i32> {
 pub async fn earlier_rounds(pool: &PgPool, change_id: Uuid) -> AppResult<Vec<ChangeReviewRound>> {
     Ok(sqlx::query_as::<_, ChangeReviewRound>(
         "SELECT rr.round, rr.reviewer_id, u.username AS reviewer_username,
-                u.display_name AS reviewer_name, rr.decision, rr.comment, rr.decided_at, rr.closed_at
+                u.display_name AS reviewer_name, rr.decision, rr.comment, rr.decided_at, rr.closed_at,
+                rr.sign_off_method, rr.sign_off_meaning
          FROM change_review_rounds rr JOIN users u ON u.id = rr.reviewer_id
          WHERE rr.change_id = $1
          ORDER BY rr.round DESC, u.display_name",
@@ -638,8 +723,10 @@ async fn reset_reviews(conn: &mut PgConnection, change_id: Uuid) -> AppResult<()
     .await?;
     if decided {
         sqlx::query(
-            "INSERT INTO change_review_rounds (change_id, round, reviewer_id, decision, comment, decided_at)
-             SELECT cr.change_id, c.review_round, cr.reviewer_id, cr.decision, cr.comment, cr.decided_at
+            "INSERT INTO change_review_rounds (change_id, round, reviewer_id, decision, comment,
+                                              decided_at, sign_off_method, sign_off_meaning)
+             SELECT cr.change_id, c.review_round, cr.reviewer_id, cr.decision, cr.comment,
+                    cr.decided_at, cr.sign_off_method, cr.sign_off_meaning
              FROM change_reviews cr JOIN changes c ON c.id = cr.change_id
              WHERE cr.change_id = $1
              ON CONFLICT DO NOTHING",
@@ -653,7 +740,9 @@ async fn reset_reviews(conn: &mut PgConnection, change_id: Uuid) -> AppResult<()
             .await?;
     }
     sqlx::query(
-        "UPDATE change_reviews SET decision = 'pending', comment = '', decided_at = NULL WHERE change_id = $1",
+        "UPDATE change_reviews SET decision = 'pending', comment = '', decided_at = NULL,
+                sign_off_method = NULL, sign_off_meaning = ''
+         WHERE change_id = $1",
     )
     .bind(change_id)
     .execute(&mut *conn)
@@ -1813,7 +1902,9 @@ pub async fn submit(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
 ///
 /// * **Permission:** CAD editor; the change is in review, the actor sees every
 ///   affected item and is one of its reviewers with a pending decision (409
-///   when already decided); a rejection needs a comment.
+///   when already decided); a rejection needs a comment; an approval needs
+///   every "use as is" deviation confirmed where the group asks for it
+///   (`as_built::ensure_concessions_confirmed`, 409).
 /// * **Locks:** the change row (`FOR UPDATE`); on release or rejection every
 ///   affected revision (`revisions::lock`) before its state changes.
 /// * **Audit:** `change.approve` / `change.reject`; when the change finishes,
@@ -1827,21 +1918,38 @@ pub async fn submit(pool: &PgPool, actor: &Actor, change_id: Uuid) -> AppResult<
 ///   implemented change requests (`requests::on_change_released`), the
 ///   notifications and the webhook deliveries in one transaction
 ///   (`tests/atomic_processes.rs`); a second approval at once gets a 409.
+/// * **Sign-off:** when `reauth` asks for it (`TEAMCRAFT_APPROVAL_REAUTH`),
+///   a decision signed off only by the web session is refused (403); the
+///   method and the stated meaning are stored with the review.
 pub async fn review(
     pool: &PgPool,
     actor: &Actor,
     change_id: Uuid,
     decision: Decision,
     comment: &str,
+    sign_off: &SignOff,
+    reauth: domain::ApprovalReauth,
 ) -> AppResult<Change> {
     actor.require(Role::Editor)?;
     let comment = domain::limit_text("Comment", comment, 4000)?;
+    let meaning = domain::limit_text(
+        "Meaning of the sign-off",
+        &sign_off.meaning,
+        domain::MAX_SIGN_OFF_MEANING,
+    )?;
     if decision == Decision::Pending {
         return Err(AppError::BadRequest("Choose approve or reject.".into()));
     }
     if decision == Decision::Rejected && comment.is_empty() {
         return Err(AppError::BadRequest(
             "Please explain why you reject the change.".into(),
+        ));
+    }
+    if reauth.requires(decision) && !sign_off.method.is_fresh() {
+        return Err(AppError::Forbidden(
+            "Confirm your decision with your password (or sign in again with single sign-on): \
+             this server asks for a fresh sign-in for review decisions."
+                .into(),
         ));
     }
     let mut tx = pool.begin().await?;
@@ -1872,14 +1980,22 @@ pub async fn review(
             "You have already decided on this change.".into(),
         ));
     }
+    if decision == Decision::Approved {
+        // groups with `concessions_need_review`: every "use as is" deviation
+        // is confirmed on its own before an approval counts
+        as_built::ensure_concessions_confirmed(&mut tx, change_id).await?;
+    }
     sqlx::query(
-        "UPDATE change_reviews SET decision = $3, comment = $4, decided_at = now()
+        "UPDATE change_reviews SET decision = $3, comment = $4, decided_at = now(),
+                sign_off_method = $5, sign_off_meaning = $6
          WHERE change_id = $1 AND reviewer_id = $2",
     )
     .bind(change_id)
     .bind(actor.id)
     .bind(decision.as_str())
     .bind(&comment)
+    .bind(sign_off.method.as_str())
+    .bind(&meaning)
     .execute(&mut *tx)
     .await?;
     audit::record(
@@ -1906,7 +2022,7 @@ pub async fn review(
                 format!(": {comment}")
             }
         ),
-        json!({ "comment": comment }),
+        json!({ "comment": comment, "sign_off": sign_off.method.as_str(), "meaning": meaning }),
     )
     .await?;
 

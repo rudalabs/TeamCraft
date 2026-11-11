@@ -26,7 +26,11 @@
   never needs a database; schema changes are numbered migrations.
 * **Vault**: uploads are streamed into `tmp/`, hashed on the fly and moved to
   their content address; identical content is stored once.
-* **3D preview**: `mesh.rs` reads STL/OBJ/PLY/OFF/3MF/AMF/glTF/3DS/point
+* **3D preview**: `mesh.rs` dispatches to one reader per format in `src/mesh/`
+  (`stl.rs`, `obj.rs`, `ply.rs`, `off.rs`, `three_mf.rs` for 3MF and AMF,
+  `gltf.rs`, `three_ds.rs`, `points.rs` for PTS/XYZ/LAS); the mesh and its
+  `TCMESH01` encoding are in `mesh/model.rs`, the shared bounded byte access
+  in `mesh/helpers.rs`. It reads STL/OBJ/PLY/OFF/3MF/AMF/glTF/3DS/point
   clouds and tessellates STEP with the truck kernel (`mesh/step.rs`; an own
   Part 21 reader in `mesh/p21.rs` filters what the kernel gets, AP242
   tessellated geometry is read by `mesh/tessellated.rs`), reads the JT 9
@@ -38,12 +42,16 @@
   `preview.rs` caches the
   result and runs each conversion in a `teamcraft preview-mesh` child
   process with a time limit. The browser only draws the compact
-  `TCMESH01` buffer; `simmesh.rs` turns VTK/VTU/VTP and CalculiX `.frd`
-  results into their outer surface with scalar fields (an optional, flagged
+  `TCMESH01` buffer; `simmesh.rs` turns VTK/VTU/VTP (`simmesh/vtk_legacy.rs`,
+  `simmesh/vtk_xml.rs`) and CalculiX `.frd` (`simmesh/frd.rs`) results, over
+  a shared cell grid (`simmesh/grid.rs`) and number parsing (`simmesh/numbers.rs`), into their outer surface with scalar
+  fields (an optional, flagged
   section of the same format) that the viewer colours with a colour map.
   The same child process writes the shape signature of the
   [similar part search](../guide/similar-parts.md) (`shape.rs`), stored once
-  per content hash in `shape_signatures`.
+  per content hash in `shape_signatures`, and the mass integrals of the
+  [mass properties](../guide/mass-properties.md) (`massprops.rs`), cached
+  per content hash next to the preview mesh.
 
 ## Source layout
 
@@ -62,8 +70,9 @@
 | `src/pagecontext.rs`                 | the page context the assistant sidebar sends (kind, identifiers, view, rule, query, rows shown): parsing and caps; the services resolve it with the user's rights |
 | `src/cadformat.rs`, `src/cadrefs.rs` | format registry, references inside CAD files                                                                                                                      |
 | `src/nxpart.rs`, `src/swpart.rs`     | NX part stream container, SOLIDWORKS 2015+ section container (references, preview images, assembly placements)                                                    |
-| `src/invpart.rs`, `src/invasm.rs`   | Inventor segments below `RSeStorage`; assembly components and placements (`UFRxDoc`, `AmRxSegment`)                                                               |
-| `src/mesh.rs`, `src/preview.rs`      | 3D readers and the preview cache; `src/simmesh.rs`: VTK/VTU/VTP/FRD simulation results with fields                                                                |
+| `src/invpart.rs`, `src/invplace.rs` | Inventor segments below `RSeStorage`; assembly components and placements for the 3D preview (`UFRxDoc`, `AmRxSegment`) |
+| `src/massprops.rs`                   | mass properties of closed meshes (volume, CG, inertia; Eberly), edge check, parallel axis roll-up                                                                 |
+| `src/mesh.rs`, `src/preview.rs`      | 3D readers and the preview cache; `src/simmesh.rs` + `src/simmesh/`: VTK/VTU/VTP/FRD results with fields                                                          |
 | `src/shape.rs`                       | shape signatures (extents, area, volume, D2 distribution) for the similar part search                                                                             |
 | `src/webhooks.rs`                    | event webhooks: outbox worker, HMAC-SHA256 signature, backoff, target (SSRF) guard                                                                                |
 | `migrations/`                        | PostgreSQL schema                                                                                                                                                 |

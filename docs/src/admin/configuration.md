@@ -80,10 +80,10 @@ user and for the whole vault are set with the CLI, see
 
 ### Malware scanning
 
-| Variable                 | Default | Meaning                                                                                                         |
-|--------------------------|---------|-----------------------------------------------------------------------------------------------------------------|
+| Variable                 | Default | Meaning                                                                                                                  |
+|--------------------------|---------|--------------------------------------------------------------------------------------------------------------------------|
 | `TEAMCRAFT_CLAMD_ADDR`   | –       | ClamAV daemon that scans every upload: `host:port` (e.g. `clamav:3310`) or `unix:/run/clamav/clamd.ctl`; unset = no scan |
-| `TEAMCRAFT_CLAMD_MAX_MB` | `25`    | larger files are stored without a scan (logged); match clamd's `StreamMaxLength`, 1–4096                        |
+| `TEAMCRAFT_CLAMD_MAX_MB` | `25`    | larger files are stored without a scan (logged); match clamd's `StreamMaxLength`, 1–4096                                 |
 
 With a scanner, every file is sent to clamd (`INSTREAM`) before it is moved
 into the vault – uploads, check-ins, chunked uploads, imports. Infected
@@ -96,8 +96,8 @@ files too.
 
 ### Encrypted backups
 
-| Variable                      | Default | Meaning                                                                                                          |
-|-------------------------------|---------|------------------------------------------------------------------------------------------------------------------|
+| Variable                      | Default | Meaning                                                                                                                                                                                 |
+|-------------------------------|---------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `TEAMCRAFT_BACKUP_PASSPHRASE` | –       | passphrase of `teamcraft backup --encrypt` and of restoring such a backup (at least 12 characters); without it the CLI prompts on a terminal. Prefer `TEAMCRAFT_BACKUP_PASSPHRASE_FILE` |
 
 See [Backups](operations.md#backups). Losing the passphrase means losing the
@@ -152,6 +152,20 @@ limit still are). Every variable also exists as `NAME_FILE`.
 | `TEAMCRAFT_METRICS_TOKEN`                                                  | – (endpoint off)                  | enables `GET /metrics` (Prometheus text format); the scraper sends this value (at least 16 characters) as `Authorization: Bearer …`. Request counts and latency, database pool, pending webhook deliveries, e-mails and chat messages, 3D preview queue |
 | `TEAMCRAFT_BOOTSTRAP_ADMIN_USERNAME`, `TEAMCRAFT_BOOTSTRAP_ADMIN_PASSWORD` | `admin` / –                       | create this administrator on start when there are no accounts (public servers)                                                                                                                                                                          |
 | `TEAMCRAFT_OIDC_*`                                                         | –                                 | single sign-on, see [Users, roles and SSO](users.md)                                                                                                                                                                                                    |
+| `TEAMCRAFT_APPROVAL_REAUTH`                                                | `off`                             | a fresh sign-in to sign off review decisions in the browser: `release` (every approval) or `every_decision` (approvals and rejections); see below                                                                                                       |
+
+**Sign-off of review decisions.** With `TEAMCRAFT_APPROVAL_REAUTH` a reviewer
+confirms a decision on the change page with the account password, or – for
+single sign-on accounts – with *Sign in again*, which sends them to the
+identity provider with `prompt=login` and `max_age=0`; the provider's
+`auth_time` must be at most five minutes old, and the confirmation counts
+for 10 minutes. API tokens are not asked: reviewing needs the `approve`
+token scope (`write` tokens get 403). Every decision records how it was
+signed off (`session`, `password`, `sso` or `token`) and an optional stated
+meaning ("approved as design owner"), shown on the change page, in
+`GET /api/v1/changes/{number}` and kept with earlier review rounds. A wrong
+password counts like a failed sign-in (`user.password_failed`, throttled);
+a fresh SSO sign-in writes `user.reauthenticate`.
 
 Failed password sign-ins are counted per username and per client address
 for 15 minutes from the first failure; when a counter is full the sign-in
@@ -166,14 +180,66 @@ the audit log (`user.sign_in`, `user.sign_in_failed`, `user.sign_out`).
 
 ## Notifications (optional)
 
-| Variable                         | Meaning                                                                                                                                                                                   |
-|----------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `TEAMCRAFT_SMTP_URL`             | SMTP server in lettre syntax: `smtps://user:password@host:465`, `smtp://host:587?tls=required`, `smtp://localhost:25`                                                                     |
-| `TEAMCRAFT_MAIL_FROM`            | sender, `Name <address>` (required with SMTP)                                                                                                                                             |
-| `TEAMCRAFT_REQUEST_DIGEST_HOURS` | hours between two e-mail digests of the change requests waiting for triage, per CAD editor and project group (default `24`, `0` = off, at most `720`); only with SMTP                     |
-| `TEAMCRAFT_MATTERMOST_WEBHOOK`   | incoming webhook for notifications                                                                                                                                                        |
-| `TEAMCRAFT_MATTERMOST_DIRECT`    | `true`: direct messages, `false` (default): mention in the webhook's channel – notifications about [restricted project groups](permissions.md) then show only a generic text and the link |
-| `MATTERMOST_ERROR_WEBHOOK`       | incoming webhook that receives internal server errors (rate limited)                                                                                                                      |
+| Variable                         | Meaning                                                                                                                                                                                                                                                                                      |
+|----------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `TEAMCRAFT_SMTP_URL`             | SMTP server in lettre syntax: `smtps://user:password@host:465`, `smtp://host:587?tls=required`, `smtp://localhost:25`                                                                                                                                                                        |
+| `TEAMCRAFT_MAIL_FROM`            | sender, `Name <address>` (required with SMTP)                                                                                                                                                                                                                                                |
+| `TEAMCRAFT_REQUEST_DIGEST_HOURS` | hours between two e-mail digests of the change requests waiting for triage, per CAD editor and project group (default `24`, `0` = off, at most `720`); only with SMTP                                                                                                                        |
+| `TEAMCRAFT_MATTERMOST_URL`       | base URL of the Mattermost server (`https://chat.example.org`, also below a path prefix); together with the bot token it switches notifications to **direct messages of a bot account**                                                                                                      |
+| `TEAMCRAFT_MATTERMOST_BOT_TOKEN` | access token of the bot account (secret; also as `TEAMCRAFT_MATTERMOST_BOT_TOKEN_FILE`). Both variables are required together                                                                                                                                                                |
+| `TEAMCRAFT_MATTERMOST_WEBHOOK`   | **deprecated**: incoming webhook for notifications (ignored when the bot is configured); logs a warning at start-up                                                                                                                                                                          |
+| `TEAMCRAFT_MATTERMOST_DIRECT`    | **deprecated**, webhook only: `true`: direct messages through the webhook (they appear to come from the webhook's creator), `false` (default): mention in the webhook's channel – notifications about [restricted project groups](permissions.md) then show only a generic text and the link |
+| `MATTERMOST_ERROR_WEBHOOK`       | incoming webhook that receives internal server errors (rate limited)                                                                                                                                                                                                                         |
+
+### Mattermost: a bot account for direct messages
+
+Notifications reach Mattermost **only as a direct message to the person**,
+never in a channel. TeamCraft signs in as a bot account and uses the REST
+API: it looks the user up by name (`GET /api/v4/users/username/…`, cached for
+ten minutes), opens the direct channel bot ↔ user (`POST /api/v4/channels/direct`)
+and posts (`POST /api/v4/posts`). In Mattermost the messages come from the bot (shown with the *BOT* tag), and every
+user has one conversation with it. A
+direct message can only be read by its recipient, so it carries the full title
+and text, also for [restricted project groups](permissions.md) – unless the
+group switched *notification content* off, then only a generic text and the
+link are sent.
+
+Set up the bot once:
+
+1. In Mattermost: *System Console → Integrations → Integration Management*:
+   *Enable Bot Account Creation* must be on.
+2. *Integrations → Bot Accounts → Add Bot Account*: username e.g. `teamcraft`,
+   display name *TeamCraft*. A bot needs **no** role beyond *Member* and **no**
+   channel or team membership: it only has to read user profiles and open
+   direct messages, which every account may do. Do not give it a system role.
+3. Create a token for the bot (*Create New Token*), keep it in a file that only
+   the server reads, and set `TEAMCRAFT_MATTERMOST_URL` and
+   `TEAMCRAFT_MATTERMOST_BOT_TOKEN_FILE`. Both are required together.
+4. Check it from *Account → Notifications*: switch Mattermost on, save and
+   press *Send a test* (the test notification is delivered like
+   every other).
+
+Users enter their Mattermost username on their account page (empty = their
+TeamCraft login). If it is unknown or the Mattermost account is deactivated,
+the chat delivery of that notification is marked failed at once, with the
+reason (for example *Mattermost user "xy" not found – check your Mattermost
+username*) shown under *Notifications*; it is **never** posted into a channel
+instead. The bell and the e-mail are not affected. A rejected token (HTTP 401),
+a missing permission or a server error is retried like any delivery (five
+attempts with the usual pause) and then marked failed, with the reason.
+
+The server URL is set by the administrator only. The client follows no
+redirects (the token must not travel to another host) and ignores proxy
+variables. The error webhook `MATTERMOST_ERROR_WEBHOOK` stays an ordinary
+channel webhook: it is for administrators, not personal.
+
+**Deprecated webhook mode.** With only `TEAMCRAFT_MATTERMOST_WEBHOOK` set,
+notifications still go out as before (a mention in the webhook's channel, or
+with `TEAMCRAFT_MATTERMOST_DIRECT=true` a direct message that appears to come
+from the person who created the webhook), the server logs a deprecation
+warning at start-up and the account page says so. Everybody in the channel
+reads the mentions, which is why restricted groups show only a generic text
+there. See [Upgrading](upgrade.md#mattermost-switch-from-the-webhook-to-a-bot).
 
 The **change request digest** is an e-mail per project group to its CAD
 editors and admins with the requests raised since the previous digest that

@@ -901,6 +901,7 @@ mod tests {
             display_name: "Erika".into(),
             role: Role::Editor,
             skin: String::new(),
+            preferred_cad: String::new(),
             projects: Vec::new(),
             hidden_projects: Vec::new(),
         }

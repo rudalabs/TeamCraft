@@ -804,6 +804,15 @@ fn is_solidcraft_json(head: &[u8]) -> bool {
 /// Whether a PDF embeds a 3D model: the 3D stream dictionaries (`/Subtype
 /// /U3D` or `/PRC`) are never compressed, so a byte search finds them.
 async fn pdf_has_3d(path: &std::path::Path) -> bool {
+    pdf_has_3d_within(path, PDF_3D_SCAN_LIMIT).await
+}
+
+/// How much of a PDF [`pdf_has_3d`] reads: 3D PDFs are rarely larger, bigger
+/// documents are treated as 2D.
+const PDF_3D_SCAN_LIMIT: u64 = 512 * 1024 * 1024;
+
+/// [`pdf_has_3d`] reading at most `limit` bytes (rounded up to a whole read).
+async fn pdf_has_3d_within(path: &std::path::Path, limit: u64) -> bool {
     use tokio::io::AsyncReadExt;
     let Ok(mut file) = tokio::fs::File::open(path).await else {
         return false;
@@ -812,8 +821,7 @@ async fn pdf_has_3d(path: &std::path::Path) -> bool {
     let mut buf = vec![0u8; 256 * 1024];
     let mut carry: Vec<u8> = Vec::new();
     let mut scanned = 0u64;
-    // 3D PDFs are rarely larger; bigger documents are treated as 2D
-    while scanned < 512 * 1024 * 1024 {
+    while scanned < limit {
         let n = match file.read(&mut buf).await {
             Ok(0) | Err(_) => return false,
             Ok(n) => n,
@@ -870,6 +878,9 @@ pub struct FormatInfo {
     pub preview: Option<&'static str>,
     /// Files of this format carry a preview image (see `thumbnail`).
     pub thumbnail: bool,
+    /// Native format family (the authoring program's system id, see
+    /// [`family`]); `None` for neutral formats.
+    pub family: Option<&'static str>,
 }
 
 impl CadFormat {
@@ -885,6 +896,7 @@ impl CadFormat {
             kind_label: self.kind.label(),
             preview: crate::preview::PreviewFormat::of_format(self.id).map(|p| p.as_str()),
             thumbnail: crate::thumbnail::supports(self.id),
+            family: family(self.id).map(|s| s.id),
         }
     }
 }
@@ -945,6 +957,116 @@ pub fn ids_named_by(query: &str) -> Vec<String> {
         })
         .map(|f| f.id.to_string())
         .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Format families (preferred CAD program)
+// ---------------------------------------------------------------------------
+
+/// Groups of [`SYSTEMS`] that are not one authoring program: neutral and
+/// exchange formats, meshes, visualisation, point clouds, open BIM, PCB
+/// fabrication data, multi-vendor simulation and CFD, G-code, documents.
+/// Their files belong to no family and are never collapsed. JT and PLM XML
+/// (`teamcenter`) are read by every major CAD program, so they count as
+/// neutral too.
+const NEUTRAL_SYSTEMS: [&str; 13] = [
+    "teamcenter",
+    "exchange",
+    "mesh",
+    "visualization",
+    "pointcloud",
+    "bim",
+    "pcb-fab",
+    "rocketry",
+    "cae",
+    "cfd",
+    "cae-open",
+    "cam",
+    "documents",
+];
+
+/// Formats of a program's system that are exchange formats in practice:
+/// DXF (written and read by every 2D/3D CAD program) and the legacy 3DS mesh.
+const NEUTRAL_FORMATS: [&str; 2] = ["dxf", "3ds"];
+
+/// The native format family of a stored format id: the [`CadSystem`] of the
+/// authoring program (`nx` for NX parts, assemblies, drawings and simulation
+/// files, `solidworks`, `inventor`, …). `None` for neutral and exchange
+/// formats (STEP, JT, STL, PDF, images, …) and unknown ids – those are never
+/// collapsed by a preferred CAD program.
+pub fn family(format_id: &str) -> Option<&'static CadSystem> {
+    let format = by_id(format_id)?;
+    if NEUTRAL_FORMATS.contains(&format.id) || NEUTRAL_SYSTEMS.contains(&format.system) {
+        return None;
+    }
+    system(format.system)
+}
+
+/// The families a user can prefer, in the order of [`SYSTEMS`]: every
+/// program that owns at least one native format.
+pub fn families() -> Vec<&'static CadSystem> {
+    SYSTEMS
+        .iter()
+        .filter(|s| {
+            FORMATS
+                .iter()
+                .any(|f| family(f.id).is_some_and(|x| x.id == s.id))
+        })
+        .collect()
+}
+
+/// Whether `id` names a family a user can prefer.
+pub fn is_family(id: &str) -> bool {
+    families().iter().any(|s| s.id == id)
+}
+
+/// How a file list is shown for a preferred CAD program.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct FamilyGrouping {
+    /// One flag per file, in the order given: `true` = a native file of
+    /// another family, shown in the collapsed group.
+    pub collapsed: Vec<bool>,
+    /// Short names of the collapsed families, in the order of first
+    /// appearance ("SolidWorks", "Inventor").
+    pub other_families: Vec<&'static str>,
+}
+
+impl FamilyGrouping {
+    /// Number of collapsed files.
+    pub fn collapsed_count(&self) -> usize {
+        self.collapsed.iter().filter(|c| **c).count()
+    }
+}
+
+/// Splits the files of a revision (their stored format ids) for a preferred
+/// family (`""` or an unknown id = show all). Only when at least one file
+/// belongs to the preferred family are the native files of other families
+/// collapsed; neutral files and files of the preferred family stay visible.
+/// Without a file of the preferred family nothing is collapsed. Display only:
+/// nothing is removed from the data.
+pub fn group_by_family(preferred: &str, formats: &[&str]) -> FamilyGrouping {
+    let none = || FamilyGrouping {
+        collapsed: vec![false; formats.len()],
+        other_families: Vec::new(),
+    };
+    if preferred.is_empty() || !is_family(preferred) {
+        return none();
+    }
+    let families: Vec<Option<&'static CadSystem>> = formats.iter().map(|f| family(f)).collect();
+    if !families.iter().flatten().any(|s| s.id == preferred) {
+        return none();
+    }
+    let mut grouping = FamilyGrouping::default();
+    for fam in families {
+        let other = fam.filter(|s| s.id != preferred);
+        if let Some(s) = other {
+            if !grouping.other_families.contains(&s.short) {
+                grouping.other_families.push(s.short);
+            }
+        }
+        grouping.collapsed.push(other.is_some());
+    }
+    grouping
 }
 
 /// Systems with their formats, for the help page and `GET /api/v1/formats`.
@@ -1098,7 +1220,14 @@ mod tests {
         let mut ole = OLE_MAGIC.to_vec();
         ole.extend_from_slice(&[0; 16]);
         assert_eq!(id("rover.asm", &ole), Some("solidedge-assembly"));
+        // the OLE signature decides even when the rest of the head is printable
+        // (found by cargo mutants: without NULs it would look like a source)
+        let mut printable_ole = OLE_MAGIC.to_vec();
+        printable_ole.extend_from_slice(&[b'a'; 60]);
+        assert_eq!(id("rover.asm", &printable_ole), Some("solidedge-assembly"));
         assert_eq!(id("startup.asm", b"  .section .text\n  mov r0, #1\n"), None);
+        // binary, neither Creo nor OLE: still a CAD assembly by its extension
+        assert!(id("rover.asm", b"\x00\x01\x02binary").is_some());
         // .sch: KiCad 5 or Eagle.
         assert_eq!(
             id("power.sch", b"EESchema Schematic File Version 4"),
@@ -1147,6 +1276,39 @@ mod tests {
             detect_stored(&three_d, "model.pdf").await.map(|f| f.id),
             Some("pdf-3d")
         );
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Found by cargo mutants: the scan limit was not pinned down. Tested
+    /// with a 1 MiB limit (four reads of 256 KiB) to stay fast.
+    #[tokio::test]
+    async fn three_d_markers_are_searched_up_to_the_limit_only() {
+        use std::io::{Seek, SeekFrom, Write};
+        let dir = std::env::temp_dir().join(format!("teamcraft-pdf-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let at = |offset: u64, name: &str| {
+            let path = dir.join(name);
+            let mut f = std::fs::File::create(&path).unwrap();
+            f.write_all(b"%PDF-1.7\n").unwrap();
+            f.seek(SeekFrom::Start(offset)).unwrap();
+            f.write_all(b"/Subtype /U3D").unwrap();
+            path
+        };
+        const MIB: u64 = 1024 * 1024;
+        assert_eq!(PDF_3D_SCAN_LIMIT, 512 * MIB);
+        let inside = at(MIB - 64, "inside.pdf");
+        let past = at(MIB, "past-limit.pdf");
+        assert!(pdf_has_3d_within(&inside, MIB).await, "within the limit");
+        assert!(
+            !pdf_has_3d_within(&past, MIB).await,
+            "right after the limit: treated as a 2D document"
+        );
+        assert!(
+            pdf_has_3d_within(&past, 2 * MIB).await,
+            "found with a larger limit"
+        );
+        // the real limit: past the first megabytes is still searched
+        assert!(pdf_has_3d(&at(2 * MIB, "two-mib.pdf")).await);
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -1430,6 +1592,9 @@ mod tests {
         assert!(ids_named_by("step").contains(&"step".to_string()));
         assert!(ids_named_by("bracket").is_empty());
         assert!(ids_named_by("x").is_empty());
+        // by the full program name only: neither id, short name nor alias
+        // matches "Autodesk Inventor" (found by cargo mutants)
+        assert!(ids_named_by("Autodesk Inventor").contains(&"inventor-part".to_string()));
         assert_eq!(ids_of_system("inventor").len(), 5);
     }
 
@@ -1757,5 +1922,221 @@ mod tests {
         assert!(catalogue
             .iter()
             .all(|s| !s["formats"].as_array().unwrap().is_empty()));
+        // each system lists exactly its own formats (found by cargo mutants)
+        let listed: usize = catalogue
+            .iter()
+            .map(|s| s["formats"].as_array().unwrap().len())
+            .sum();
+        assert_eq!(listed, FORMATS.len(), "every format once");
+        for s in &catalogue {
+            for f in s["formats"].as_array().unwrap() {
+                let id = f["id"].as_str().unwrap();
+                assert_eq!(by_id(id).unwrap().system, s["id"], "{id}");
+            }
+        }
+    }
+
+    /// Found by cargo mutants: a line without tokens is not a token line.
+    #[test]
+    fn quoted_tokens_counts_quoted_strings_only() {
+        assert_eq!(quoted_tokens(br#""Iteration" "report-def-0""#), Some(2));
+        assert_eq!(quoted_tokens(br#"  ("Flow Time")  "#), Some(1));
+        assert_eq!(quoted_tokens(b"()"), None, "nothing inside the parentheses");
+        assert_eq!(quoted_tokens(b"   "), None);
+        assert_eq!(quoted_tokens(br#""open"#), None, "unterminated");
+        assert_eq!(quoted_tokens(br#""a" b"#), None, "unquoted token");
+        assert_eq!(quoted_tokens(br#"("a""#), None, "unclosed parenthesis");
+    }
+
+    /// Found by cargo mutants: the 95 % threshold was not pinned down.
+    #[test]
+    fn text_needs_95_percent_printable_bytes_and_no_nul() {
+        let with_controls = |n: usize| {
+            let mut head = vec![b'a'; 20 - n];
+            head.extend(std::iter::repeat_n(0x01, n));
+            head
+        };
+        assert!(looks_textual(b"GRID    1       0.0     1.0\n"));
+        assert!(
+            looks_textual("Ümlaut-Kommentar\n".as_bytes()),
+            "non-ASCII counts as text"
+        );
+        assert!(looks_textual(&with_controls(1)), "19 of 20 = 95 %");
+        assert!(!looks_textual(&with_controls(2)), "18 of 20 = 90 %");
+        assert!(!looks_textual(&[0x01; 20]));
+        assert!(!looks_textual(b"text\0with a NUL"));
+        assert!(!looks_textual(b""));
+    }
+
+    /// Every registered format, pinned to its family (`None` = neutral).
+    #[rustfmt::skip]
+    const EXPECTED_FAMILIES: &[(&str, &[&str])] = &[
+        ("solidworks", &["solidworks-part", "solidworks-assembly", "solidworks-drawing", "solidworks-template", "solidworks-library"]),
+        ("nx", &["nx-part", "nx-simulation"]),
+        ("solid-edge", &["solidedge-part", "solidedge-sheetmetal", "solidedge-assembly", "solidedge-weldment", "solidedge-drawing"]),
+        ("inventor", &["inventor-part", "inventor-assembly", "inventor-drawing", "inventor-presentation", "inventor-project"]),
+        ("fusion", &["fusion-design", "fusion-distributed", "fusion-drawing"]),
+        ("autocad", &["dwg", "autocad-template"]),
+        ("creo", &["creo-part", "creo-assembly", "creo-drawing", "creo-format", "creo-layout", "creo-sketch", "creo-manufacturing", "creo-neutral", "creo-view"]),
+        ("catia", &["catia-part", "catia-product", "catia-drawing", "catia-cgr", "catia-analysis", "catia-process", "catia-material", "3dxml"]),
+        ("spaceclaim", &["spaceclaim"]),
+        ("freecad", &["freecad"]),
+        ("tangency", &["solidcraft-design", "fieldcraft-model"]),
+        ("rhino", &["rhino"]),
+        ("alias", &["alias-wire"]),
+        ("openscad", &["openscad"]),
+        ("revit", &["revit-project", "revit-family", "revit-template"]),
+        ("navisworks", &["navisworks-document", "navisworks-cache", "navisworks-file-set"]),
+        ("microstation", &["dgn"]),
+        ("archicad", &["archicad-project", "archicad-archive"]),
+        ("sketchup", &["sketchup"]),
+        ("blender", &["blender"]),
+        ("maya", &["maya-ascii", "maya-binary"]),
+        ("3dsmax", &["3dsmax-scene"]),
+        ("cinema4d", &["cinema4d"]),
+        ("modo", &["modo"]),
+        ("houdini", &["houdini"]),
+        ("kicad", &["kicad-pcb", "kicad-schematic", "kicad-project", "kicad-library"]),
+        ("altium", &["altium-pcb", "altium-schematic", "altium-project", "altium-library"]),
+        ("eagle", &["eagle-board", "eagle-schematic", "eagle-library"]),
+    ];
+
+    fn expected_family(format_id: &str) -> Option<&'static str> {
+        EXPECTED_FAMILIES
+            .iter()
+            .find(|(_, ids)| ids.contains(&format_id))
+            .map(|(family, _)| *family)
+    }
+
+    #[test]
+    fn every_registered_format_has_the_expected_family() {
+        for f in FORMATS {
+            assert_eq!(
+                family(f.id).map(|s| s.id),
+                expected_family(f.id),
+                "family of {}",
+                f.id
+            );
+        }
+        // the table names registered formats only, each once
+        let mut seen = HashSet::new();
+        for (fam, ids) in EXPECTED_FAMILIES {
+            assert!(system(fam).is_some(), "{fam} is a registered system");
+            for id in *ids {
+                assert!(by_id(id).is_some(), "{id} is registered");
+                assert!(seen.insert(*id), "{id} listed twice");
+            }
+        }
+    }
+
+    #[test]
+    fn neutral_formats_belong_to_no_family() {
+        for id in [
+            "step",
+            "iges",
+            "parasolid-text",
+            "jt",
+            "plmxml",
+            "stl",
+            "3mf",
+            "gltf",
+            "pdf",
+            "pdf-3d",
+            "png",
+            "jpeg",
+            "text",
+            "word",
+            "zip",
+            "dxf",
+            "3ds",
+            "ifc",
+            "e57",
+            "gerber",
+            "abaqus-input",
+            "fluent-case",
+            "vtk-legacy",
+            "gcode",
+            "openrocket",
+        ] {
+            assert!(by_id(id).is_some(), "{id} is registered");
+            assert_eq!(family(id).map(|s| s.id), None, "{id} is neutral");
+        }
+        assert!(family("").is_none(), "unknown format");
+        assert!(family("no-such-format").is_none());
+    }
+
+    #[test]
+    fn families_are_the_programs_with_native_formats() {
+        let ids: Vec<&str> = families().iter().map(|s| s.id).collect();
+        let expected: Vec<&str> = SYSTEMS
+            .iter()
+            .map(|s| s.id)
+            .filter(|id| EXPECTED_FAMILIES.iter().any(|(f, _)| f == id))
+            .collect();
+        assert_eq!(ids, expected, "in the order of SYSTEMS");
+        assert!(is_family("nx") && is_family("solidworks") && is_family("kicad"));
+        assert!(!is_family("exchange") && !is_family("teamcenter") && !is_family(""));
+        assert_eq!(info("nx-part").and_then(|i| i.family), Some("nx"));
+        assert_eq!(info("step").and_then(|i| i.family), None);
+    }
+
+    #[test]
+    fn grouping_collapses_other_families_when_the_preferred_one_is_present() {
+        let files = [
+            "nx-part",
+            "solidworks-part",
+            "step",
+            "inventor-assembly",
+            "nx-simulation",
+            "solidworks-drawing",
+            "pdf",
+            "",
+        ];
+        let g = group_by_family("nx", &files);
+        assert_eq!(
+            g.collapsed,
+            [false, true, false, true, false, true, false, false]
+        );
+        assert_eq!(g.other_families, ["SolidWorks", "Inventor"]);
+        assert_eq!(g.collapsed_count(), 3);
+    }
+
+    #[test]
+    fn grouping_shows_everything_without_a_preferred_file() {
+        let files = ["solidworks-part", "inventor-part", "step"];
+        let g = group_by_family("nx", &files);
+        assert_eq!(g.collapsed, [false, false, false]);
+        assert!(g.other_families.is_empty());
+        assert_eq!(g.collapsed_count(), 0);
+    }
+
+    #[test]
+    fn grouping_never_collapses_neutral_files() {
+        let files = ["step", "stl", "pdf", "jt", "png"];
+        for preferred in ["nx", "solidworks", ""] {
+            let g = group_by_family(preferred, &files);
+            assert_eq!(g.collapsed, [false; 5], "{preferred}");
+            assert!(g.other_families.is_empty());
+        }
+    }
+
+    #[test]
+    fn grouping_without_or_with_an_unknown_preference_shows_all() {
+        let files = ["nx-part", "solidworks-part"];
+        for preferred in ["", "exchange", "teamcenter", "nonsense"] {
+            let g = group_by_family(preferred, &files);
+            assert_eq!(g.collapsed, [false, false], "{preferred}");
+        }
+        assert_eq!(group_by_family("nx", &[]), FamilyGrouping::default());
+    }
+
+    #[test]
+    fn grouping_with_only_the_preferred_family_collapses_nothing() {
+        let g = group_by_family(
+            "solidworks",
+            &["solidworks-part", "solidworks-drawing", "step"],
+        );
+        assert_eq!(g.collapsed, [false, false, false]);
+        assert!(g.other_families.is_empty());
     }
 }

@@ -58,6 +58,25 @@
   </div>
 </section>
 
+<section class="card" id="cad-preference">
+  <div class="card-head">
+    <h2>Preferred CAD program</h2>
+    <span class="hint">Only for you; applies in the browser and the desktop app.</span>
+  </div>
+  <form class="stack" method="post" action="/account/preferred-cad">
+    <label class="field">Show files of
+      <select name="preferred_cad" aria-describedby="cad-preference-hint">
+        <option value="" {% if not me.preferred_cad %}selected{% endif %}>All CAD programs alike (default)</option>
+        {% for s in cad_families %}<option value="{{ s.id }}" {% if me.preferred_cad == s.id %}selected{% endif %}>{{ s.name }}</option>{% endfor %}
+      </select>
+      <span class="hint" id="cad-preference-hint">When a revision has files of your program, native files of other CAD programs
+        (e.g. a SolidWorks copy of an NX part) are listed in a collapsed group below the others. Neutral formats such as STEP, JT, STL
+        and PDF always stay visible, and nothing is hidden from search, downloads or the API.</span>
+    </label>
+    <div class="actions"><button class="primary" type="submit">Save</button></div>
+  </form>
+</section>
+
 <section class="card" id="notifications">
   <div class="card-head">
     <h2>Notifications</h2>
@@ -84,12 +103,13 @@
         {% if not notify.email_enabled %}<p class="hint">E-mail is not configured on this server (TEAMCRAFT_SMTP_URL).</p>
         {% elif not notify.settings.email_address %}<p class="hint">Your account has no e-mail address{% if user.auth_source == "oidc" %} – it comes from the single sign-on{% endif %}.</p>{% endif %}
         <label class="check"><input type="checkbox" name="mattermost" value="on" {% if notify.settings.mattermost %}checked{% endif %}>
-          to Mattermost {% if notify.mattermost_direct %}(direct message){% else %}(mention in the TeamCraft channel){% endif %}</label>
+          to Mattermost {% if notify.mattermost_direct %}(direct message from the TeamCraft bot){% else %}(mention in the TeamCraft channel){% endif %}</label>
         <label class="field">Mattermost username
           <input type="text" name="mattermost_username" value="{{ notify.settings.mattermost_username or '' }}" maxlength="64" placeholder="{{ user.username }}" spellcheck="false" aria-describedby="mm-user-hint">
           <span class="hint" id="mm-user-hint">Leave empty to use your login ({{ user.username }}).</span>
         </label>
-        {% if not notify.mattermost_enabled %}<p class="hint">Mattermost is not configured on this server (TEAMCRAFT_MATTERMOST_WEBHOOK).</p>{% endif %}
+        {% if not notify.mattermost_enabled %}<p class="hint">Mattermost is not configured on this server (TEAMCRAFT_MATTERMOST_URL and TEAMCRAFT_MATTERMOST_BOT_TOKEN).</p>
+        {% elif notify.mattermost_legacy_webhook %}<p class="hint">This server still uses the deprecated Mattermost webhook; the administrator should switch to the bot account.</p>{% endif %}
       </fieldset>
     </div>
     <div class="actions"><button class="primary" type="submit">Save</button></div>
@@ -113,7 +133,7 @@
     <p class="hint">Personal access tokens authenticate scripts and tools against the REST API at <span class="mono">{{ api_base }}</span> with your permissions. A scope narrows a token further: <em>read-only</em> tokens may only read (GET requests and the read-only MCP tools), <em>MCP only</em> tokens may only call the MCP endpoint for AI assistants. Give each script or assistant its own token with the narrowest scope it needs.</p>
     {% if tokens %}
     <table>
-      <thead><tr><th scope="col">Name</th><th scope="col">Prefix</th><th scope="col">Scope</th><th scope="col">Last used</th><th scope="col">Expires</th><th scope="col"></th></tr></thead>
+      <thead><tr><th scope="col">Name</th><th scope="col">Prefix</th><th scope="col">Scope</th><th scope="col">Last used</th><th scope="col">Expires</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
       <tbody>
       {% for t in tokens %}
         <tr>

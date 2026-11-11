@@ -12,12 +12,15 @@ Background, licence and the decision: [research note](../research/mutation-testi
 `.cargo/mutants.toml` lists the files (`examine_globs`): the pure modules
 whose rules the unit tests are meant to pin down – `src/domain/**`,
 `httprange`, `pagecontext`, `util`, `htmltext`, `resultscan`, `bomtable`,
-`cadformat`, `cadrefs` and `stepbom`. Only `cargo test --lib` runs per
+`cadformat`, `cadrefs` and `stepbom`, plus the 3D readers in `src/mesh/` and
+`src/simmesh/` (untrusted input, unit tests per format). STEP goes through
+the truck CAD kernel and stays out (`exclude_globs`: `mesh/step.rs`,
+`mesh/tessellated.rs`); the own Part 21 reader `mesh/p21.rs` is in. Only `cargo test --lib` runs per
 mutant: no PostgreSQL, no integration tests in `tests/`. A rule that only an
 integration test checks therefore shows up as *missed* here – the fix is a
 unit test next to the rule, which is the point.
 
-Services, handlers, templates and the 3D readers are not examined yet (*What to cover next* in `docs/OPEN_WORK.md`).
+Services, handlers and templates are not examined yet (*What to cover next* in `docs/OPEN_WORK.md`).
 
 ## Running it locally
 

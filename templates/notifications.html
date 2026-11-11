@@ -29,7 +29,7 @@
       </a>
       <span class="n-meta small muted">{{ n.actor_name }} · {{ m.time(n.created_at) }}
         {% if n.email_state == "sent" %} · e-mailed{% elif n.email_state == "failed" %} · <span class="badge badge-rejected">e-mail failed</span>{% endif %}
-        {% if n.chat_state == "sent" %} · sent to Mattermost{% elif n.chat_state == "failed" %} · <span class="badge badge-rejected">Mattermost failed</span>{% endif %}
+        {% if n.chat_state == "sent" %} · sent to Mattermost{% elif n.chat_state == "failed" %} · <span class="badge badge-rejected">Mattermost failed</span>{% if n.chat_error %} <span class="chat-error">{{ n.chat_error }}</span>{% endif %}{% endif %}
       </span>
     </li>
     {% endfor %}

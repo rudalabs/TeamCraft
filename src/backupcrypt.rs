@@ -69,6 +69,13 @@ impl BackupKey {
         Self::derive(passphrase, salt, M_COST, T_COST, P_COST)
     }
 
+    /// A key with cheap derivation parameters, for tests that need a key but
+    /// do not test the cost (the real cost takes seconds in a debug build).
+    #[cfg(test)]
+    pub(crate) fn for_tests(passphrase: &str) -> BackupKey {
+        Self::derive(passphrase, [7; 16], 64, 1, 1).expect("test key")
+    }
+
     fn derive(
         passphrase: &str,
         salt: [u8; 16],

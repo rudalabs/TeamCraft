@@ -81,4 +81,9 @@ Out of scope:
   token can only read through it (see
   [Local agents](https://rudalabs.github.io/TeamCraft/admin/configuration.html#local-agents)).
   A call to `POST /api/v1/mcp` that gets through while the setting is
-  `off` is in scope.
+  `off` is in scope. The desktop app answers a local agent's permission
+  requests for TeamCraft's read-only MCP tools without a prompt (the
+  server checks the user's rights on every call); a request it allows that
+  is not a read-only tool of the TeamCraft server it registered – another
+  server's tool, a write tool, the agent's own file or terminal tool – is
+  in scope (`desktop/src/autoallow.rs`).
