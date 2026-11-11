@@ -24,6 +24,11 @@ see the notices in the README.
 
 ### Added
 
+- Offboarding (#173, step 7): **groups without an active manager** – or
+  whose managers have neither signed in nor used a token for 90 days – are
+  listed for administrators on *Project groups* and at
+  `GET /api/v1/projects/manager-gaps`; the hourly housekeeping notifies the
+  administrators once per gap (audited as `project.manager_gap_alert`).
 - Offboarding (#173, step 4): **Offboard and deactivate** on the admin user
   page, `POST /api/v1/users/{id}/offboard` and `teamcraft user deactivate`
   deactivate a leaver in one step – hand over the work and the manager roles

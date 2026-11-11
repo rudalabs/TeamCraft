@@ -215,7 +215,10 @@ part of TeamCraft.
 
 ## Data retention
 
-The server's hourly housekeeping removes what is no longer needed. Nothing
+The server's hourly housekeeping also reminds the managers of due access
+reviews and tells the administrators once about each project group that has
+lost its last active manager (see [users](users.md#when-someone-leaves)).
+It removes what is no longer needed. Nothing
 the database still refers to is ever removed. Removals of product data (old
 file versions) and of audit entries are recorded in the audit log; caches,
 expired sessions, staged uploads and unreferenced blobs (also `vault gc

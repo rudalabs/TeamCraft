@@ -405,8 +405,12 @@ real files and belong to section 3 once such files are at hand.
   revocation, release of check-outs; *Offboard and deactivate* on the user page, `POST /api/v1/users/{id}/offboard`,
   `teamcraft user deactivate`).
 - [x] Step 5: managers of every affected group withdraw, reopen, cancel or take over a deactivated author's change.
-- [ ] Steps 6–10: manager release with a reason, groups without an active manager, season handover, IdP-driven
-  offboarding, desktop working folder.
+- [ ] Step 6: manager release of an active member's lock with a reason (PR #261).
+- [x] Step 7: groups without an active manager, or whose managers showed no activity for 90 days
+  (`services::manager_gaps`: *Groups without an active manager* on the project overview of administrators,
+  `GET /api/v1/projects/manager-gaps`; the hourly housekeeping tells the administrators once per gap). Left: the
+  access review page for all groups (with step 8).
+- [ ] Steps 8–10: season handover, IdP-driven offboarding, desktop working folder.
 
 **Desktop app**
 

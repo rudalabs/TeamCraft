@@ -164,7 +164,11 @@ Or work through these steps by hand, in this order:
    plain member, also for memberships synchronised from the identity
    provider. At least one *active* manager must remain (only
    administrators may demote or remove the last one); deactivated managers
-   do not count.
+   do not count. Administrators see the groups left without an active
+   manager – or whose managers have neither signed in nor used a token for
+   90 days – under *Groups without an active manager* on *Project groups*
+   (`GET /api/v1/projects/manager-gaps`); the hourly housekeeping notifies
+   them once per group when that happens.
 8. **Revoke their tokens** on the user page.
 9. **Deactivate the user.** For SSO users both are needed: remove them at
    the identity provider **and** deactivate them in TeamCraft. A synchronised
