@@ -12,8 +12,8 @@ skipped, as in ASME Y14.35). A revision carries the attributes (name,
 description, material, mass, unit cost), the files and the bill of materials.
 
 Next to the number on the revision page, *Copy number* puts the item number
-on the clipboard (the item list has a small copy button per row), and
-*Label* opens a printable label with a QR code. The code holds the short link
+on the clipboard (the item list has a small copy button per row), and *Label* opens a printable label with a QR code.
+The code holds the short link
 `<public URL>/i/<number>`, which opens the item's latest revision after
 sign-in – for parts, fixtures and prototypes on the shelf. The QR code is
 also available as SVG (`/items/{id}/qr.svg`) for label printers.

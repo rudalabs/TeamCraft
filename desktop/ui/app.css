@@ -387,6 +387,10 @@ tr.row-conflict td:first-child, tr.row-clash td:first-child { box-shadow: inset 
 .nav-head .row > button { flex: none; white-space: nowrap; }
 .nav-head .row > button.icon { width: var(--ctl-h-sm); height: var(--ctl-h-sm); }
 .nav-filter { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 4px 8px 8px; }
+/* Home's file browser and the Projects page (issue #255) */
+.nav-sub { margin: -4px 4px 8px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nav-sort, .nav-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 4px 8px 8px; }
+.nav-sort .count { color: var(--text-muted); }
 .chip {
   height: 24px; font-size: 12px; padding: 0 8px; border-radius: var(--radius-sm);
   border: 1px solid var(--border-strong); background: none; color: var(--text-muted);

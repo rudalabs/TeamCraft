@@ -81,8 +81,8 @@ present. Start the server afterwards; it applies newer migrations.
 
 `teamcraft backup <dir> --encrypt` encrypts the dump and every vault object
 with a key derived from a passphrase (`TEAMCRAFT_BACKUP_PASSPHRASE` or
-`_FILE`, otherwise prompted for twice; at least 12 characters): Argon2id
-(64 MiB, 3 passes) for the key, XChaCha20-Poly1305 in 64 KiB authenticated
+`_FILE`, otherwise prompted for twice; at least 12 characters): Argon2id (64 MiB, 3 passes) for the key,
+XChaCha20-Poly1305 in 64 KiB authenticated
 chunks for the files. Object names and the manifest stay plain (the names are
 the SHA-256 of the plain content); the manifest records the salt, the cost
 and a key check. The plain dump exists only between `pg_dump` and its
@@ -215,7 +215,10 @@ part of TeamCraft.
 
 ## Data retention
 
-The server's hourly housekeeping removes what is no longer needed. Nothing
+The server's hourly housekeeping also reminds the managers of due access
+reviews and tells the administrators once about each project group that has
+lost its last active manager (see [users](users.md#when-someone-leaves)).
+It removes what is no longer needed. Nothing
 the database still refers to is ever removed. Removals of product data (old
 file versions) and of audit entries are recorded in the audit log; caches,
 expired sessions, staged uploads and unreferenced blobs (also `vault gc

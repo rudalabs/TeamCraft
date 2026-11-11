@@ -34,11 +34,24 @@ pub async fn projects(State(st): State<AppState>, ctx: WebCtx) -> AppResult<Resp
     let list = projects::list_managed(&st.db, &ctx.me).await?;
     // groups whose access review is due, among those the user manages
     let review_due = access_review::due_for(&st.db, &ctx.me).await?;
+    // administrators: groups without a present manager (#173)
+    let gaps = if ctx.me.is_admin() {
+        crate::services::manager_gaps::list(&st.db, &ctx.me).await?
+    } else {
+        Vec::new()
+    };
     render(
         &st,
         &ctx,
         "projects/list.html",
-        json!({ "projects": list, "my_projects": ctx.me.projects, "review_due": review_due }),
+        json!({
+            "projects": list,
+            "my_projects": ctx.me.projects,
+            "review_due": review_due,
+            "manager_gaps": crate::services::manager_gaps::to_json(&gaps),
+            "manager_gap_ids": gaps.iter().map(|g| g.project_id).collect::<Vec<_>>(),
+            "stale_days": crate::services::manager_gaps::STALE_DAYS,
+        }),
     )
 }
 
@@ -634,6 +647,23 @@ pub async fn release_user_checkouts(
     })
 }
 
+/// `GET /users/{id}/holdings` – what a user still holds (issue #173):
+/// administrators, and managers for the groups they manage.
+pub async fn user_holdings(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+) -> AppResult<Response> {
+    let holdings = crate::services::offboarding::holdings(&st.db, &ctx.me, id).await?;
+    let nothing = holdings.blocks_nothing();
+    render(
+        &st,
+        &ctx,
+        "admin/holdings.html",
+        json!({ "h": holdings, "nothing": nothing }),
+    )
+}
+
 #[derive(Deserialize)]
 pub struct VisibilityForm {
     #[serde(default)]
@@ -764,12 +794,15 @@ pub async fn user_edit(
         .collect();
     let memberships = projects::memberships_of(&st.db, id).await?;
     let held_checkouts = checkouts::held_count(&st.db, &ctx.me, id).await?;
+    let sole_manager_of =
+        crate::services::deactivation::sole_manager_codes(&st.db, &ctx.me, id).await?;
     render(
         &st,
         &ctx,
         "admin/user_edit.html",
         json!({
             "held_checkouts": held_checkouts,
+            "sole_manager_of": sole_manager_of,
             "handover_targets": handover_targets,
             "user": user,
             "tokens": tokens,
@@ -1245,6 +1278,48 @@ pub async fn access_review_csv(
 #[derive(Deserialize)]
 pub struct HandoverForm {
     to: Uuid,
+}
+
+#[derive(Deserialize)]
+pub struct OffboardForm {
+    /// A user id, or empty for nobody.
+    #[serde(default)]
+    hand_over_to: String,
+    release_checkouts: Option<String>,
+    revoke_tokens: Option<String>,
+    confirm_no_manager: Option<String>,
+}
+
+/// The successor field of the offboarding form: a user id or empty.
+fn successor(raw: &str) -> AppResult<Option<Uuid>> {
+    match raw.trim() {
+        "" => Ok(None),
+        id => Uuid::parse_str(id)
+            .map(Some)
+            .map_err(|_| AppError::BadRequest("Choose the successor from the list.".into())),
+    }
+}
+
+/// `POST /admin/users/{id}/offboard` – deactivates a leaver with the chosen
+/// offboarding steps (issue #173, step 4).
+pub async fn offboard(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<OffboardForm>,
+) -> AppResult<Response> {
+    let back = format!("/admin/users/{id}");
+    let result = async {
+        let opts = crate::services::deactivation::Offboarding {
+            release_checkouts: form.release_checkouts.is_some(),
+            hand_over_to: successor(&form.hand_over_to)?,
+            revoke_tokens: form.revoke_tokens.is_some(),
+            confirm_no_manager: form.confirm_no_manager.is_some(),
+        };
+        crate::services::deactivation::deactivate(&st.db, &ctx.me, id, &opts).await
+    }
+    .await;
+    finish(&st, result, &back, |report| (back.clone(), report.summary()))
 }
 
 /// Moves the work of a user to another one and shows what was moved.

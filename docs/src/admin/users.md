@@ -85,7 +85,53 @@ changes and closed requests keep the original names. One run moves at most
 Teams with a high turnover (student teams, early-stage startups) lose
 members every season. Deactivating a user ends their sessions and disables
 their API and desktop tokens; their check-outs, change orders, reviews and
-memberships stay. Work through these steps, in this order:
+memberships stay.
+
+**See what they hold first.** *Users → user → Everything … still holds*
+(`/users/{id}/holdings`, `GET /api/v1/users/{id}/holdings`, or
+`teamcraft user holdings --username lena` on the server) lists in one place
+the user's check-outs with their age, the change orders they wrote that are
+still open (draft, in review, rejected), the reviews that wait for them, the
+open change requests assigned to and raised by them, the items they own,
+their memberships with the source – flagging the groups in which they are
+the **only active manager** – and their API tokens with last use and expiry.
+The report is read-only and filtered by the rights of whoever reads it, not
+the leaver's: a check-out in a group the leaver was removed from is still
+listed. Administrators see every group they can read; for a group whose
+need-to-know policy hides its content from them the report gives only the
+number of check-outs. A manager of a project group opens the same report
+from the group's member list (*holds…*) and sees only what lies in the
+groups they manage, without the tokens. Each list shows at most 200 entries
+next to the full count.
+
+**Offboard in one step.** *Users → user → Offboard and deactivate* (or
+`POST /api/v1/users/{id}/offboard`, or `teamcraft user deactivate --username
+lena` on the server) deactivates the user and, in the same step:
+
+* **hands the work over** to a successor you choose – items, draft and
+  rejected change orders, open change requests and pending reviews (as *Hand
+  over work* above) – and their **manager roles**: the successor becomes a
+  manager of every group the leaver managed (added as a member where
+  needed), the leaver stops being one (`project.manager_handover` per
+  group);
+* **revokes the API tokens** (ticked by default): they are deleted, so
+  activating the account again does not bring old tokens back (`token.revoke_all`);
+* **releases the check-outs** (ticked when there are any), each in its own
+  transaction and audited like *Release all*.
+
+Deactivation, hand-over and token revocation run in one transaction; the
+check-outs are released afterwards and the message reports both. If the user
+is the **only active manager** of a group and no successor is named, the step
+is refused until you confirm that the group is left without an active manager (administrators can still manage it). An
+administrator cannot offboard
+themselves, and the last active administrator is kept. Every run is audited (`user.offboard`, with the choices). On the
+command line the options are
+`--hand-over-to USERNAME`, `--release-checkouts`, `--revoke-tokens` and
+`--confirm-no-manager`; the command exits with 2 when a check-out could not be
+released and is recorded as `system` in the audit log. The plain *Active*
+checkbox of the profile still deactivates without any of these steps.
+
+Or work through these steps by hand, in this order:
 
 1. **Keep at least two active administrators.** TeamCraft refuses to
    deactivate or demote the last one. If nobody with the admin role is left,
@@ -102,7 +148,10 @@ memberships stay. Work through these steps, in this order:
    check-outs* in the group's member list – for members who are deactivated
    and, under *Former members still holding check-outs*, for people who are
    no longer members. Each release is audited (`revision.checkout_forced_release`); one refused release does not stop
-   the others. Revisions of a need-to-know group that hides itself from
+   the others. A lock held by somebody who is still an active member (on
+   leave, or simply gone quiet) a manager releases one revision at a time
+   with *Release with reason* on the revision page; the reason is audited and
+   the holder is told it. Revisions of a need-to-know group that hides itself from
    administrators (`admin_read = none`) are left out for administrators: a
    manager of that group releases them.
 5. **Pending reviews:** a change order cannot be submitted while one of its
@@ -118,7 +167,11 @@ memberships stay. Work through these steps, in this order:
    plain member, also for memberships synchronised from the identity
    provider. At least one *active* manager must remain (only
    administrators may demote or remove the last one); deactivated managers
-   do not count.
+   do not count. Administrators see the groups left without an active
+   manager – or whose managers have neither signed in nor used a token for
+   90 days – under *Groups without an active manager* on *Project groups*
+   (`GET /api/v1/projects/manager-gaps`); the hourly housekeeping notifies
+   them once per group when that happens.
 8. **Revoke their tokens** on the user page.
 9. **Deactivate the user.** For SSO users both are needed: remove them at
    the identity provider **and** deactivate them in TeamCraft. A synchronised

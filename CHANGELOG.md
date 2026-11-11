@@ -15,6 +15,37 @@ see the notices in the README.
 
 ### Added
 
+- Offboarding (#173, step 7): **groups without an active manager** – or
+  whose managers have neither signed in nor used a token for 90 days – are
+  listed for administrators on *Project groups* and at
+  `GET /api/v1/projects/manager-gaps`; the hourly housekeeping notifies the
+  administrators once per gap (audited as `project.manager_gap_alert`).
+- Offboarding (#173, step 6): a group manager can release the check-out of
+  an **active** member with a reason (*Release with reason* on the revision
+  page, `{"reason": …}` on `cancel-checkout`). The reason is audited and told
+  to the holder; without one the release is still refused.
+- Offboarding (#173, step 4): **Offboard and deactivate** on the admin user
+  page, `POST /api/v1/users/{id}/offboard` and `teamcraft user deactivate`
+  deactivate a leaver in one step – hand over the work and the manager roles
+  to a successor, delete the API tokens (so a reactivation does not bring
+  them back), release the check-outs. Deactivating the only active manager of
+  a group without a successor needs a confirmation; every step is audited.
+  Audit entries of the command line are recorded as `system` without a user.
+- Desktop app (#255): a **Projects** page (rail, `Ctrl/Cmd+5`) to choose the
+  active project group, create one, get groups into the workspace and import
+  a CAD folder. **Home** becomes a file browser of the active group: names
+  first with the number dimmed after them (long number prefixes no longer cut
+  the file names off), sorted by name by default, or by number, type or
+  state.
+- Offboarding (#173, step 1): **what a user still holds**, in one place –
+  check-outs with their age, open change orders they wrote, reviews waiting
+  for them, change requests assigned to and raised by them, owned items,
+  memberships (flagging groups where they are the only active manager) and
+  API tokens. *Users → user → Everything … still holds*
+  (`/users/{id}/holdings`), `GET /api/v1/users/{id}/holdings` and
+  `teamcraft user holdings --username`. Filtered by the reader's rights, not
+  the leaver's; group managers see the same report for the groups they
+  manage (*holds…* in the member list).
 - BOM quantities from Inventor assemblies (#247): the reference scan reads
   how often an `.iam` places each referenced file from the file descriptor
   table of its `UFRxDoc` stream (`src/invasm.rs`, checked against Inventor's

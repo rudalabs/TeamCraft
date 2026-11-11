@@ -66,8 +66,8 @@ virtual components are left out, and components are found by the file
 name of their stored path. Files saved before 2015 (OLE compound files) and
 drawings have no 3D preview.
 
-Rhino models (`.3dm`, versions 1 to 8) are read as openNURBS archives
-(`src/mesh/rhino.rs`): nested chunks, the object, layer, block-definition
+Rhino models (`.3dm`, versions 1 to 8) are read as openNURBS archives (`src/mesh/rhino.rs`): nested chunks, the object,
+layer, block-definition
 and settings tables. The 3D preview shows what Rhino stored for display –
 mesh objects, the render meshes of polysurfaces (one per face, welded at
 1 µm), the mesh cache of extrusions (Rhino 6 and later) and the quantised

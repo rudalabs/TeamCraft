@@ -44,6 +44,7 @@ pub const TEMPLATES: &[(&str, &str)] = embed![
     "files/preview.html",
     "admin/users.html",
     "admin/user_edit.html",
+    "admin/holdings.html",
     "admin/audit.html",
     "admin/attributes.html",
     "admin/attribute_edit.html",
@@ -759,7 +760,13 @@ mod tests {
                     "references": references.clone(), "impact_groups": [impact_group()],
                     "resolved_impacts": [impact(Some("acknowledged"))],
                     "open_requests": [request("in_triage")], "similar": similar,
-                    "can": can_all.clone(), "max_upload_mb": 512, "assistant_enabled": state == "released",
+                    "can": {
+                        let mut can = can_all.clone();
+                        can["release_with_reason"] = json!(checked_out);
+                        can
+                    },
+                    "release_reason": { "min": 10, "max": 500 },
+                    "max_upload_mb": 512, "assistant_enabled": state == "released",
                     "interchange": {
                         "alternates": [linked("PRT-000003", false)],
                         "alternate_for": [linked("PRT-000004", false)],
@@ -785,6 +792,11 @@ mod tests {
             assert!(open.contains("nozzle.step") && !open.contains(">nozzle.SLDPRT<"));
             assert!(rest.contains("1 file in other CAD formats (SolidWorks)"));
             assert!(rest.contains(">nozzle.SLDPRT<"));
+            assert_eq!(
+                html.contains("name=\"reason\" minlength=\"10\" maxlength=\"500\" required"),
+                checked_out,
+                "a manager releases an active member's lock with a reason"
+            );
             assert!(
                 html.contains("aria-current=\"step\""),
                 "current lifecycle state is marked"
@@ -1494,13 +1506,33 @@ mod tests {
             );
         }
 
-        render(
+        let html = render(
             &env,
             "projects/list.html",
-            with_common(
-                json!({ "projects": [project()], "my_projects": [ROCKET], "review_due": [] }),
-            ),
+            with_common(json!({
+                "projects": [project()], "my_projects": [ROCKET], "review_due": [],
+                "manager_gaps": [
+                    { "project_id": ROCKET, "code": "ROCKET", "name": "Sounding <rocket>", "kind": "none",
+                      "active_managers": 0, "last_active_at": null },
+                    { "project_id": OTHER, "code": "ROVER", "name": "Rover", "kind": "stale",
+                      "active_managers": 2, "last_active_at": TS },
+                ],
+                "manager_gap_ids": [ROCKET, OTHER], "stale_days": 90,
+            })),
         );
+        assert!(html.contains("Groups without an active manager"));
+        assert!(html.contains("Sounding &lt;rocket&gt; –") && html.contains("no active manager"));
+        assert!(html.contains("2 active managers, none seen for 90 days"));
+        assert!(html.contains("href=\"#manager-gaps\""), "the row is marked");
+        let html = render(
+            &env,
+            "projects/list.html",
+            with_common(json!({
+                "projects": [project()], "my_projects": [ROCKET], "review_due": [],
+                "manager_gaps": [], "manager_gap_ids": [], "stale_days": 90,
+            })),
+        );
+        assert!(!html.contains("manager-gaps"));
         let html = render(
             &env,
             "projects/access_review.html",
@@ -1652,18 +1684,69 @@ mod tests {
                 "oidc": { "admin_group": "a", "editor_group": "e", "viewer_group": null },
             })),
         );
-        render(
+        let html = render(
             &env,
             "admin/user_edit.html",
             with_common(json!({
                 "user": user(), "roles": roles(), "oidc_enabled": false, "memberships": [project()],
-                "handover_targets": [user()], "held_checkouts": 40,
+                "handover_targets": [user()], "held_checkouts": 40, "sole_manager_of": ["CHASSIS"],
                 "tokens": [{ "id": ME, "name": "ci", "token_prefix": "tc_pat_abc123", "created_at": TS,
                              "last_used_at": null, "expires_at": TS, "scope": "full", "idle_days": null },
                            { "id": ME, "name": "desktop", "token_prefix": "tc_pat_def456", "created_at": TS,
                              "last_used_at": TS, "expires_at": TS, "scope": "read_only", "idle_days": 30 }],
             })),
         );
+        assert!(html.contains("/offboard\"") && html.contains("only active manager of CHASSIS"));
+        assert!(html.contains("name=\"confirm_no_manager\"") && html.contains("API tokens (2)"));
+        let html = render(
+            &env,
+            "admin/holdings.html",
+            with_common(json!({
+                "nothing": false,
+                "h": {
+                    "user_id": OTHER, "username": "lena", "display_name": "Lena <left>", "active": false,
+                    "last_login_at": null, "scope": "all",
+                    "checkouts": { "total": 40, "shown": [{ "revision_id": OTHER, "item_number": "PRT-000007",
+                        "code": "B", "name": "Upright <x>", "project_code": "CHASSIS", "checked_out_at": TS }] },
+                    "hidden_checkouts": [{ "project_code": "NTK", "count": 2 }],
+                    "authored_changes": { "total": 1, "shown": [{ "id": OTHER, "number": "CO-0031",
+                        "title": "Stiffer upright", "status": "rejected" }] },
+                    "pending_reviews": { "total": 0, "shown": [] },
+                    "assigned_requests": { "total": 1, "shown": [{ "id": OTHER, "number": "CR-0004",
+                        "title": "Crack", "status": "in_triage" }] },
+                    "raised_requests": { "total": 0, "shown": [] },
+                    "owned_items": { "total": 1, "shown": [{ "id": OTHER, "number": "PRT-000007",
+                        "name": "Upright", "project_code": null }] },
+                    "memberships": [{ "project_id": OTHER, "project_code": "CHASSIS", "project_name": "Chassis",
+                        "source": "oidc", "manager": true, "only_active_manager": true }],
+                    "tokens": [{ "id": ME, "name": "desktop", "token_prefix": "tc_pat_def456", "created_at": TS,
+                        "last_used_at": null, "expires_at": TS, "scope": "full", "idle_days": 30 }],
+                },
+            })),
+        );
+        assert!(html.contains("Lena &lt;left&gt;") && html.contains("Upright &lt;x&gt;"));
+        assert!(html.contains("The first 1 of 40") && html.contains("the only active manager"));
+        assert!(html.contains("2 check-outs in") && html.contains("CO-0031"));
+        let html = render(
+            &env,
+            "admin/holdings.html",
+            with_common(json!({
+                "nothing": true,
+                "h": {
+                    "user_id": OTHER, "username": "tom", "display_name": "Tom", "active": true,
+                    "last_login_at": TS, "scope": "managed",
+                    "checkouts": { "total": 0, "shown": [] }, "hidden_checkouts": [],
+                    "authored_changes": { "total": 0, "shown": [] },
+                    "pending_reviews": { "total": 0, "shown": [] },
+                    "assigned_requests": { "total": 0, "shown": [] },
+                    "raised_requests": { "total": 0, "shown": [] },
+                    "owned_items": { "total": 0, "shown": [] },
+                    "memberships": [], "tokens": null,
+                },
+            })),
+        );
+        assert!(html.contains("holds nothing that blocks") && !html.contains("API tokens"));
+        assert!(html.contains("Only what lies in the project groups you manage"));
         render(
             &env,
             "admin/audit.html",

@@ -60,6 +60,7 @@
 
 <section class="card">
   <h2>Check-outs</h2>
+  <p><a href="/users/{{ user.id }}/holdings">Everything {{ user.display_name }} still holds</a> <span class="hint">– check-outs, open change orders, pending reviews, change requests, owned items, sole manager roles</span></p>
   {% if held_checkouts > 0 %}
   <p>{{ user.display_name }} has {{ held_checkouts }} revisions checked out.</p>
   <form class="inline" method="post" action="/admin/users/{{ user.id }}/release-checkouts"
@@ -68,6 +69,30 @@
   </form>
   <p class="hint">Each release is audited and {{ user.display_name }} is notified (unless deactivated). Revisions of groups whose need-to-know policy hides them from administrators are not counted; a manager of the group releases those.</p>
   {% else %}<p class="empty">No check-outs in the groups you can read.</p>{% endif %}
+</section>
+
+<section class="card" id="offboard">
+  <h2>Offboard and deactivate</h2>
+  <p class="hint">For somebody who leaves: deactivates {{ user.display_name }} and, in the same step, does what you tick below. The account, its history and the audit log stay. Every step is audited.</p>
+  {% if sole_manager_of %}
+  <p><strong>{{ user.display_name }} is the only active manager of {{ sole_manager_of | join(", ") }}.</strong> Name a successor, or confirm below that the group is left without an active manager.</p>
+  {% endif %}
+  <form class="stack" method="post" action="/admin/users/{{ user.id }}/offboard"
+        data-confirm="Deactivate {{ user.display_name }} with the chosen steps?">
+    <label>Hand over the work and the manager roles to
+      <select name="hand_over_to">
+        <option value="">nobody</option>
+        {% for u in handover_targets %}<option value="{{ u.id }}">{{ u.display_name }} ({{ u.username }})</option>{% endfor %}
+      </select>
+      <span class="hint">owned items, draft and rejected change orders, open change requests and pending reviews; the successor becomes a manager of every group {{ user.display_name }} managed</span>
+    </label>
+    <label class="check"><input type="checkbox" name="release_checkouts" value="1"{% if held_checkouts > 0 %} checked{% endif %}> Release the {{ held_checkouts }} check-outs <span class="hint">changes never checked in stay only in their working folder</span></label>
+    <label class="check"><input type="checkbox" name="revoke_tokens" value="1" checked> Revoke the API tokens ({{ tokens | length }}) <span class="hint">deleted, so they do not come back if the account is activated again</span></label>
+    {% if sole_manager_of %}
+    <label class="check"><input type="checkbox" name="confirm_no_manager" value="1"> Leave {{ sole_manager_of | join(", ") }} without an active manager <span class="hint">only when nobody is named above; administrators can still manage the group</span></label>
+    {% endif %}
+    <div class="actions"><button class="danger" type="submit">{% if user.active %}Deactivate{% else %}Run the offboarding steps{% endif %}</button></div>
+  </form>
 </section>
 
 <section class="card">

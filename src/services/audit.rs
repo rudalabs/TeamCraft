@@ -166,7 +166,9 @@ async fn insert(
                        WHERE pi.project_id IS NOT NULL
                          AND (pi.id = $8 OR pi.id = ANY($9))))",
     )
-    .bind(actor.map(|a| a.id))
+    // the system actor (the command line) has no user row: no user id, its
+    // name "system" is kept
+    .bind(actor.map(|a| a.id).filter(|id| !id.is_nil()))
     .bind(actor.map(|a| a.username.as_str()).unwrap_or("system"))
     .bind(action)
     .bind(entity_type)

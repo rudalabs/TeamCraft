@@ -12,6 +12,19 @@
   </div>
 </div>
 
+{% if manager_gaps %}
+<section class="card" id="manager-gaps">
+  <h2>Groups without an active manager</h2>
+  <p class="hint">Until somebody is made a manager, only administrators can add members, release the check-outs of people who left or confirm the access review. Administrators are notified once when a group gets here.</p>
+  <ul>
+    {% for g in manager_gaps %}
+    <li><a class="mono" href="/projects/{{ g.project_id }}">{{ g.code }}</a> {{ g.name }} –
+      {% if g.kind == "none" %}no active manager{% else %}{{ g.active_managers }} active manager{% if g.active_managers != 1 %}s{% endif %}, none seen for {{ stale_days }} days (last {{ m.time(g.last_active_at) }}){% endif %}</li>
+    {% endfor %}
+  </ul>
+</section>
+{% endif %}
+
 <div class="card">
   {% if projects %}
   <div class="table-wrap">
@@ -21,7 +34,7 @@
     {% for p in projects %}
       <tr>
         <td class="mono nowrap"><a href="/projects/{{ p.id }}">{{ p.code }}</a></td>
-        <td>{{ p.name }}{% if p.visibility == "restricted" %} {{ m.restricted("Restricted") }}{% endif %}{% if p.id in my_projects %} <span class="badge badge-member">member</span>{% endif %}{% if p.id in review_due %} <a class="badge badge-in_review" href="/projects/{{ p.id }}/access-review">access review due</a>{% endif %}</td>
+        <td>{{ p.name }}{% if p.visibility == "restricted" %} {{ m.restricted("Restricted") }}{% endif %}{% if p.id in my_projects %} <span class="badge badge-member">member</span>{% endif %}{% if p.id in review_due %} <a class="badge badge-in_review" href="/projects/{{ p.id }}/access-review">access review due</a>{% endif %}{% if p.id in manager_gap_ids %} <a class="badge badge-rejected" href="#manager-gaps">no active manager</a>{% endif %}</td>
         <td class="small muted">{{ p.description }}</td>
         <td class="num">{{ p.member_count }}</td>
         <td>{% if p.active %}<span class="badge badge-released">active</span>{% else %}<span class="badge badge-obsolete">archived</span>{% endif %}</td>

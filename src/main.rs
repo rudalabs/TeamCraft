@@ -173,6 +173,34 @@ enum UserCommand {
     },
     /// List all accounts.
     List,
+    /// What an account still holds before somebody leaves: check-outs, open
+    /// change orders, pending reviews, change requests, owned items,
+    /// memberships and API tokens (read-only; every project group, as the
+    /// operator of the server).
+    Holdings {
+        #[arg(long)]
+        username: String,
+    },
+    /// Deactivate an account as an offboarding step: optionally hand its
+    /// work and manager roles over, release its check-outs and delete its
+    /// API tokens (as the operator of the server; every step is audited).
+    Deactivate {
+        #[arg(long)]
+        username: String,
+        /// Release every check-out the account holds.
+        #[arg(long)]
+        release_checkouts: bool,
+        /// Hand items, change orders, requests, reviews and manager roles
+        /// over to this account.
+        #[arg(long)]
+        hand_over_to: Option<String>,
+        /// Delete the account's API tokens.
+        #[arg(long)]
+        revoke_tokens: bool,
+        /// Leave groups the account alone manages without an active manager.
+        #[arg(long)]
+        confirm_no_manager: bool,
+    },
     /// Show the storage usage and quota of an account; with --mb set the
     /// quota (counted over the sizes of the versions the user stored).
     Quota {
@@ -490,6 +518,12 @@ async fn serve(no_migrate: bool) -> Result<ExitCode> {
                 Ok(n) if n > 0 => tracing::info!(groups = n, "reminded of due access reviews"),
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e, "access review reminders failed"),
+            }
+            // groups that lost their last present manager (#173)
+            match services::manager_gaps::alert_admins(&pool).await {
+                Ok(n) if n > 0 => tracing::info!(groups = n, "manager gap alerts sent"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "manager gap alerts failed"),
             }
             match services::imports::purge_stale(&pool, &vault).await {
                 Ok(n) if n > 0 => tracing::info!(removed = n, "removed stale staged imports"),
@@ -826,6 +860,51 @@ async fn user_command(command: UserCommand) -> Result<ExitCode> {
                 user.username,
                 describe_usage(&usage)
             )?;
+        }
+        UserCommand::Holdings { username } => {
+            let user = services::users::find_by_username(&pool, &username)
+                .await?
+                .with_context(|| format!("no user named '{username}'"))?;
+            let report =
+                services::offboarding::holdings(&pool, &teamcraft::auth::Actor::system(), user.id)
+                    .await?;
+            write!(
+                std::io::stdout(),
+                "{}",
+                services::offboarding::to_text(&report)
+            )?;
+        }
+        UserCommand::Deactivate {
+            username,
+            release_checkouts,
+            hand_over_to,
+            revoke_tokens,
+            confirm_no_manager,
+        } => {
+            let user = services::users::find_by_username(&pool, &username)
+                .await?
+                .with_context(|| format!("no user named '{username}'"))?;
+            let hand_over_to = match hand_over_to {
+                Some(name) => Some(
+                    services::users::find_by_username(&pool, &name)
+                        .await?
+                        .with_context(|| format!("no user named '{name}'"))?
+                        .id,
+                ),
+                None => None,
+            };
+            let opts = services::deactivation::Offboarding {
+                release_checkouts,
+                hand_over_to,
+                revoke_tokens,
+                confirm_no_manager,
+            };
+            let actor = teamcraft::auth::Actor::system();
+            let report = services::deactivation::deactivate(&pool, &actor, user.id, &opts).await?;
+            writeln!(std::io::stdout(), "{}", report.summary())?;
+            if report.releases.iter().any(|o| !o.ok) {
+                return Ok(ExitCode::from(2));
+            }
         }
         UserCommand::List => {
             let users = services::users::list(&pool).await?;
