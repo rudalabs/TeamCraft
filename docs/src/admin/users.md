@@ -149,7 +149,10 @@ Or work through these steps by hand, in this order:
    check-outs* in the group's member list – for members who are deactivated
    and, under *Former members still holding check-outs*, for people who are
    no longer members. Each release is audited (`revision.checkout_forced_release`); one refused release does not stop
-   the others. Revisions of a need-to-know group that hides itself from
+   the others. A lock held by somebody who is still an active member (on
+   leave, or simply gone quiet) a manager releases one revision at a time
+   with *Release with reason* on the revision page; the reason is audited and
+   the holder is told it. Revisions of a need-to-know group that hides itself from
    administrators (`admin_read = none`) are left out for administrators: a
    manager of that group releases them.
 5. **Pending reviews:** a change order cannot be submitted while one of its

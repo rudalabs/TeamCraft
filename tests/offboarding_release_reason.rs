@@ -79,7 +79,8 @@ async fn release_details(app: &common::TestApp, rev: Uuid) -> Option<Value> {
 /// Bodies of the unlock notifications of `user`.
 async fn unlock_bodies(app: &common::TestApp, user: Uuid) -> Vec<String> {
     sqlx::query_scalar(
-        "SELECT body FROM notifications WHERE user_id = $1 AND kind = 'unlock' ORDER BY created_at",
+        "SELECT body FROM notifications WHERE user_id = $1 AND kind = 'unlock'
+         ORDER BY created_at",
     )
     .bind(user)
     .fetch_all(&app.pool)
@@ -147,7 +148,8 @@ async fn a_manager_releases_an_active_members_lock_only_with_a_reason() {
     assert!(unlock_bodies(&app, lena.id).await.is_empty());
 
     // with a reason: released, audited with the reason, the holder is told
-    revisions::cancel_checkout(&app.pool, &tom, rev, Some(&format!("  {REASON}  ")))
+    let padded = format!("  {REASON}  ");
+    revisions::cancel_checkout(&app.pool, &tom, rev, Some(&padded))
         .await
         .unwrap();
     assert_eq!(holder(&app, rev).await, None);
