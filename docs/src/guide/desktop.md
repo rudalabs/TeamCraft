@@ -64,8 +64,10 @@ check-outs and reviews, and a **local working folder**:
   node size (and the ⚙ badge) the item's own BOM complexity; the small ×n in
   the top-left corner of a child is how many instances of it the assembly
   contains (summed over its BOM lines). Click a node to
-  follow it – an assembly re-centres the graph, anything else opens its
-  overview – and a back control stays in the same place (left of the tab row)
+  follow it – a sub-assembly becomes the item of the tab and the graph
+  re-centres on it (*← Back* returns to the assembly you came from), the item
+  in the centre opens its own overview, anything else opens its overview –
+  and a back control stays in the same place (left of the tab row)
   so the graph is one click away even from a part's page; the mouse wheel
   zooms on the cursor, dragging pans and a double-click on the background
   fits the graph again. Large assemblies are laid out in rows, and only the

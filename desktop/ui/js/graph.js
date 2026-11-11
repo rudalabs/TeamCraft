@@ -17,7 +17,7 @@
 
 import { api, enc, h, invoke, label } from "./core.js";
 import { typeIcon } from "./navigator.js";
-import { activate, findTab, openTab, renderActive } from "./tabs.js";
+import { activate, findTab, openTab, renderActive, retargetTab } from "./tabs.js";
 
 var SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -231,7 +231,7 @@ function nodeCard(n, isCenter, onOpen) {
   var card = h("div." + cls.split(" ").join("."), {
     role: "button", tabindex: "0",
     title: n.number + (n.code ? "/" + n.code : "") + " · " + (n.name || "") +
-      "\n" + (n.type === "assembly" ? "Open its graph" : "Open the overview"),
+      "\n" + (!isCenter && n.type === "assembly" ? "Open its graph" : "Open the overview"),
     on: {
       click: function (e) { e.stopPropagation(); onOpen(n); },
       keydown: function (e) { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(n); } }
@@ -408,9 +408,27 @@ function graphState(tab) {
   return tab.graph;
 }
 
-/** Re-centres the graph on an item within the same tab. */
+/** Moves the tab (and its graph) to the item on top of `stack`: the tab
+ *  becomes that item's tab in place, so the active item is always the one
+ *  the graph is centred on (issue #254). */
+function showStackTop(tab, stack) {
+  var top = stack[stack.length - 1];
+  retargetTab(tab, top.number, top.code, top.number + "/" + top.code + (top.name ? " " + top.name : ""),
+    { sub: "graph", graph: { stack: stack } });
+}
+
+/** Opens a sub-assembly's graph in the same tab; "← Back" returns to the
+ *  assembly it was opened from. */
 function recenter(tab, n) {
-  tab.graph.stack.push({ number: n.number, code: n.code, name: n.name, type: n.type });
+  var top = tab.graph.stack[tab.graph.stack.length - 1];
+  // the centre itself, or a node that is the centre again: nothing to push
+  if (top && top.number === n.number && top.code === n.code) return;
+  showStackTop(tab, tab.graph.stack.concat([{ number: n.number, code: n.code, name: n.name, type: n.type }]));
+}
+
+/** The centre node: the item of this tab – show its overview. */
+function openOwnOverview(tab) {
+  tab.sub = "overview";
   renderActive();
 }
 
@@ -429,6 +447,7 @@ function revKey(number, code) { return "rev:" + number + ":" + code; }
 
 function onOpen(tab) {
   return function (n) {
+    if (n.dir === "center") { openOwnOverview(tab); return; }
     var info = nodeInfo[key(n.number, n.code)];
     var type = (info && info.type) || n.type;
     // assemblies (and, until typed, things that clearly have a structure) stay in the graph
@@ -441,6 +460,12 @@ function onOpen(tab) {
 export function revGraph(tab, el) {
   var g = graphState(tab);
   var current = g.stack[g.stack.length - 1];
+  // the graph is centred on the tab's own item; a stack from elsewhere (an
+  // older session, a graph reopened from a part) moves the tab there first
+  if (current.number !== tab.number || current.code !== tab.code) {
+    showStackTop(tab, g.stack.slice());
+    return;
+  }
   // every render gets a token; answers for an older render (the user went
   // back, re-centred or left the tab meanwhile) are dropped.
   var gen = g.gen = (g.gen || 0) + 1;
@@ -540,8 +565,9 @@ function backChip(text, title, onClick) {
  *  it as the first item of the sub-tab row so it never moves. */
 export function graphBackControl(tab) {
   if (tab.sub === "graph" && tab.graph && tab.graph.stack.length > 1) {
-    return backChip("← Back", "Back to the previous assembly in the graph", function () {
-      tab.graph.stack.pop(); renderActive();
+    var from = tab.graph.stack[tab.graph.stack.length - 2];
+    return backChip("← Back", "Back to " + from.number + "/" + from.code, function () {
+      showStackTop(tab, tab.graph.stack.slice(0, -1));
     });
   }
   if (tab.returnToGraph) {

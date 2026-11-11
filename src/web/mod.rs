@@ -435,6 +435,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
             "/admin/users/{id}/release-checkouts",
             post(admin::release_user_checkouts),
         )
+        .route("/users/{id}/holdings", get(admin::user_holdings))
         .route("/admin/audit", get(admin::audit))
         .route("/admin/audit/export", get(admin::audit_export))
         .route("/admin/ai", get(admin::ai))

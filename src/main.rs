@@ -173,6 +173,14 @@ enum UserCommand {
     },
     /// List all accounts.
     List,
+    /// What an account still holds before somebody leaves: check-outs, open
+    /// change orders, pending reviews, change requests, owned items,
+    /// memberships and API tokens (read-only; every project group, as the
+    /// operator of the server).
+    Holdings {
+        #[arg(long)]
+        username: String,
+    },
     /// Show the storage usage and quota of an account; with --mb set the
     /// quota (counted over the sizes of the versions the user stored).
     Quota {
@@ -825,6 +833,19 @@ async fn user_command(command: UserCommand) -> Result<ExitCode> {
                 "{}: {}",
                 user.username,
                 describe_usage(&usage)
+            )?;
+        }
+        UserCommand::Holdings { username } => {
+            let user = services::users::find_by_username(&pool, &username)
+                .await?
+                .with_context(|| format!("no user named '{username}'"))?;
+            let report =
+                services::offboarding::holdings(&pool, &teamcraft::auth::Actor::system(), user.id)
+                    .await?;
+            write!(
+                std::io::stdout(),
+                "{}",
+                services::offboarding::to_text(&report)
             )?;
         }
         UserCommand::List => {

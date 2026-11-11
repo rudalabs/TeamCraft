@@ -395,7 +395,9 @@ real files and belong to section 3 once such files are at hand.
 **Offboarding for high-turnover teams ([#173](https://github.com/rudalabs/TeamCraft/issues/173))**
 
 - [x] Step 0: runbook "When someone leaves" in `docs/src/admin/users.md`.
-- [ ] Step 1: holdings report per user (admin user page, group managers, REST, CLI), filtered by the viewer's rights.
+- [x] Step 1: holdings report per user (`services::offboarding::holdings`: page `/users/{id}/holdings` for admins and
+  group managers, `GET /api/v1/users/{id}/holdings`, `teamcraft user holdings`), filtered by the viewer's rights. Left:
+  show it as a confirmation list when an administrator unticks *Active* (with step 4).
 - [x] Step 2: inactive lock holders count as gone, only active managers count, a deactivated user's IdP membership can
   be removed, submit refuses a deactivated reviewer, *Demote* manager.
 - [x] Step 3: bulk release of another user's check-outs (`checkouts::release_held`; admin user page, group member list).

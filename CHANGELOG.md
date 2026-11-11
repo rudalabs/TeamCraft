@@ -13,6 +13,15 @@ see the notices in the README.
 
 ## [Unreleased]
 
+### Fixed
+
+- Desktop graph navigation (#254): clicking a sub-assembly turns the tab
+  into that sub-assembly's tab and centres its graph there; *← Back* turns
+  it back into the assembly it was opened from. Clicking the item in the
+  centre opens its overview instead of adding a step to the back history, so
+  *← Back* no longer appears (or stacks up) when nothing changed. A tab that
+  already showed the target item is merged, so no item is open twice.
+
 ### Added
 
 - Desktop app (#255): a **Projects** page (rail, `Ctrl/Cmd+5`) to choose the
@@ -21,7 +30,15 @@ see the notices in the README.
   first with the number dimmed after them (long number prefixes no longer cut
   the file names off), sorted by name by default, or by number, type or
   state.
-
+- Offboarding (#173, step 1): **what a user still holds**, in one place –
+  check-outs with their age, open change orders they wrote, reviews waiting
+  for them, change requests assigned to and raised by them, owned items,
+  memberships (flagging groups where they are the only active manager) and
+  API tokens. *Users → user → Everything … still holds*
+  (`/users/{id}/holdings`), `GET /api/v1/users/{id}/holdings` and
+  `teamcraft user holdings --username`. Filtered by the reader's rights, not
+  the leaver's; group managers see the same report for the groups they
+  manage (*holds…* in the member list).
 - BOM quantities from Inventor assemblies (#247): the reference scan reads
   how often an `.iam` places each referenced file from the file descriptor
   table of its `UFRxDoc` stream (`src/invasm.rs`, checked against Inventor's

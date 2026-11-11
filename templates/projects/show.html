@@ -30,7 +30,7 @@
       <tbody>
       {% for u in members %}
         <tr>
-          <td>{{ u.display_name }} <span class="muted small mono">{{ u.username }}</span>{% if u.manager %} <span class="badge badge-member">manager</span>{% endif %}{% if not u.active %} <span class="badge badge-obsolete">deactivated</span>{% endif %}{% if can_manage and u.checkouts > 0 %} <span class="muted small">{{ u.checkouts }} checked out</span>{% endif %}</td>
+          <td>{{ u.display_name }} <span class="muted small mono">{{ u.username }}</span>{% if u.manager %} <span class="badge badge-member">manager</span>{% endif %}{% if not u.active %} <span class="badge badge-obsolete">deactivated</span>{% endif %}{% if can_manage and u.checkouts > 0 %} <span class="muted small">{{ u.checkouts }} checked out</span>{% endif %}{% if can_manage %} <a class="small" href="/users/{{ u.user_id }}/holdings">holds…</a>{% endif %}</td>
           <td><span class="badge badge-{{ u.role }}">{{ u.role|label }}</span></td>
           <td class="small nowrap">{% if u.source == "oidc" %}via IdP group{% else %}manually{% endif %} · {{ m.time(u.added_at) }}</td>
           <td class="right nowrap">

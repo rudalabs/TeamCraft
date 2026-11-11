@@ -31,6 +31,31 @@ export function openTab(tab) {
   activate(tab.key);
 }
 
+/** Turns the revision tab `tab` into the tab of another revision in place
+ *  (navigation inside a tab, like the assembly graph's): it keeps its slot in
+ *  the strip, its data is loaded again, and a tab that already showed that
+ *  revision is merged into it so no revision is open twice. `fields` may set
+ *  `sub` and `graph`. Activates and renders the tab. */
+export function retargetTab(tab, number, code, title, fields) {
+  var oldKey = tab.key;
+  var newKey = "rev:" + number + ":" + code;
+  if (newKey !== oldKey) {
+    var dup = findTab(newKey);
+    if (dup && dup !== tab) state.tabs.splice(state.tabs.indexOf(dup), 1);
+    tab.key = newKey;
+    tab.number = number;
+    tab.code = code;
+    tab.title = title || number + "/" + code;
+    tab.data = null;
+    tab.viewerFile = null;
+    tab.viewerVersion = null;
+    if (agent.contextKey === oldKey || (dup && agent.contextKey === newKey)) agent.contextKey = newKey;
+    disposeViewer();
+  }
+  Object.keys(fields || {}).forEach(function (k) { tab[k] = fields[k]; });
+  activate(newKey);
+}
+
 export function activate(key) {
   state.active = key;
   var t = findTab(key);

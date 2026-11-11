@@ -124,6 +124,14 @@ export function findTab() { return null; }
 export function activate() {}
 export function openTab(t) { opened.push(t); }
 export function renderActive() { render(current); }
+// like tabs.js: the tab becomes the other item's tab in place
+export function retargetTab(tab, number, code, title, fields) {
+  tab.key = "rev:" + number + ":" + code; tab.number = number; tab.code = code; tab.title = title;
+  tab.data = null;
+  Object.keys(fields || {}).forEach(function (k) { tab[k] = fields[k]; });
+  window.__tab = tab;
+  render(tab);
+}
 export function render(tab) {
   current = tab;
   var host = document.getElementById("host");
@@ -136,8 +144,10 @@ export function render(tab) {
   revGraph(tab, host);
 }
 export function start() {
-  render({ key: "rev:ASM-000004:A", kind: "revision", number: "ASM-000004", code: "A", sub: "graph",
-           data: centerData("ASM-000004") });
+  var tab = { key: "rev:ASM-000004:A", kind: "revision", number: "ASM-000004", code: "A", sub: "graph",
+              data: centerData("ASM-000004") };
+  window.__tab = tab;
+  render(tab);
 }
 `;
 
@@ -329,16 +339,36 @@ async function checkGraph(browserType, name) {
     fail(`clicking a part opened ${JSON.stringify(opened)}`);
   }
 
-  // an assembly re-centres the graph; the back control says "← Back"
+  // the centre opens its own overview and adds no step to go back (#254)
+  await page.locator(".g-node.is-center").click();
+  const centre = await page.evaluate(() => ({ sub: window.__tab.sub, depth: window.__tab.graph.stack.length }));
+  if (!(centre.sub === "overview" && centre.depth === 1)) fail(`clicking the centre gave ${JSON.stringify(centre)}`);
+  await page.evaluate(() => { window.__tab.sub = "graph"; });
+  await page.evaluate(() => { document.getElementById("host").textContent = ""; });
+  await page.evaluate(async () => { (await import("/js/tabs.js")).renderActive(); });
+  await page.waitForFunction(() => document.querySelectorAll(".g-card").length > 1, null, { timeout: 15000 });
+  if (await page.locator("#back .graph-back").count()) fail("a back control without a step to go back");
+
+  // a sub-assembly becomes the tab's item and the graph centres on it; the
+  // back control says "← Back" and returns to the assembly
   await page.locator(".g-node[title^='ASM-1-05/A']").click();
   await page.waitForFunction(() => {
     const c = document.querySelector(".g-node.is-center");
     return c && c.title.startsWith("ASM-1-05/A");
   }, null, { timeout: 10000 });
+  const tabItem = await page.evaluate(() => window.__tab.key);
+  if (tabItem !== "rev:ASM-1-05:A") fail(`the tab shows ${tabItem} after opening the sub-assembly`);
   const back = await page.locator("#back .graph-back").textContent();
   if (back !== "← Back") fail(`the back control says ${JSON.stringify(back)}`);
   await page.waitForTimeout(400);
   aligned(await geometry(page), "after re-centring", fail);
+  await page.locator("#back .graph-back").click();
+  await page.waitForFunction(() => {
+    const c = document.querySelector(".g-node.is-center");
+    return c && c.title.startsWith("ASM-000004/A");
+  }, null, { timeout: 10000 });
+  const home = await page.evaluate(() => ({ key: window.__tab.key, depth: window.__tab.graph.stack.length }));
+  if (!(home.key === "rev:ASM-000004:A" && home.depth === 1)) fail(`back gave ${JSON.stringify(home)}`);
 
   if (errors.length) fail("page errors: " + errors.join(" | "));
   await browser.close();

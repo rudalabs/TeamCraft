@@ -78,6 +78,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
             get(tokens_api::list_tokens).post(tokens_api::create_token),
         )
         .route("/tokens/{id}", delete(tokens_api::revoke_token))
+        .route("/users/{id}/holdings", get(user_holdings))
         .route("/worklist", get(worklist))
         .route("/worklist/checkin-all", post(checkin_all))
         .route("/mcp", post(crate::mcp::http).get(crate::mcp::http_get))
@@ -506,6 +507,7 @@ async fn index() -> Json<Value> {
             "GET    /api/v1/tokens                                    your personal access tokens (name, prefix, scope, expiry; never the value)",
             "POST   /api/v1/tokens                                    {name, expires_in_days?: 1..3650 (absent = never), scope?: full|write|read_only|mcp_only} – the value is answered once",
             "DELETE /api/v1/tokens/{id}                               revoke a token (your own; admins: any)",
+            "GET    /api/v1/users/{id}/holdings                       what a user still holds: check-outs, open change orders, pending reviews, change requests, owned items, memberships, tokens – admins; group managers for their groups",
             "GET    /api/v1/projects                                  the groups you may see (restricted groups only for members and admins)",
             "POST   /api/v1/projects                                  {code, name, description?, oidc_group?, visibility?}",
             "PUT    /api/v1/projects/{code}/visibility                {visibility: internal|restricted} – managers and admins",
@@ -704,6 +706,18 @@ async fn audit_export(
     let filter = web::audit_filter(&q.entity_type, &q.username, &q.action);
     let (entries, truncated) = audit::export(&st.db, &me, &filter).await?;
     web::audit_download(&entries, truncated, q.format.as_deref() != Some("csv"))
+}
+
+/// `GET /api/v1/users/{id}/holdings` – what a user still holds, as the
+/// caller may see it (administrators; managers for the groups they manage).
+async fn user_holdings(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<Value>> {
+    Ok(Json(json!(
+        crate::services::offboarding::holdings(&st.db, &me, id).await?
+    )))
 }
 
 async fn me(

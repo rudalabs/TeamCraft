@@ -634,6 +634,23 @@ pub async fn release_user_checkouts(
     })
 }
 
+/// `GET /users/{id}/holdings` – what a user still holds (issue #173):
+/// administrators, and managers for the groups they manage.
+pub async fn user_holdings(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+) -> AppResult<Response> {
+    let holdings = crate::services::offboarding::holdings(&st.db, &ctx.me, id).await?;
+    let nothing = holdings.blocks_nothing();
+    render(
+        &st,
+        &ctx,
+        "admin/holdings.html",
+        json!({ "h": holdings, "nothing": nothing }),
+    )
+}
+
 #[derive(Deserialize)]
 pub struct VisibilityForm {
     #[serde(default)]
