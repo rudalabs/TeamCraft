@@ -33,11 +33,11 @@ check-outs and reviews, and a **local working folder**:
   from the references in the assembly files – for NX also from `.prt` files (such an assembly is imported as a part
   item, NX does not tell parts and
   assemblies apart by the file type). Their quantity is how often the
-  assembly places the part where the file tells it (SOLIDWORKS 2015+ and NX
-  assemblies; instances excluded from the BOM do not count); for other
-  formats (Inventor, Solid Edge, …) it is 1 with the note *check the
-  quantity* – set the real quantities with *Import BOM…* from the CAD
-  program's BOM export. *Help → How to
+  assembly places the part where the file tells it (SOLIDWORKS 2015+, NX
+  and STEP assemblies with external part files; instances excluded from the
+  BOM do not count); for other formats (Inventor, Solid Edge, …) it is 1
+  with the note *check the quantity* – set the real quantities with *Import
+  BOM…* from the CAD program's BOM export. *Help → How to
   Import a CAD Folder* is the step-by-step tutorial (Pack and Go, unique file
   names, check and release);
 * *Import BOM…* (in the *Structure* tab and the *More* menu of a revision you
@@ -49,6 +49,13 @@ check-outs and reviews, and a **local working folder**:
   missing items. *Part numbers from the file* or *New numbers* (the group's
   numbering scheme), and whether items with the same number are reused, are
   chosen in the dialog;
+* *Quantities from CAD…* (next to *Import BOM…*) compares the BOM with the
+  instances counted in the revision's CAD files (SOLIDWORKS 2015+, NX, STEP
+  assemblies with external part files): missing lines and lines whose
+  quantity differs – such as the quantity 1 of an assembly imported before
+  the counts existed – are ticked; *Apply* adds and corrects them in one step
+  (the same plan as *Create BOM from CAD references…* in the web UI). A
+  quantity the CAD file does not tell never replaces an existing one;
 * the *Graph* tab draws a navigable reference and BOM graph around the
   revision: the focused item in the middle, its BOM children and references
   below, the assemblies that use it above. Node colour is the lifecycle state,

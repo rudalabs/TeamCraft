@@ -161,13 +161,15 @@ export var COUNTED_NOTE = "From the CAD references (instances counted in the CAD
 /** The BOM children of an assembly from its `GET …/references` answer: the
  * first match of each referenced name that is another item, once per item,
  * with the instance count the server read from the file (`instances`:
- * SOLIDWORKS 2015+ and NX assemblies) or `null` when the file does not tell
+ * SOLIDWORKS 2015+, NX and STEP assemblies with external parts) or `null` when the file does not tell
  * (Inventor, Solid Edge, …). A part with only instances excluded from the
  * BOM (`instances: 0`) is left out. */
 export function referencedChildren(refs, ownNumber) {
   var children = [];
   (refs.files || []).forEach(function (f) {
-    if (REFERENCING_KINDS.indexOf(f.format_kind) < 0) return;
+    // a STEP assembly with external parts: only when the server counted its occurrences
+    var counted = (f.references || []).some(function (r) { return typeof r.instances === "number"; });
+    if (REFERENCING_KINDS.indexOf(f.format_kind) < 0 && !(f.format_kind === "exchange" && counted)) return;
     (f.references || []).forEach(function (r) {
       var counted = typeof r.instances === "number" ? r.instances : null;
       if (counted === 0) return;
@@ -407,7 +409,7 @@ export function openImportFolderDialog() {
     field("Project group", project),
     h("label.check", null, [fromNames, "Use file names as item numbers where they are valid – otherwise numbers are generated"]),
     h("label.check", null, [extras, "Put project files (.ipj …) and other documents into one document item"]),
-    h("label.check", null, [bom, "Create BOM lines from the references found in the assemblies (instance counts of SOLIDWORKS and NX assemblies, otherwise quantity 1 – check those)"]),
+    h("label.check", null, [bom, "Create BOM lines from the references found in the assemblies (instance counts of SOLIDWORKS, NX and STEP assemblies, otherwise quantity 1 – check those)"]),
     report, bar, status
   ]), [
     { label: "Close", onClick: function (d) { stop = true; d.close(); } },
@@ -483,7 +485,7 @@ export function importTutorial() {
       "When it is done, a report shows the new items and files, the BOM lines and any problems – with a button that opens the top assembly."
     ]),
     step("4 · Check and release", [
-      "Structure: assemblies get BOM lines for the parts they reference. SOLIDWORKS (2015 and newer) and NX assemblies give the quantity – how often the part is placed; for other formats (Inventor, Solid Edge, …) the quantity is 1 and has to be checked. For exact quantities export the structured BOM from the CAD program (CSV or Excel) and use Import BOM on the assembly.",
+      "Structure: assemblies get BOM lines for the parts they reference. SOLIDWORKS (2015 and newer), NX and STEP assemblies with external part files give the quantity – how often the part is placed; for other formats (Inventor, Solid Edge, …) the quantity is 1 and has to be checked. For exact quantities export the structured BOM from the CAD program (CSV or Excel) and use Import BOM on the assembly.",
       "Look at the preview images and 3D views, fix what is missing, then release the product with one change order.",
       "Team members get the files with Get… (Tools → Get Project Groups…) – one folder per project group."
     ])
