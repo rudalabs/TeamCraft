@@ -131,6 +131,10 @@ curl -s -H "$H" -o hub.step $API/files/<file id>/content
 curl -s -X POST -H "$H" -F file=@hub.step -F comment="wall 2 → 2.5 mm" \
      $API/items/PRT-000001/revisions/A/checkin          # stores and releases in one step
 curl -s -X POST -H "$H" $API/items/PRT-000001/revisions/A/cancel-checkout
+# a group manager releasing an active member's lock names a reason (10–500 characters)
+curl -s -X POST -H "$H" -H "Content-Type: application/json" \
+     -d '{"reason": "Lena is away until March; Tom finishes the bracket."}' \
+     $API/items/PRT-000001/revisions/A/cancel-checkout
 ```
 
 ### Concurrency: base versions and file status

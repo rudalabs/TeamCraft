@@ -55,7 +55,17 @@
         {% if can.add_to_change %}<a href="/changes/new?revision={{ rev.id }}">Release via new change…</a>{% endif %}
         <a href="/requests/new?revision={{ rev.id }}" title="Report a problem or propose a change to {{ rev.item_number }}/{{ rev.code }} (change request)">Request change…{% if open_requests %}<span class="badge badge-count" title="{{ open_requests|length }} open change request(s)">{{ open_requests|length }}</span>{% endif %}</a>
         <a href="/revisions/{{ rev.id }}/package.zip" title="This revision with all files of its structure (BOM), bom.csv and manifest.json">Pack and Go (ZIP)</a>
-        {% if can.cancel_checkout or can.obsolete or can.delete %}<div class="menu-sep" role="separator"></div>{% endif %}
+        {% if can.cancel_checkout or can.release_with_reason or can.obsolete or can.delete %}<div class="menu-sep" role="separator"></div>{% endif %}
+        {% if can.release_with_reason %}
+        {#- A manager releases an active member's lock only with a reason, which the holder is told. -#}
+        <form class="stack" method="post" action="/revisions/{{ rev.id }}/cancel-checkout"
+              data-confirm="Release the check-out held by {{ rev.checked_out_by_name }}? They are told your reason.">
+          <label>Reason for releasing the lock of {{ rev.checked_out_by_name }}
+            <input type="text" name="reason" minlength="{{ release_reason.min }}" maxlength="{{ release_reason.max }}" required>
+          </label>
+          <button class="danger" type="submit" title="As a manager of the group: release the lock held by {{ rev.checked_out_by_name }}, who is told your reason">Release with reason</button>
+        </form>
+        {% endif %}
         {% if can.cancel_checkout %}
         {#- Cancelling your own check-out takes effect at once; releasing someone else's lock is confirmed. -#}
         <form method="post" action="/revisions/{{ rev.id }}/cancel-checkout"

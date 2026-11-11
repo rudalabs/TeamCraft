@@ -87,6 +87,8 @@
             {% if rev.checked_out_by != me.id %}data-confirm="Release the check-out held by {{ rev.checked_out_by_name }}?"{% endif %}>
         <button class="ghost" type="submit">{% if rev.checked_out_by != me.id %}Force unlock{% else %}Cancel check-out{% endif %}</button>
       </form>
+      {% elif can.release_with_reason %}
+      <a class="button ghost" href="/revisions/{{ rev.id }}" title="As a manager of the group you release the lock of {{ rev.checked_out_by_name }} on the revision page, with a reason they are told">Release with reason…</a>
       {% endif %}
     </div>
 

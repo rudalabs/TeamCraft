@@ -29,6 +29,10 @@ see the notices in the README.
   listed for administrators on *Project groups* and at
   `GET /api/v1/projects/manager-gaps`; the hourly housekeeping notifies the
   administrators once per gap (audited as `project.manager_gap_alert`).
+- Offboarding (#173, step 6): a group manager can release the check-out of
+  an **active** member with a reason (*Release with reason* on the revision
+  page, `{"reason": …}` on `cancel-checkout`). The reason is audited and told
+  to the holder; without one the release is still refused.
 - Offboarding (#173, step 4): **Offboard and deactivate** on the admin user
   page, `POST /api/v1/users/{id}/offboard` and `teamcraft user deactivate`
   deactivate a leaver in one step – hand over the work and the manager roles

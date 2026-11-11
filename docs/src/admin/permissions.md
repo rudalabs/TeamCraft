@@ -434,7 +434,12 @@ back with the access, check-outs stay (the removal message says how many).
 A manager of the group (or an admin) cancels them on the revision page or
 with `POST /api/v1/items/{number}/revisions/{code}/cancel-checkout`:
 managers may release the check-outs of users who are no longer members of
-the group or who are deactivated. *Release N check-outs* in the member list
+the group or who are deactivated. An **active** member's check-out a manager
+releases only with a **reason** (10 to 500 characters): *Release with reason*
+on the revision page, or `{"reason": "…"}` as the body of the request. The
+reason is stored in the audit log (`revision.checkout_forced_release`) and
+told to the holder in their notification; without one the release is refused
+(403). Other members cannot release it at all. *Release N check-outs* in the member list
 releases all of one person's check-outs in the group at once (each audited
 on its own); administrators release everything a user holds from the user
 page. See [When someone leaves](users.md#when-someone-leaves).

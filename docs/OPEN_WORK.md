@@ -411,6 +411,11 @@ real files and belong to section 3 once such files are at hand.
   `GET /api/v1/projects/manager-gaps`; the hourly housekeeping tells the administrators once per gap). Left: the
   access review page for all groups (with step 8).
 - [ ] Steps 8–10: season handover, IdP-driven offboarding, desktop working folder.
+- [x] Step 6: a manager releases an active member's check-out with a reason (`revisions::cancel_checkout` with
+  `reason`: audited, told to the holder; *Release with reason* on the revision page, `{reason}` in REST). Lock age is
+  shown in the explorer, on the revision page and in the holdings report. Open: a timed stale-lock rule
+  (`TEAMCRAFT_STALE_CHECKOUT_DAYS`), issue question 3.
+- [ ] Steps 7–10: groups without an active manager, season handover, IdP-driven offboarding, desktop working folder.
 
 **Desktop app**
 
