@@ -33,9 +33,10 @@ check-outs and reviews, and a **local working folder**:
   from the references in the assembly files – for NX also from `.prt` files (such an assembly is imported as a part
   item, NX does not tell parts and
   assemblies apart by the file type). Their quantity is how often the
-  assembly places the part where the file tells it (SOLIDWORKS 2015+, NX
-  and STEP assemblies with external part files; instances excluded from the
-  BOM do not count); for other formats (Inventor, Solid Edge, …) it is 1
+  assembly places the part where the file tells it (SOLIDWORKS 2015+, NX,
+  Inventor and STEP assemblies with external part files; instances excluded
+  from the BOM do not count – in Inventor assemblies suppressed occurrences
+  do count, check those); for other formats (Solid Edge, …) it is 1
   with the note *check the quantity* – set the real quantities with *Import
   BOM…* from the CAD program's BOM export. *Help → How to
   Import a CAD Folder* is the step-by-step tutorial (Pack and Go, unique file

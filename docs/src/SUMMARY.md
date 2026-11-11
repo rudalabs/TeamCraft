@@ -57,6 +57,7 @@
 # Research
 
 - [Research notes](research/index.md)
+    - [Instance counts of Inventor assemblies](research/inventor-instance-counts.md)
     - [Crash reports from the desktop app](research/crash-reporting.md)
     - [Mass properties from exported meshes](research/mass-properties.md)
     - [3D preview of Fusion designs](research/fusion-ogs-preview.md)

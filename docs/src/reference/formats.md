@@ -102,15 +102,18 @@ files (`NEXT_ASSEMBLY_USAGE_OCCURRENCE` per child whose definition is linked
 to a `DOCUMENT_FILE` – through `APPLIED_DOCUMENT_REFERENCE`,
 `PRODUCT_DEFINITION_WITH_ASSOCIATED_DOCUMENTS` or
 `DOCUMENT_PRODUCT_EQUIVALENCE`; sub-assemblies inside the file count with
-their own occurrences) the scan also stores how often each referenced file is
+their own occurrences) and Inventor assemblies (the occurrences of each
+referenced file from the file descriptor table in `UFRxDoc`; suppressed
+occurrences count too, see [the research note](../research/inventor-instance-counts.md))
+the scan also stores how often each referenced file is
 placed (`file_references.instances`, `instances` in `GET …/references`); the
 desktop folder import uses it as the BOM quantity, *Quantities from CAD…*
-corrects existing lines with it. Other formats – Inventor, Solid Edge – store
-no count (`null`): their references are found by name only (an Inventor
-assembly's occurrence data is not decoded; that needs an openly licensed
-`.iam` that places a part several times as a test file). The current versions
-of SOLIDWORKS, NX and referencing STEP files stored before this are read
-again once at the next start.
+corrects existing lines with it. Other formats – Solid Edge, Creo, CATIA, … –
+store no count (`null`): their references are found by name only. The current
+versions of SOLIDWORKS, NX and referencing STEP files stored before this are
+read again once at the next start; for Inventor assemblies stored before run
+`teamcraft rescan-references --format inventor-assembly` once (*Quantities
+from CAD…* reads the counts from the file and works without it).
 
 `.prt` and `.asm` are told apart by content (Creo's `#UGC:` header, Solid
 Edge's OLE container); `.sc` must be a SolidCraft ZIP or JSON design.
