@@ -453,9 +453,9 @@ pub async fn release_rule(pool: &PgPool, actor: &Actor, rev: &Revision) -> AppRe
 }
 
 /// For pages: whether [`cancel_checkout`] would release the revision's lock
-/// (managers of an active member's lock: with a reason).
+/// without a reason.
 pub async fn may_cancel_checkout(pool: &PgPool, actor: &Actor, rev: &Revision) -> AppResult<bool> {
-    Ok(release_rule(pool, actor, rev).await? != Release::No)
+    Ok(release_rule(pool, actor, rev).await? == Release::Yes)
 }
 
 /// A lock that a manager of the revision's group may release: its owner is

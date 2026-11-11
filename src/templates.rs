@@ -760,7 +760,13 @@ mod tests {
                     "references": references.clone(), "impact_groups": [impact_group()],
                     "resolved_impacts": [impact(Some("acknowledged"))],
                     "open_requests": [request("in_triage")], "similar": similar,
-                    "can": can_all.clone(), "max_upload_mb": 512, "assistant_enabled": state == "released",
+                    "can": {
+                        let mut can = can_all.clone();
+                        can["release_with_reason"] = json!(checked_out);
+                        can
+                    },
+                    "release_reason": { "min": 10, "max": 500 },
+                    "max_upload_mb": 512, "assistant_enabled": state == "released",
                     "interchange": {
                         "alternates": [linked("PRT-000003", false)],
                         "alternate_for": [linked("PRT-000004", false)],
@@ -786,6 +792,11 @@ mod tests {
             assert!(open.contains("nozzle.step") && !open.contains(">nozzle.SLDPRT<"));
             assert!(rest.contains("1 file in other CAD formats (SolidWorks)"));
             assert!(rest.contains(">nozzle.SLDPRT<"));
+            assert_eq!(
+                html.contains("name=\"reason\" minlength=\"10\" maxlength=\"500\" required"),
+                checked_out,
+                "a manager releases an active member's lock with a reason"
+            );
             assert!(
                 html.contains("aria-current=\"step\""),
                 "current lifecycle state is marked"

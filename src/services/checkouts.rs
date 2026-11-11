@@ -304,7 +304,7 @@ pub const MAX_RELEASE: i64 = 1000;
 ///   and only check-outs in the groups they manage are considered. Per
 ///   revision `cancel_checkout` decides: a manager only releases the locks of
 ///   users who are no longer members or are deactivated; the rest are listed
-///   as refused.
+///   as refused (an active member's lock needs a reason, one at a time).
 /// * **Visibility:** revisions the actor may not read are left out, as if
 ///   they did not exist (a need-to-know group with `admin_read = none` hides
 ///   its revisions from administrators too).
@@ -360,7 +360,7 @@ pub async fn release_held(
     .await?;
     let mut outcomes = Vec::with_capacity(held.len());
     for rev in held {
-        let result = revisions::cancel_checkout(pool, actor, rev.id)
+        let result = revisions::cancel_checkout(pool, actor, rev.id, None)
             .await
             .map(|_| ());
         outcomes.push(CheckInOutcome::of(&rev, result));
