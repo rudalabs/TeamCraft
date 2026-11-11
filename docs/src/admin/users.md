@@ -85,7 +85,26 @@ changes and closed requests keep the original names. One run moves at most
 Teams with a high turnover (student teams, early-stage startups) lose
 members every season. Deactivating a user ends their sessions and disables
 their API and desktop tokens; their check-outs, change orders, reviews and
-memberships stay. Work through these steps, in this order:
+memberships stay.
+
+**See what they hold first.** *Users → user → Everything … still holds*
+(`/users/{id}/holdings`, `GET /api/v1/users/{id}/holdings`, or
+`teamcraft user holdings --username lena` on the server) lists in one place
+the user's check-outs with their age, the change orders they wrote that are
+still open (draft, in review, rejected), the reviews that wait for them, the
+open change requests assigned to and raised by them, the items they own,
+their memberships with the source – flagging the groups in which they are
+the **only active manager** – and their API tokens with last use and expiry.
+The report is read-only and filtered by the rights of whoever reads it, not
+the leaver's: a check-out in a group the leaver was removed from is still
+listed. Administrators see every group they can read; for a group whose
+need-to-know policy hides its content from them the report gives only the
+number of check-outs. A manager of a project group opens the same report
+from the group's member list (*holds…*) and sees only what lies in the
+groups they manage, without the tokens. Each list shows at most 200 entries
+next to the full count.
+
+Then work through these steps, in this order:
 
 1. **Keep at least two active administrators.** TeamCraft refuses to
    deactivate or demote the last one. If nobody with the admin role is left,
