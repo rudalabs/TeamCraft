@@ -21,6 +21,7 @@ pub mod branding;
 pub mod bulk;
 pub mod changes;
 pub mod checkouts;
+pub mod deactivation;
 pub mod desktop;
 pub mod duplicates;
 pub mod explorer;

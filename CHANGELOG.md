@@ -24,6 +24,13 @@ see the notices in the README.
 
 ### Added
 
+- Offboarding (#173, step 4): **Offboard and deactivate** on the admin user
+  page, `POST /api/v1/users/{id}/offboard` and `teamcraft user deactivate`
+  deactivate a leaver in one step – hand over the work and the manager roles
+  to a successor, delete the API tokens (so a reactivation does not bring
+  them back), release the check-outs. Deactivating the only active manager of
+  a group without a successor needs a confirmation; every step is audited.
+  Audit entries of the command line are recorded as `system` without a user.
 - Desktop app (#255): a **Projects** page (rail, `Ctrl/Cmd+5`) to choose the
   active project group, create one, get groups into the workspace and import
   a CAD folder. **Home** becomes a file browser of the active group: names

@@ -401,7 +401,9 @@ real files and belong to section 3 once such files are at hand.
 - [x] Step 2: inactive lock holders count as gone, only active managers count, a deactivated user's IdP membership can
   be removed, submit refuses a deactivated reviewer, *Demote* manager.
 - [x] Step 3: bulk release of another user's check-outs (`checkouts::release_held`; admin user page, group member list).
-- [ ] Step 4: deactivation as an offboarding step (release / hand over / revoke tokens), CLI `user deactivate`.
+- [x] Step 4: deactivation as an offboarding step (`services::deactivation`: hand-over incl. manager roles, token
+  revocation, release of check-outs; *Offboard and deactivate* on the user page, `POST /api/v1/users/{id}/offboard`,
+  `teamcraft user deactivate`).
 - [x] Step 5: managers of every affected group withdraw, reopen, cancel or take over a deactivated author's change.
 - [ ] Steps 6–10: manager release with a reason, groups without an active manager, season handover, IdP-driven
   offboarding, desktop working folder.

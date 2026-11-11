@@ -104,7 +104,35 @@ from the group's member list (*holds…*) and sees only what lies in the
 groups they manage, without the tokens. Each list shows at most 200 entries
 next to the full count.
 
-Then work through these steps, in this order:
+**Offboard in one step.** *Users → user → Offboard and deactivate* (or
+`POST /api/v1/users/{id}/offboard`, or `teamcraft user deactivate --username
+lena` on the server) deactivates the user and, in the same step:
+
+* **hands the work over** to a successor you choose – items, draft and
+  rejected change orders, open change requests and pending reviews (as *Hand
+  over work* above) – and their **manager roles**: the successor becomes a
+  manager of every group the leaver managed (added as a member where
+  needed), the leaver stops being one (`project.manager_handover` per
+  group);
+* **revokes the API tokens** (ticked by default): they are deleted, so
+  activating the account again does not bring old tokens back
+  (`token.revoke_all`);
+* **releases the check-outs** (ticked when there are any), each in its own
+  transaction and audited like *Release all*.
+
+Deactivation, hand-over and token revocation run in one transaction; the
+check-outs are released afterwards and the message reports both. If the user
+is the **only active manager** of a group and no successor is named, the step
+is refused until you confirm that the group is left without an active manager
+(administrators can still manage it). An administrator cannot offboard
+themselves, and the last active administrator is kept. Every run is audited
+(`user.offboard`, with the choices). On the command line the options are
+`--hand-over-to USERNAME`, `--release-checkouts`, `--revoke-tokens` and
+`--confirm-no-manager`; the command exits with 2 when a check-out could not be
+released and is recorded as `system` in the audit log. The plain *Active*
+checkbox of the profile still deactivates without any of these steps.
+
+Or work through these steps by hand, in this order:
 
 1. **Keep at least two active administrators.** TeamCraft refuses to
    deactivate or demote the last one. If nobody with the admin role is left,

@@ -1664,18 +1664,20 @@ mod tests {
                 "oidc": { "admin_group": "a", "editor_group": "e", "viewer_group": null },
             })),
         );
-        render(
+        let html = render(
             &env,
             "admin/user_edit.html",
             with_common(json!({
                 "user": user(), "roles": roles(), "oidc_enabled": false, "memberships": [project()],
-                "handover_targets": [user()], "held_checkouts": 40,
+                "handover_targets": [user()], "held_checkouts": 40, "sole_manager_of": ["CHASSIS"],
                 "tokens": [{ "id": ME, "name": "ci", "token_prefix": "tc_pat_abc123", "created_at": TS,
                              "last_used_at": null, "expires_at": TS, "scope": "full", "idle_days": null },
                            { "id": ME, "name": "desktop", "token_prefix": "tc_pat_def456", "created_at": TS,
                              "last_used_at": TS, "expires_at": TS, "scope": "read_only", "idle_days": 30 }],
             })),
         );
+        assert!(html.contains("/offboard\"") && html.contains("only active manager of CHASSIS"));
+        assert!(html.contains("name=\"confirm_no_manager\"") && html.contains("API tokens (2)"));
         let html = render(
             &env,
             "admin/holdings.html",
