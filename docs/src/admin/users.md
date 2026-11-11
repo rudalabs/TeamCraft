@@ -179,3 +179,29 @@ Or work through these steps by hand, in this order:
    managers (SSO refuses deactivated users, so it cannot come back); an
    active user's synchronised membership still can only end at the identity
    provider.
+
+### The end of a season
+
+When many members leave at once – the end of a term in a student team – the
+managers of a group use **Season handover** (link above the member list,
+`/projects/{id}/season`) instead of going person by person. The page lists
+every member with their last activity (sign-in or use of an API or desktop
+token), check-outs in the group, manager flag and *member until* date.
+*Tick members inactive since* a date ticks the deactivated and the inactive
+ones and those whose *member until* has passed; adjust the ticks, then run:
+
+1. the **new lead** becomes a manager;
+2. the ticked members' **check-outs are released** – with a reason (10 to
+   500 characters), which each holder is told and which is audited; without
+   a reason only the locks of deactivated and former members are released;
+3. **member until** is set (or cleared) for the ticked members – only a
+   flag, nobody is removed automatically;
+4. the ticked members are **removed** (an IdP-synchronised membership only
+   once its user is deactivated);
+5. the ticked managers are **demoted** – last, so a manager who steps down
+   can still run the steps above; at least one active manager must remain
+   unless an administrator runs it.
+
+Every step goes through the same checks as the single action and is audited
+on its own; a refused step is listed in the result and does not stop the
+others.

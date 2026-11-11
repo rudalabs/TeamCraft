@@ -15,6 +15,13 @@ see the notices in the README.
 
 ### Added
 
+- Offboarding (#173, step 8): **Season handover** of a project group
+  (`/projects/{id}/season`, managers and administrators): tick the members
+  who leave – or let the page tick those inactive since a date or past their
+  new *member until* date – and run one plan: make the new lead a manager,
+  release check-outs with a reason, set *member until*, remove members and
+  demote the old managers. Every step is checked and audited on its own.
+  Migration 0070 (`project_members.expires_at`, a flag only).
 - Offboarding (#173, step 7): **groups without an active manager** – or
   whose managers have neither signed in nor used a token for 90 days – are
   listed for administrators on *Project groups* and at

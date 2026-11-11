@@ -4,8 +4,8 @@
 //! administrators) see every member with their last activity, check-outs,
 //! manager flag and "member until" date ([`members`]), choose members, and
 //! run one plan ([`run`]): make the new lead a manager, release the chosen
-//! members' check-outs (with a reason, so active members' locks too), demote
-//! the old managers, set or clear "member until", and remove members. Each
+//! members' check-outs (with a reason, so active members' locks too), set or
+//! clear "member until", remove members and demote the old managers. Each
 //! step goes through the service that owns it, so every object is checked
 //! and audited on its own, and one refusal does not stop the others.
 
@@ -177,8 +177,8 @@ impl SeasonReport {
     pub fn any_refused(&self) -> bool {
         let lead = self.lead.as_ref().is_some_and(|l| !l.ok);
         let released = self.released.iter().any(|o| !o.ok);
-        let steps = self.demoted.iter().chain(&self.expiry).chain(&self.removed);
-        lead || released || steps.into_iter().any(|s| !s.ok)
+        let mut steps = self.demoted.iter().chain(&self.expiry).chain(&self.removed);
+        lead || released || steps.any(|s| !s.ok)
     }
 }
 
@@ -219,9 +219,10 @@ fn step(user_id: Option<Uuid>, username: &str, result: AppResult<()>) -> Step {
 /// * **Data:** the chosen people must be members of the group (400 before
 ///   anything changes); at most [`MAX_MEMBERS`] per list (400); an empty plan
 ///   is refused (400); a reason is checked before anything changes (400).
-/// * **Order:** new lead → releases → demotions → "member until" → removals,
-///   so the lead is a manager before the old ones step down and locks are
-///   released while their holders are still members.
+/// * **Order:** new lead → releases → "member until" → removals → demotions,
+///   so the lead is a manager before the old ones step down, locks are
+///   released while their holders are still members, and a manager who
+///   demotes themselves keeps the right to run the other steps.
 /// * **Audit / notifications:** those of each step, per object.
 /// * **Atomic:** one transaction per step; refused steps are reported and do
 ///   not stop the others.
@@ -252,7 +253,7 @@ pub async fn run(
             .find(|m| m.user_id == *id)
             .map(|m| m.username.clone())
     };
-    for id in lists.iter().flat_map(|l| l.iter()) {
+    for id in lists.iter().copied().flatten() {
         if name_of(id).is_none() {
             return Err(AppError::BadRequest(
                 "A chosen user is not a member of the group.".into(),
@@ -272,11 +273,6 @@ pub async fn run(
             checkouts::release_held_because(pool, actor, *id, project, reason).await?;
         report.released.append(&mut outcomes);
     }
-    for id in &plan.demote {
-        let name = name_of(id).unwrap_or_default();
-        let result = projects::demote_manager(pool, actor, project_id, *id).await;
-        report.demoted.push(step(Some(*id), &name, result));
-    }
     for id in &plan.expire {
         let name = name_of(id).unwrap_or_default();
         let result = projects::set_member_expiry(pool, actor, project_id, *id, plan.until).await;
@@ -288,6 +284,12 @@ pub async fn run(
             .await
             .map(|_| ());
         report.removed.push(step(Some(*id), &name, result));
+    }
+    // last: a manager who steps down keeps the right to run the steps above
+    for id in &plan.demote {
+        let name = name_of(id).unwrap_or_default();
+        let result = projects::demote_manager(pool, actor, project_id, *id).await;
+        report.demoted.push(step(Some(*id), &name, result));
     }
     Ok(report)
 }
