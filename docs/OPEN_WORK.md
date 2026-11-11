@@ -405,8 +405,11 @@ real files and belong to section 3 once such files are at hand.
   revocation, release of check-outs; *Offboard and deactivate* on the user page, `POST /api/v1/users/{id}/offboard`,
   `teamcraft user deactivate`).
 - [x] Step 5: managers of every affected group withdraw, reopen, cancel or take over a deactivated author's change.
-- [ ] Steps 6–10: manager release with a reason, groups without an active manager, season handover, IdP-driven
-  offboarding, desktop working folder.
+- [x] Step 6: a manager releases an active member's check-out with a reason (`revisions::cancel_checkout` with
+  `reason`: audited, told to the holder; *Release with reason* on the revision page, `{reason}` in REST). Lock age is
+  shown in the explorer, on the revision page and in the holdings report. Open: a timed stale-lock rule
+  (`TEAMCRAFT_STALE_CHECKOUT_DAYS`), issue question 3.
+- [ ] Steps 7–10: groups without an active manager, season handover, IdP-driven offboarding, desktop working folder.
 
 **Desktop app**
 
