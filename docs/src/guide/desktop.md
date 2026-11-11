@@ -215,13 +215,25 @@ number of files, BOM lines, where
 used, references, change orders and open change requests – a click opens the
 matching sub-tab.
 
-*Home*, *Refresh* and the dialogs that offer project groups (*New*, *Get
-Project Groups…*, *Import CAD Folder…*) load the groups and your memberships
-from the server again, so a group created or joined in the web UI shows
-without restarting the app.
+**Projects** (the rail button below *Agent*, `Ctrl/Cmd+5`) is where you
+choose the **active project group**: your groups first, then the others.
+CAD editors create a new group there (*New* – you become its manager; tick
+*Restricted* to keep it to its members), and the page offers *Get…* (copy
+groups into your workspace) and *Import CAD folder…*. The choice is kept on
+this computer.
+
+**Home** is a file browser of the active group: every item with its name
+first and the number and revision dimmed after it, sorted by name (or by
+number, type or state – the choice is kept), or the *Structure* view with
+assemblies and their parts. *Change…* goes back to *Projects*.
+
+*Home*, *Projects*, *Refresh* and the dialogs that offer project groups
+(*New*, *Get Project Groups…*, *Import CAD Folder…*) load the groups and your
+memberships from the server again, so a group created or joined in the web UI
+shows without restarting the app.
 
 Keyboard: `Ctrl/Cmd+N` new item, `Ctrl/Cmd+F` search, `F5` refresh,
-`Ctrl/Cmd+1/2/3/4` Home, Worklist, Changes, Agent, `Ctrl/Cmd+W` close the tab,
+`Ctrl/Cmd+1/2/3/4/5` Home, Worklist, Changes, Agent, Projects, `Ctrl/Cmd+W` close the tab,
 `Ctrl/Cmd` + `+` / `-` / `0` (or `Ctrl` + mouse wheel) zoom.
 
 ## How files appear on your computer

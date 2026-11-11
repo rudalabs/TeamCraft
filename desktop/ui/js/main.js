@@ -94,6 +94,7 @@ export function handleMenu(id) {
     case "go-worklist": selectView("worklist"); break;
     case "go-changes": selectView("changes"); break;
     case "go-agent": openAgent(); break;
+    case "go-projects": selectView("projects"); break;
     case "open-workspace": openWorkspaceFolder(activeTab() && activeTab().kind === "revision" ? activeTab() : null); break;
     case "open-web": {
       var t = activeTab();

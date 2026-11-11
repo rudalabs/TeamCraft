@@ -15,6 +15,13 @@ see the notices in the README.
 
 ### Added
 
+- Desktop app (#255): a **Projects** page (rail, `Ctrl/Cmd+5`) to choose the
+  active project group, create one, get groups into the workspace and import
+  a CAD folder. **Home** becomes a file browser of the active group: names
+  first with the number dimmed after them (long number prefixes no longer cut
+  the file names off), sorted by name by default, or by number, type or
+  state.
+
 - BOM quantities from Inventor assemblies (#247): the reference scan reads
   how often an `.iam` places each referenced file from the file descriptor
   table of its `UFRxDoc` stream (`src/invasm.rs`, checked against Inventor's
