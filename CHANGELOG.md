@@ -13,6 +13,15 @@ see the notices in the README.
 
 ## [Unreleased]
 
+### Fixed
+
+- Desktop graph navigation (#254): clicking a sub-assembly turns the tab
+  into that sub-assembly's tab and centres its graph there; *← Back* turns
+  it back into the assembly it was opened from. Clicking the item in the
+  centre opens its overview instead of adding a step to the back history, so
+  *← Back* no longer appears (or stacks up) when nothing changed. A tab that
+  already showed the target item is merged, so no item is open twice.
+
 ### Added
 
 - BOM quantities from Inventor assemblies (#247): the reference scan reads
