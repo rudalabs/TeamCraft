@@ -36,6 +36,8 @@ mod simulations;
 mod uploads;
 mod webhooks;
 
+// posted by the identity provider: mounted outside the cross-site guard
+pub(crate) use auth_pages::oidc_backchannel_logout;
 pub(crate) use bom::{package_response, package_rule};
 pub(crate) use branding::image as branding_image;
 pub(crate) use imports::{options_from as import_options, receive as receive_import};

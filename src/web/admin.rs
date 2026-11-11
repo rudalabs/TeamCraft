@@ -715,12 +715,20 @@ pub async fn ai(State(st): State<AppState>, ctx: WebCtx) -> AppResult<Response> 
 pub async fn users(State(st): State<AppState>, ctx: WebCtx) -> AppResult<Response> {
     ctx.me.require(Role::Admin)?;
     let list = users::list(&st.db).await?;
+    // single sign-on users who stopped signing in but still hold something
+    let idle_sso = if st.config.oidc.is_some() {
+        crate::services::offboarding::idle_sso_users(&st.db, &ctx.me).await?
+    } else {
+        Vec::new()
+    };
     render(
         &st,
         &ctx,
         "admin/users.html",
         json!({
             "users": list,
+            "idle_sso": idle_sso,
+            "idle_sso_days": crate::services::offboarding::IDLE_SSO_DAYS,
             "roles": roles(),
             "oidc": st.config.oidc.as_ref().map(|o| json!({
                 "admin_group": o.admin_group,

@@ -875,9 +875,9 @@ async fn desktop_token(
     State(st): State<AppState>,
     ApiJson(body): ApiJson<DesktopTokenBody>,
 ) -> AppResult<Json<Value>> {
-    Ok(Json(json!(
-        desktop::exchange(&st.db, &body.code, &body.verifier).await?
-    )))
+    let idle = st.config.oidc_token_idle_days;
+    let token = desktop::exchange(&st.db, &body.code, &body.verifier, idle).await?;
+    Ok(Json(json!(token)))
 }
 
 /// The personal start page of the desktop app (and the web dashboard).
