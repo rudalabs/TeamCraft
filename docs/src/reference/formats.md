@@ -103,8 +103,9 @@ to a `DOCUMENT_FILE` – through `APPLIED_DOCUMENT_REFERENCE`,
 `PRODUCT_DEFINITION_WITH_ASSOCIATED_DOCUMENTS` or
 `DOCUMENT_PRODUCT_EQUIVALENCE`; sub-assemblies inside the file count with
 their own occurrences) and Inventor assemblies (the occurrences of each
-referenced file from the file descriptor table in `UFRxDoc`; suppressed
-occurrences count too, see [the research note](../research/inventor-instance-counts.md))
+referenced file from the file descriptor table in `UFRxDoc`, suppressed
+occurrences left out – a file with only suppressed ones counts 0, see
+[the research note](../research/inventor-instance-counts.md))
 the scan also stores how often each referenced file is
 placed (`file_references.instances`, `instances` in `GET …/references`); the
 desktop folder import uses it as the BOM quantity, *Quantities from CAD…*

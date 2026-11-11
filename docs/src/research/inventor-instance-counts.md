@@ -45,10 +45,30 @@ with one *file descriptor* per referenced file:
 * The table does not tell suppressed occurrences apart: Inventor's BOM
   leaves them out, the count includes them. In the test data that changed 6
   of 190 counts (parts whose occurrences were all or partly suppressed).
-  The suppression state lives in the assembly segment (`AmDcSegment`), which
-  is not decoded.
-* The occurrence names (`Bolt:3`) are no help: they are renamed freely and
-  stored elsewhere.
+
+### Suppressed occurrences (2026-11-11)
+
+A controlled experiment told where the suppression is stored: a copy of an
+assembly was saved by Inventor once unchanged and once with exactly one
+occurrence suppressed, and the two `UFRxDoc` streams were compared.
+
+* `UFRxDoc` also holds one **property record per occurrence**, in the order
+  of the occurrences, as tagged properties `01 t 01 00 00 00 t value`:
+  `05` the occurrence name (`u32` length + UTF-16; the base of `Bolt:3`),
+  4 bytes, `02` an identifier (16 + 4 bytes), `07` **1 = suppressed**
+  (`19` also changes, 1 → 5). Like the descriptors, the records repeat
+  after earlier saves; the first ones – as many as the descriptors count –
+  are current.
+* The occurrence name is the descriptor's display name (Content Center
+  parts: `DIN EN ISO 4762 M6 x 16`), otherwise the file name without
+  extension. Identifiers of the referenced file (property `12`) are not in
+  the assembly's descriptor, so the name is the link.
+* The model state also lists the suppressed occurrences (after `[Primary]`:
+  count and the occurrence ids as text) – not needed for the counts.
+* Checked: every suppressed record taken off the one file whose name it
+  carries gives Inventor's active count for **all 190 files** of the 32
+  assemblies (Inventor 2027 API, `Suppressed`); the two assemblies where an
+  occurrence name fits no file or two files have no suppressed occurrences.
 
 ## Decision
 
@@ -65,6 +85,14 @@ rescan-references --format inventor-assembly` (a migration that marks them
 for the startup scan would change v0.1.0 data, which the upgrade test
 forbids).
 
-Later, if needed: the suppression state from `AmDcSegment`, Inventor
-*Reference* and *Phantom* BOM structures (also in the assembly segment), and
-Solid Edge assemblies (no test files yet).
+Suppressed occurrences are left out (2026-11-11): each suppressed record is
+taken off the file whose name it carries; a file with only suppressed
+occurrences counts 0 – still referenced and tracked, but not in the BOM,
+like SOLIDWORKS parts excluded from the BOM. When the records do not add up
+(fewer records than occurrences, a suppressed record whose name fits no file
+or several, more suppressed than placed) the descriptor counts stay as they
+are, suppressed ones included – never guessed.
+
+Later, if needed: other model states than the one saved last, Inventor
+*Reference* and *Phantom* BOM structures, and Solid Edge assemblies (no test
+files yet).

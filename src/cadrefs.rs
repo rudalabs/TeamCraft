@@ -529,8 +529,8 @@ fn count_key(name: &str) -> String {
 /// * STEP assemblies with external references: the assembly occurrences of
 ///   each external file (`stepbom::external_instance_counts`);
 /// * Inventor assemblies: the occurrences of each referenced file from the
-///   file descriptor table (`invasm::file_occurrence_counts`; suppressed
-///   occurrences count too).
+///   file descriptor table without the suppressed ones
+///   (`invasm::file_occurrence_counts`; only suppressed ones count 0).
 ///
 /// `None` for every other format and for files without component data.
 /// Blocking (reads the file).
@@ -1078,6 +1078,22 @@ mod tests {
         assert_eq!(instance_counts(&path, "inventor-part"), None);
         std::fs::write(&path, crate::invasm::test_assembly(&[])).unwrap();
         assert_eq!(instance_counts(&path, "inventor-assembly"), None);
+        // suppressed occurrences are not counted; only suppressed ones: 0
+        // (still referenced, left out of the BOM like excluded SOLIDWORKS parts)
+        std::fs::write(
+            &path,
+            crate::invasm::test_assembly_with_records(
+                &[
+                    ("C:\\Rover\\Wheel.iam", false, 2),
+                    ("C:\\Rover\\Frame.ipt", false, 1),
+                ],
+                &[("Wheel", false), ("Frame", true), ("Wheel", true)],
+            ),
+        )
+        .unwrap();
+        let counts = instance_counts(&path, "inventor-assembly").unwrap();
+        assert_eq!(counts.get("wheel.iam"), Some(&1));
+        assert_eq!(counts.get("frame.ipt"), Some(&0));
         std::fs::remove_file(&path).ok();
     }
 

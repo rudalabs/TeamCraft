@@ -18,7 +18,8 @@
 //!   component tree without `swExcludeFromBOM` (a component with only
 //!   excluded instances is left out); STEP – the assembly occurrences of the
 //!   external file; Inventor – the occurrences in the file descriptor table
-//!   (suppressed ones too); otherwise 1, flagged *assumed*.
+//!   (suppressed ones left out; a part with only suppressed ones is left
+//!   out); otherwise 1, flagged *assumed*.
 //! * A child is listed once per item. Unmatched names are listed as *not in
 //!   TeamCraft* (never created). Children in project groups the actor may not
 //!   see are only counted.

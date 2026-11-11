@@ -20,7 +20,11 @@ see the notices in the README.
   table of its `UFRxDoc` stream (`src/invasm.rs`, checked against Inventor's
   own API on 32 real assemblies: 190 of 190 files), so the folder import,
   *Quantities from CAD…* and the BOM-from-references page get real
-  quantities instead of 1. Suppressed occurrences are counted too.
+  quantities instead of 1. Suppressed occurrences are left out, as in
+  Inventor's BOM (from the occurrence records in the same stream); a part
+  with only suppressed occurrences counts 0 – it stays referenced but gets
+  no BOM line. When the records do not add up, the counts include the
+  suppressed ones instead of guessing.
   *Quantities from CAD…* reads the counts from the stored file, so it works
   for assemblies imported before; `teamcraft rescan-references --format
   inventor-assembly` also refreshes the stored counts of those files.
