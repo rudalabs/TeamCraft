@@ -128,6 +128,7 @@ fn build_menu(app: &tauri::App) -> tauri::Result<()> {
         .item(&item("go-worklist", "My Worklist", Some("CmdOrCtrl+2"))?)
         .item(&item("go-changes", "Changes", Some("CmdOrCtrl+3"))?)
         .item(&item("go-agent", "Agent", Some("CmdOrCtrl+4"))?)
+        .item(&item("go-projects", "Projects", Some("CmdOrCtrl+5"))?)
         .separator()
         .item(&item("zoom-in", "Zoom In (Ctrl + wheel)", None)?)
         .item(&item("zoom-out", "Zoom Out", None)?)

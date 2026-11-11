@@ -24,6 +24,12 @@ see the notices in the README.
 
 ### Added
 
+- Desktop app (#255): a **Projects** page (rail, `Ctrl/Cmd+5`) to choose the
+  active project group, create one, get groups into the workspace and import
+  a CAD folder. **Home** becomes a file browser of the active group: names
+  first with the number dimmed after them (long number prefixes no longer cut
+  the file names off), sorted by name by default, or by number, type or
+  state.
 - Offboarding (#173, step 1): **what a user still holds**, in one place –
   check-outs with their age, open change orders they wrote, reviews waiting
   for them, change requests assigned to and raised by them, owned items,
@@ -33,7 +39,6 @@ see the notices in the README.
   `teamcraft user holdings --username`. Filtered by the reader's rights, not
   the leaver's; group managers see the same report for the groups they
   manage (*holds…* in the member list).
-
 - BOM quantities from Inventor assemblies (#247): the reference scan reads
   how often an `.iam` places each referenced file from the file descriptor
   table of its `UFRxDoc` stream (`src/invasm.rs`, checked against Inventor's
