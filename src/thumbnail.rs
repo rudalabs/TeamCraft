@@ -42,8 +42,9 @@ use std::{
 /// cached as "none" before; 3: NX parts rendered from their 3D preview
 /// instead of the embedded JPEG; 4: SOLIDWORKS parts and assemblies rendered
 /// from their 3D preview; 5: Rhino models; 6: Inventor parts and assemblies
-/// rendered from their 3D preview).
-pub const CACHE_VERSION: u32 = 6;
+/// rendered from their 3D preview; 7: Inventor files with Zstandard
+/// segments, which kept their stored image before, #271).
+pub const CACHE_VERSION: u32 = 7;
 
 const OLE_MAGIC: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
 const PNG_MAGIC: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];

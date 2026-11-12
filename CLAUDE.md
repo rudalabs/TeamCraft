@@ -116,7 +116,7 @@ src/nxasm.rs       NX assemblies: components + placements from /Root/FastLoad/St
                    services/assemblies.rs composes the assembly preview from the parts' previews (found by file name)
 src/swpart.rs      SOLIDWORKS 2015+ section container: Deflate sections (bounded, CRC-checked), PreviewPNG, component tree (COMPINSTANCETREE):
                    referenced files and placements (assembly previews, also via services/assemblies.rs)
-src/invpart.rs     Inventor files: OLE storage RSeStorage, zlib segments (meta stream: section lengths + class UUID table),
+src/invpart.rs     Inventor files: OLE storage RSeStorage, zlib or Zstandard segments (meta stream: section lengths + class UUID table),
                    sections, typed arrays; src/invplace.rs: assembly components (UFRxDoc: files, visibility) + placements
                    (AmRxSegment), composed by services/assemblies.rs
 src/thumbnail.rs   preview images stored in Inventor / Solid Edge / SolidWorks / NX files (OLE via cfb, PNG, DIB → BMP, JPEG), cached in previews/;

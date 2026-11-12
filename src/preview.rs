@@ -33,8 +33,9 @@ use crate::{
 
 /// Bump to invalidate every cached preview (reader fixes, new format).
 /// Bump `shape::VERSION` with it: the shape signatures stored in the
-/// database are computed from these meshes.
-pub const CACHE_VERSION: u32 = 2;
+/// database are computed from these meshes. 3: Inventor files with
+/// Zstandard segments (#271), cached as failed before.
+pub const CACHE_VERSION: u32 = 3;
 
 /// Conversions that run at the same time.
 pub const MAX_PARALLEL: usize = 2;
