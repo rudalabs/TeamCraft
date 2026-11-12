@@ -121,6 +121,22 @@ see the notices in the README.
   like NX parts. Their thumbnail is rendered from it. Products are not
   previewed yet.
 
+### Changed
+
+- Performance: a request with a personal access token (REST API, MCP, the
+  desktop app) is authenticated with one query instead of three; the use of
+  the token is still recorded once a minute.
+- Performance: the 3D preview of an NX, SOLIDWORKS or Inventor assembly
+  converts its parts two at a time instead of one after the other and places
+  the instances without copying the part for each of them (less memory, the
+  same mesh).
+- Performance: thumbnails drawn from the 3D preview and assembly previews are
+  made once however many requests ask for them at the same time, and at most
+  two at a time; images already in the cache are answered without waiting.
+- Notification delivery serves three recipients at the same time (each
+  recipient's notifications in order, e-mail and chat side by side): a slow
+  mail server no longer holds up the whole run or the chat messages.
+
 ### Fixed
 
 - Desktop, *Graph* tab (#254): a click on a sub-assembly now turns the tab
@@ -453,6 +469,14 @@ Changes since the `v0.2.5` tag.
 - Mutation testing with cargo-mutants (#170): configuration, a report-only
   check on pull requests and a weekly run; the gaps of the first
   whole-repository run are closed with unit tests (#207).
+- 3D preview of Inventor parts (`.ipt`) from the display tessellation
+  Inventor stores in the file, welded and refined along its exact surface
+  normals like NX and SOLIDWORKS parts. Inventor assemblies (`.iam`) are
+  put together from the previews of their part and sub-assembly files, with
+  the placements stored in the assembly (re-posed flexible sub-assemblies
+  included); hidden and suppressed components are left out. The
+  thumbnails of Inventor parts and assemblies are rendered from the 3D
+  preview. New fuzz target `invpart`.
 
 ### Changed
 

@@ -97,6 +97,25 @@ NURBS surfaces saved without render meshes, curves, points, annotations,
 linked blocks and colours are not shown; such a model keeps the preview
 bitmap Rhino stored as its thumbnail.
 
+Inventor parts and assemblies are OLE compound files whose data lives in
+zlib-compressed segments below `RSeStorage` (`src/invpart.rs`). The 3D
+preview of a part is the display tessellation in `PmGraphicsSegment`
+(`src/mesh/inventor.rs`):
+- each B-rep face is an indexed triangle list (centimetres) with a unit
+  surface normal per vertex;
+- the faces of solid bodies are taken (all faces of a part without a
+  solid), welded on their exact coordinates and refined along the normals
+  like NX parts, and shown in millimetres.
+
+An assembly is put together from the previews of its part and
+sub-assembly files (`src/invplace.rs`): the referenced files and the
+visibility of each occurrence come from the stream `UFRxDoc`, the
+placements from `AmRxSegment`, including the poses a parent gives the
+children of flexible sub-assemblies. Hidden and suppressed components are
+left out, and components are found by the file name of their stored path.
+Not covered: design views other than the saved one, weld beads, drawings
+and presentations.
+
 SOLIDWORKS files from 2015 on are no OLE files any more but a sequence of
 Deflate-compressed sections (`src/swpart.rs`; verified with SOLIDWORKS 2018
 files). TeamCraft inflates only the sections it needs, with a hard size

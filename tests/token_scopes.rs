@@ -526,6 +526,96 @@ async fn sliding_tokens_are_renewed_on_use_and_die_unused() {
     app.teardown().await;
 }
 
+/// Every API request presents its token, so its use is written down once a
+/// minute, not per request: a request within that minute leaves the row
+/// alone (last use, sliding expiry, row version), the first one after it
+/// writes again.
+#[tokio::test]
+async fn the_use_of_a_token_is_recorded_once_a_minute() {
+    let app = app_or_skip!();
+    let (erika, _) = app.user_in("erika", Role::Editor, &["ROCKET"]).await;
+    let (record, token) = users::create_token(
+        &app.pool,
+        &erika,
+        "desktop",
+        TokenLifetime::IdleDays(30),
+        TokenScope::Full,
+    )
+    .await
+    .unwrap();
+    // (last use, expiry, row version – changes with every write to the row)
+    let row = || {
+        let pool = app.pool.clone();
+        async move {
+            sqlx::query_as::<_, (Option<String>, String, String)>(
+                "SELECT last_used_at::text, expires_at::text, xmin::text FROM api_tokens WHERE id = $1",
+            )
+            .bind(record.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    let age = |column: &'static str| {
+        let pool = app.pool.clone();
+        async move {
+            sqlx::query_scalar::<_, f64>(&format!(
+                "SELECT EXTRACT(EPOCH FROM {column} - now())::float8 FROM api_tokens WHERE id = $1"
+            ))
+            .bind(record.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+    assert_eq!(row().await.0, None, "never used");
+
+    // the first use is recorded
+    let r = app.api(Method::GET, "/api/v1/me", &token, None).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let first = row().await;
+    assert!(first.0.is_some(), "{first:?}");
+    assert!((-5.0..=0.0).contains(&age("last_used_at").await));
+
+    // further requests within the minute write nothing
+    for _ in 0..3 {
+        let r = app.api(Method::GET, "/api/v1/me", &token, None).await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    }
+    assert_eq!(row().await, first);
+
+    // a minute later the use (and the sliding expiry) is recorded again
+    sqlx::query(
+        "UPDATE api_tokens SET last_used_at = now() - interval '2 minutes',
+                               expires_at = now() + interval '1 day'
+         WHERE id = $1",
+    )
+    .bind(record.id)
+    .execute(&app.pool)
+    .await
+    .unwrap();
+    let r = app.api(Method::GET, "/api/v1/me", &token, None).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert!((-5.0..=0.0).contains(&age("last_used_at").await));
+    let days = age("expires_at").await / 86400.0;
+    assert!((29.9..=30.1).contains(&days), "{days}");
+
+    // requests arriving together: all are answered, the use is there once
+    sqlx::query("UPDATE api_tokens SET last_used_at = NULL WHERE id = $1")
+        .bind(record.id)
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    let me = || app.api(Method::GET, "/api/v1/me", &token, None);
+    let (a, b, c) = tokio::join!(me(), me(), me());
+    for r in [a, b, c] {
+        assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    }
+    assert!(row().await.0.is_some());
+
+    app.teardown().await;
+}
+
 /// A `write` token does everything but approve: it is refused (403, before
 /// the route runs) on the review of a change, the decision on a change
 /// request and making a revision obsolete, and it cannot mint a `full` token.
