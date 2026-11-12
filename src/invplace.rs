@@ -243,6 +243,7 @@ fn component(name: &str, m: &[[f64; 4]; 4]) -> Component {
         translation,
         layer: None,
         occurrence: None,
+        document: None,
     }
 }
 

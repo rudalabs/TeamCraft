@@ -4380,6 +4380,107 @@ async fn inventor_assemblies_are_put_together_from_their_parts() {
     app.teardown().await;
 }
 
+/// A CATIA product names no files: its components are found by the UUID of
+/// their document (whatever the file is called), otherwise by part number;
+/// sub-products are entered, placements composed, and a component that is
+/// not in TeamCraft is left out. The product's thumbnail is rendered.
+#[tokio::test]
+async fn catia_products_are_put_together_from_their_parts() {
+    let Some(app) = common::setup_with(&[("TEAMCRAFT_MAX_UPLOAD_MB", "8")]).await else {
+        return;
+    };
+    let (_, eng) = app.user_in("eng", Role::Editor, &["GEARBOX"]).await;
+    app.api(
+        Method::POST,
+        "/api/v1/items",
+        &eng,
+        Some(json!({ "item_type": "assembly", "name": "Frame", "project": "GEARBOX" })),
+    )
+    .await;
+    let part = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/cad/nist/ctc-01/catia-v5/nist_ctc_01_asme1_rd_ct5290_ra.CATPart"),
+    )
+    .unwrap();
+    let document = teamcraft::catprod::document(&part).unwrap();
+    let raw: Vec<u8> = document
+        .split('_')
+        .map(|w| u32::from_str_radix(w, 16).unwrap())
+        .flat_map(u32::to_be_bytes)
+        .collect();
+    let part_uuid: [u8; 16] = raw.try_into().unwrap();
+    let (top_uuid, holder_uuid) = ([1u8; 16], [2u8; 16]);
+    let moved =
+        |x: f64, y: f64, z: f64| Some([1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, x, y, z]);
+    // a quarter turn about z: local x along world y, local y along -x
+    let turned = Some([
+        0.0, 1.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 2000.0, 0.0,
+    ]);
+    let top = teamcraft::catprod::sample(
+        top_uuid,
+        &[
+            // by document: the part number is not the file name
+            ("ctc", part_uuid, None),
+            ("Holder", holder_uuid, moved(1000.0, 0.0, 0.0)),
+            // an unknown document, found by part number
+            ("nist", [9; 16], turned),
+            // not in TeamCraft
+            ("gone", [7; 16], moved(0.0, 0.0, -5000.0)),
+        ],
+    );
+    let holder =
+        teamcraft::catprod::sample(holder_uuid, &[("ctc", part_uuid, moved(0.0, 500.0, 0.0))]);
+    let mut ids = Vec::new();
+    for (name, data) in [
+        ("Frame.CATProduct", &top),
+        ("Sub.CATProduct", &holder),
+        ("nist.CATPart", &part),
+    ] {
+        let files = app
+            .api_multipart(
+                "/api/v1/items/ASM-000001/revisions/A/files",
+                &eng,
+                &[(name, data.as_slice())],
+                &[],
+            )
+            .await;
+        assert_eq!(
+            files.status,
+            StatusCode::CREATED,
+            "{name}: {}",
+            files.text()
+        );
+        ids.push(files.json()[0]["id"].as_str().unwrap().to_string());
+    }
+    let r = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/files/{}/mesh", ids[0]),
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let mesh = teamcraft::mesh::Mesh::decode(&r.body).unwrap();
+    // ctc-01 spans x -400..400, y -225..225, z -100..50 mm
+    let b = mesh.bounds();
+    let expect = [-400.0, -225.0, -100.0, 1400.0, 2400.0, 50.0];
+    for (got, want) in b.iter().zip(expect) {
+        assert!((got - want).abs() < 0.1, "{b:?}");
+    }
+    let r = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/files/{}/thumbnail", ids[0]),
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(r.header("content-type").as_deref(), Some("image/png"));
+    app.teardown().await;
+}
+
 /// A stand-alone JT 10 file carries its parts and its assembly: one upload
 /// gives the placed 3D preview (the NIST assembly: 36 instances of 8
 /// parts) and a thumbnail rendered from it.

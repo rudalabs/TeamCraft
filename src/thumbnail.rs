@@ -68,6 +68,7 @@ pub fn supports(format_id: &str) -> bool {
                 | "nx-part"
                 | "rhino"
                 | "catia-part"
+                | "catia-product"
                 | "jt"
                 | "sketchup"
                 | "creo-part"
@@ -488,7 +489,7 @@ pub const RENDERED_SIZE: u32 = 512;
 /// Formats whose thumbnail is rendered from their 3D preview instead of the
 /// image stored in the file: NX parts (the embedded JPEG is small and poor,
 /// the tessellation in the file is good), SOLIDWORKS and Inventor parts and
-/// assemblies, Rhino and SketchUp models, CATIA V5 parts, Creo parts, Fusion
+/// assemblies, Rhino and SketchUp models, CATIA V5 parts and products, Creo parts, Fusion
 /// designs (one look for every CAD system) and stand-alone JT files (a visualisation
 /// format: the tessellation is the content). Files without a 3D preview
 /// (drawings, assemblies none of whose parts are in TeamCraft, Rhino models
@@ -505,6 +506,7 @@ pub fn rendered(format_id: &str) -> bool {
             | "inventor-part"
             | "inventor-assembly"
             | "catia-part"
+            | "catia-product"
             | "sketchup"
             | "creo-part"
             | "fusion-design"
@@ -707,7 +709,8 @@ mod tests {
         assert!(supports("nx-part") && supports("catia-part"));
         assert!(!supports("inventor-project") && !supports("step"));
         assert!(rendered("nx-part") && rendered("catia-part") && rendered("inventor-part"));
-        assert!(!rendered("catia-product") && !rendered("inventor-drawing"));
+        assert!(rendered("catia-product") && supports("catia-product"));
+        assert!(!rendered("catia-drawing") && !rendered("inventor-drawing"));
     }
 
     #[test]

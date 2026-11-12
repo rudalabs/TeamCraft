@@ -15,6 +15,16 @@ see the notices in the README.
 
 ### Added
 
+- 3D preview of CATIA V5 products (`.CATProduct`), put together from the
+  previews of their parts and sub-products like NX, SOLIDWORKS and Inventor
+  assemblies. A product stores no file names: its instances, part numbers
+  and placements are read from its `CATProdCont` object stream
+  (`src/catprod.rs`), and a component is the CATIA file whose document UUID
+  it refers to (among the files of the product's revision and those found
+  by name), otherwise `<part number>.CATPart` / `.CATProduct`. The
+  product's thumbnail is rendered from it. Hidden components are not
+  recognised yet.
+
 - 3D preview of PTC Creo parts (`.prt.N`): the exact B-rep stored in the
   file (`VisibGeom`) is read – text table of contents, LZW sections, the
   self-describing tagged format with its compressed numbers – and

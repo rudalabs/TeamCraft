@@ -150,8 +150,10 @@ src/invpart.rs     Inventor files: OLE storage RSeStorage, zlib or Zstandard seg
                    sections, typed arrays; src/invplace.rs: assembly components (UFRxDoc: files, visibility) + placements
                    (AmRxSegment), composed by services/assemblies.rs; src/invasm.rs: occurrence counts per referenced
                    file (BOM quantities, suppressed occurrences left out)
+src/catprod.rs     CATIA V5 products: container table (document UUIDs), CATProdCont object stream → instances, part numbers,
+                   placements; components found by document UUID or part number in services/assemblies.rs
 src/thumbnail.rs   preview images stored in Inventor / Solid Edge / SolidWorks / NX files (OLE via cfb, PNG, DIB → BMP, JPEG), cached in previews/;
-                   NX, SOLIDWORKS and Inventor parts/assemblies, CATIA and Creo parts, Rhino and SketchUp models, Fusion designs: a PNG rendered from the 3D preview instead (mesh/render.rs, software z-buffer)
+                   NX, SOLIDWORKS and Inventor parts/assemblies, CATIA parts/products, Creo parts, Rhino and SketchUp models, Fusion designs: a PNG rendered from the 3D preview instead (mesh/render.rs, software z-buffer)
 src/bomtable.rs    BOM tables exported by CAD programs (CSV/TSV, Excel, ODS): header synonyms, levels, units – heuristic
 src/stepbom.rs     product structure of STEP assemblies (own Part 21 reader: PRODUCT … NEXT_ASSEMBLY_USAGE_OCCURRENCE) → BomTable
 src/assets.rs      embedded CSS/JS/logos/fonts, cache busting (?v=<asset hash>, ETag)

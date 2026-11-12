@@ -22,6 +22,7 @@ pub mod backupcrypt;
 pub mod bomtable;
 pub mod cadformat;
 pub mod cadrefs;
+pub mod catprod;
 pub mod config;
 pub mod db;
 pub mod delivery;
