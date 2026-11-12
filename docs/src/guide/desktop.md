@@ -94,8 +94,23 @@ check-outs and reviews, and a **local working folder**:
   stays checked out to you and your local files are untouched. Once every
   byte is sent the server finishes the check-in on its own; the dialog says
   so (*too late to cancel*);
-* *Check in all* in the worklist checks in every check-out without local
-  changes and lists those that still have changes;
+* *Check in all* in the worklist first lists the check-outs with local
+  changes (modified or new files) and offers to **check them in first**
+  with their files; *Only the others* checks in just the check-outs without
+  local changes. Check-outs with a conflict always stay checked out – merge
+  them in their Workspace tab. *Sign out* (and *Change server*) asks the
+  same before it signs you out: *Check in and sign out*, *Park and sign
+  out* or *Sign out anyway*;
+* **Park…** (Workspace tab, *More ▾*, and a button of the check-in dialog)
+  uploads the ticked files as new versions but **keeps your check-out** –
+  work in progress is on the server even if your computer is lost, and
+  nobody else can change the revision meanwhile. Same conflict check as a
+  check-in; an empty comment is stored as *Work in progress (parked, still
+  checked out)*;
+* when somebody else released your check-out (an administrator, or a
+  manager of the group with a reason), the Workspace tab says *Released by
+  X; your local changes are kept and need a new check-out*, with the date
+  and the reason – until the revision is checked out again;
 * *Dependents to check* (worklist and home) shows one line per dependent
   revision with the number of changes it has to be checked against; the
   arrow lists them (a click opens the item that changed). On the home page

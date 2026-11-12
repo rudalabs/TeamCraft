@@ -112,6 +112,8 @@ export function svgIcon(path) {
 export var ICONS = {
   checkout: "M7 11V7a5 5 0 0 1 10 0v4|M5 11h14v10H5z",
   checkin: "M12 3v12|M7 10l5 5 5-5|M5 21h14",
+  // park: up to the server, the lock stays
+  upload: "M12 20V8|M7 13l5-5 5 5|M5 3h14",
   cancel: "M6 6l12 12|M18 6L6 18",
   revise: "M4 12a8 8 0 0 1 14-5.3L20 9|M20 4v5h-5|M20 12a8 8 0 0 1-14 5.3L4 15|M4 20v-5h5",
   folder: "M3 7h6l2 2h10v10H3z",

@@ -686,6 +686,106 @@ pub fn old_dir_candidates(dirs: &[(String, bool)], state: &State) -> Vec<OldDir>
 }
 
 // ---------------------------------------------------------------------------
+// Local changes (before "Check in all" and sign-out) and parking
+// ---------------------------------------------------------------------------
+
+/// Whether a file state of the Workspace tab is local work the server does
+/// not have yet: `modified` and `new` can be checked in, a `conflict` has to
+/// be merged first. Everything else (`up_to_date`, `outdated`, `missing`,
+/// `clash`, `inaccessible`) is not work of the user's.
+pub fn is_local_change(state: &str) -> bool {
+    matches!(state, "modified" | "new" | "conflict")
+}
+
+/// A check-out of the user, as the worklist lists it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckoutRef {
+    /// The revision id on the server (for `POST /worklist/checkin-all`).
+    pub id: String,
+    pub project: Option<String>,
+    pub item: String,
+    pub code: String,
+}
+
+/// A check-out with local changes in the working folder.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct ChangedRevision {
+    #[serde(flatten)]
+    pub revision: CheckoutRef,
+    /// Files that can be checked in (or parked) as they are: `modified`, `new`.
+    pub upload: Vec<String>,
+    /// Files changed locally *and* on the server: they have to be merged in
+    /// the Workspace tab first, a check-in would be refused (409).
+    pub conflicts: Vec<String>,
+}
+
+/// The check-outs of the user split by their local changes.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct LocalChanges {
+    /// Revisions with local changes – to be checked in with their files (or
+    /// parked) before a bulk check-in or sign-out, never released silently.
+    pub changed: Vec<ChangedRevision>,
+    /// Revisions without local changes: a plain lock release loses nothing.
+    pub clean: Vec<CheckoutRef>,
+    /// Revisions whose working folder could not be compared, with the error:
+    /// treated as at risk by the callers (`atRisk` in `ui/js/shell.js`:
+    /// nothing is released blindly).
+    pub unreadable: Vec<(CheckoutRef, String)>,
+}
+
+/// Sorts check-outs by the states of their local files (`(name, state)` per
+/// file, from the Workspace status) into changed, clean and unreadable,
+/// keeping the order of the worklist.
+pub fn local_changes<I>(results: I) -> LocalChanges
+where
+    I: IntoIterator<Item = (CheckoutRef, Result<Vec<(String, String)>, String>)>,
+{
+    let mut out = LocalChanges::default();
+    for (revision, files) in results {
+        let files = match files {
+            Ok(files) => files,
+            Err(e) => {
+                out.unreadable.push((revision, e));
+                continue;
+            }
+        };
+        let mut upload = Vec::new();
+        let mut conflicts = Vec::new();
+        for (name, state) in files {
+            match state.as_str() {
+                "conflict" => conflicts.push(name),
+                s if is_local_change(s) => upload.push(name),
+                _ => {}
+            }
+        }
+        if upload.is_empty() && conflicts.is_empty() {
+            out.clean.push(revision);
+        } else {
+            out.changed.push(ChangedRevision {
+                revision,
+                upload,
+                conflicts,
+            });
+        }
+    }
+    out
+}
+
+/// The comment of a parked upload when the user gives none (file history,
+/// audit log).
+pub const PARK_COMMENT: &str = "Work in progress (parked, still checked out)";
+
+/// The comment a park stores: the user's, or [`PARK_COMMENT`].
+pub fn park_comment(comment: &str) -> String {
+    let comment = comment.trim();
+    if comment.is_empty() {
+        PARK_COMMENT.to_string()
+    } else {
+        comment.to_string()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Log
 // ---------------------------------------------------------------------------
 
@@ -1175,5 +1275,103 @@ mod tests {
         assert_eq!(format_utc(0), "1970-01-01 00:00:00 UTC");
         assert_eq!(format_utc(1_793_828_236), "2026-11-04 21:37:16 UTC");
         assert_eq!(format_utc(951_782_400), "2000-02-29 00:00:00 UTC");
+    }
+
+    fn checkout(item: &str) -> CheckoutRef {
+        CheckoutRef {
+            id: format!("id-{item}"),
+            project: Some("ROVER".into()),
+            item: item.into(),
+            code: "A".into(),
+        }
+    }
+
+    fn files(list: &[(&str, &str)]) -> Result<Vec<(String, String)>, String> {
+        Ok(list
+            .iter()
+            .map(|(n, s)| (n.to_string(), s.to_string()))
+            .collect())
+    }
+
+    #[test]
+    fn local_change_states() {
+        for s in ["modified", "new", "conflict"] {
+            assert!(is_local_change(s), "{s}");
+        }
+        for s in [
+            "up_to_date",
+            "outdated",
+            "missing",
+            "clash",
+            "inaccessible",
+            "",
+        ] {
+            assert!(!is_local_change(s), "{s}");
+        }
+    }
+
+    #[test]
+    fn check_outs_with_local_changes_are_listed() {
+        let report = local_changes(vec![
+            (
+                checkout("PRT-1"),
+                files(&[("a.prt", "up_to_date"), ("a.step", "outdated")]),
+            ),
+            (
+                checkout("PRT-2"),
+                files(&[
+                    ("b.prt", "modified"),
+                    ("b.step", "new"),
+                    ("b.drw", "conflict"),
+                    ("b.pdf", "missing"),
+                ]),
+            ),
+            (checkout("PRT-3"), Err("server not reachable".into())),
+            (checkout("PRT-4"), files(&[])),
+            (checkout("PRT-5"), files(&[("e.prt", "conflict")])),
+            (checkout("PRT-6"), files(&[("f.prt", "clash")])),
+        ]);
+        assert_eq!(
+            report.changed,
+            vec![
+                ChangedRevision {
+                    revision: checkout("PRT-2"),
+                    upload: vec!["b.prt".into(), "b.step".into()],
+                    conflicts: vec!["b.drw".into()],
+                },
+                ChangedRevision {
+                    revision: checkout("PRT-5"),
+                    upload: vec![],
+                    conflicts: vec!["e.prt".into()],
+                },
+            ]
+        );
+        assert_eq!(
+            report.clean,
+            vec![checkout("PRT-1"), checkout("PRT-4"), checkout("PRT-6")],
+            "no local work: a plain release loses nothing (a clash is another item's file)"
+        );
+        assert_eq!(
+            report.unreadable,
+            vec![(checkout("PRT-3"), "server not reachable".to_string())]
+        );
+        assert_eq!(local_changes(Vec::new()), LocalChanges::default());
+    }
+
+    #[test]
+    fn changed_revisions_serialize_flat() {
+        let report = local_changes(vec![(checkout("PRT-2"), files(&[("b.prt", "modified")]))]);
+        let json = serde_json::to_value(&report).unwrap();
+        assert_eq!(json["changed"][0]["item"], "PRT-2");
+        assert_eq!(json["changed"][0]["id"], "id-PRT-2");
+        assert_eq!(json["changed"][0]["upload"][0], "b.prt");
+        assert_eq!(json["clean"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn park_comments() {
+        assert_eq!(park_comment(""), PARK_COMMENT);
+        assert_eq!(park_comment("  \n"), PARK_COMMENT);
+        assert_eq!(park_comment(" fillet fixed "), "fillet fixed");
     }
 }

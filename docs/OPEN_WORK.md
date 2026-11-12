@@ -417,7 +417,12 @@ real files and belong to section 3 once such files are at hand.
   manager, releases check-outs with a reason, sets "member until" (`project_members.expires_at`, flag only), removes
   members and demotes the old managers – each step through its own service and audited. Left: the access review page
   for internal groups, ownership hand-over from the season page (today: *Hand over work* on the user page).
-- [ ] Steps 9–10: IdP-driven offboarding, desktop working folder.
+- [ ] Step 9: IdP-driven offboarding.
+- [x] Step 10: desktop working folder – *Check in all* and *Sign out* list the check-outs with local changes
+  (`layout::local_changes`) and offer to check them in first (sign-out also to park them); *Park…* uploads work in
+  progress as new versions and keeps the lock (`POST …/files`, `files::attach`); after a forced release the
+  Workspace tab says *Released by X; your local changes are kept and need a new check-out* (`released` of
+  `…/file-status`, `checkouts::released_from`, read from the audit log).
 
 **Desktop app**
 
