@@ -3815,6 +3815,85 @@ async fn rhino_models_get_a_3d_preview_and_a_rendered_thumbnail() {
     app.teardown().await;
 }
 
+/// A Fusion design (`.f3d`) is previewed from the display scene stored in
+/// the archive (Zstandard entries), in millimetres, and its thumbnail is
+/// rendered from that preview like an NX part's.
+#[tokio::test]
+async fn fusion_designs_are_previewed_from_their_display_scene() {
+    let app = app_or_skip!();
+    let (_, eng) = app.user_in("eng", Role::Editor, &["GEARBOX"]).await;
+    app.api(
+        Method::POST,
+        "/api/v1/items",
+        &eng,
+        Some(json!({ "item_type": "part", "name": "Cube", "project": "GEARBOX" })),
+    )
+    .await;
+    // a 2 cm cube in a display scene, next to a sketch and an edge
+    let archive = teamcraft::fusion::sample::cube_archive(2.0, &[]);
+    let files = app
+        .api_multipart(
+            "/api/v1/items/PRT-000001/revisions/A/files",
+            &eng,
+            &[("cube.f3d", &archive)],
+            &[],
+        )
+        .await;
+    assert_eq!(files.status, StatusCode::CREATED, "{}", files.text());
+    let files = files.json();
+    let file = &files.as_array().unwrap()[0];
+    assert_eq!(file["format"], "fusion-design");
+    let id = file["id"].as_str().unwrap().to_string();
+
+    let r = app
+        .api(Method::GET, &format!("/api/v1/files/{id}/mesh"), &eng, None)
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let mesh = teamcraft::mesh::Mesh::decode(&r.body).unwrap();
+    assert_eq!(mesh.parts, 1, "one body");
+    assert!(
+        mesh.triangle_count() >= 12,
+        "{} triangles",
+        mesh.triangle_count()
+    );
+    for axis in 0..3 {
+        let coords = mesh.positions.iter().skip(axis).step_by(3);
+        let lo = coords.clone().fold(f32::MAX, |a, &b| a.min(b));
+        let hi = coords.fold(f32::MIN, |a, &b| a.max(b));
+        assert!(
+            lo.abs() < 1e-3 && (hi - 20.0).abs() < 1e-3,
+            "axis {axis}: {lo}..{hi} mm"
+        );
+    }
+
+    let thumbnail = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/files/{id}/thumbnail"),
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(thumbnail.status, StatusCode::OK, "{}", thumbnail.text());
+    assert_eq!(
+        thumbnail.header("content-type").as_deref(),
+        Some("image/png")
+    );
+    assert!(thumbnail.body.starts_with(&[0x89, b'P', b'N', b'G']));
+    // IHDR: the rendered size
+    assert_eq!(&thumbnail.body[16..24], &[0, 0, 2, 0, 0, 0, 2, 0]);
+    let again = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/files/{id}/thumbnail"),
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(again.body, thumbnail.body, "served from the cache");
+    app.teardown().await;
+}
+
 /// An NX assembly has no tessellation of its own: its 3D preview is put
 /// together from the previews of its part files, found by file name and
 /// placed as the assembly says (the NIST assembly: 36 instances of 8

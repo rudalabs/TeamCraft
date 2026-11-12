@@ -120,6 +120,18 @@ converted from the model unit to millimetres. Polysurfaces, extrusions and
 NURBS surfaces saved without render meshes, curves, points, annotations,
 linked blocks and colours are not shown; such a model keeps the preview
 bitmap Rhino stored as its thumbnail.
+Fusion designs (`.f3d`) are ZIP archives whose entries are mostly
+compressed with Zstandard (read by `src/fusion.rs` with the pure-Rust
+`ruzstd`, sizes capped and checked against the stored CRC-32). Their 3D
+preview is the display scene Fusion stores for fast opening
+(`OGS.BlobFolder/OGS/DefaultScene/world` and `stream_mesh_NNN`,
+`src/mesh/f3d.rs`): the triangles of every body face, welded per body,
+refined along their stored normals like NX parts and converted from
+centimetres to millimetres. Sketches, edges, dimensions and work geometry
+are left out. The thumbnail is rendered from the 3D preview; a file
+without a display scene shows `Previews/big.png`, the image Fusion
+stored. The exact B-rep (ShapeManager `.smb`) is not read. See
+[Research: 3D preview of Fusion designs](../research/fusion-ogs-preview.md).
 
 Inventor parts and assemblies are OLE compound files whose data lives in
 zlib- or Zstandard-compressed segments below `RSeStorage` (`src/invpart.rs`;

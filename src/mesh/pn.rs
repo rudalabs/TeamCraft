@@ -22,6 +22,73 @@ use std::collections::HashMap;
 
 type P = [f64; 3];
 
+/// Triangles the refinement aims at (a mesh is refined up to 3 × 3).
+const REFINE_BUDGET: usize = 500_000;
+
+/// A coarse tessellation of one body: points, triangles, and per triangle
+/// corner the index of its exact surface normal.
+#[derive(Debug, Default)]
+pub(crate) struct Lod {
+    pub points: Vec<P>,
+    pub triangles: Vec<[u32; 3]>,
+    pub normals: Vec<P>,
+    pub normal_triangles: Vec<[u32; 3]>,
+}
+
+impl Lod {
+    /// Every corner has a finite normal: the mesh can be refined.
+    pub(crate) fn normals_valid(&self) -> bool {
+        !self.normals.is_empty()
+            && self.normal_triangles.len() == self.triangles.len()
+            && self.normal_triangles.iter().flatten().all(|&n| {
+                self.normals
+                    .get(n as usize)
+                    .is_some_and(|v| v.iter().all(|x| x.is_finite()))
+            })
+    }
+}
+
+/// Subdivision level so that the refined mesh stays near the budget.
+pub(crate) fn refine_level(triangles: usize) -> usize {
+    let mut level = 3;
+    while level > 1 && triangles.saturating_mul(level * level) > REFINE_BUDGET {
+        level -= 1;
+    }
+    level
+}
+
+/// One mesh of the bodies (one part each), refined along their normals
+/// where they have them, coordinates multiplied by `scale`. `total` is the
+/// triangle count of all bodies (it picks the level).
+pub(crate) fn to_mesh(lods: Vec<Lod>, total: usize, scale: f64) -> anyhow::Result<super::Mesh> {
+    let level = refine_level(total);
+    let mut mesh = super::Mesh::default();
+    for lod in lods {
+        let (points, triangles) = if level > 1 && lod.normals_valid() {
+            refine(
+                &lod.points,
+                &lod.triangles,
+                &lod.normals,
+                &lod.normal_triangles,
+                level,
+            )
+        } else {
+            (lod.points, lod.triangles)
+        };
+        super::check_triangles(mesh.triangle_count() + triangles.len())?;
+        let mut part = super::Mesh {
+            parts: 1,
+            ..super::Mesh::default()
+        };
+        for p in &points {
+            part.vertex([p[0] * scale, p[1] * scale, p[2] * scale]);
+        }
+        part.indices.extend(triangles.iter().flatten());
+        mesh.append(part);
+    }
+    Ok(mesh)
+}
+
 fn sub(a: P, b: P) -> P {
     [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
 }
@@ -243,6 +310,13 @@ pub(crate) fn refine(
 mod tests {
     use super::*;
     use std::f64::consts::PI;
+
+    #[test]
+    fn refine_level_stays_in_the_budget() {
+        assert_eq!(refine_level(1_000), 3);
+        assert_eq!(refine_level(100_000), 2);
+        assert_eq!(refine_level(1_000_000), 1);
+    }
 
     /// A closed cylinder of radius 1 along z with `segments` facets around
     /// and flat caps (separate cap normals, so the rims are creases).

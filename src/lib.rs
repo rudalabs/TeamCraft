@@ -27,6 +27,7 @@ pub mod db;
 pub mod delivery;
 pub mod domain;
 pub mod error;
+pub mod fusion;
 #[doc(hidden)]
 pub mod fuzz_harness;
 pub mod htmltext;

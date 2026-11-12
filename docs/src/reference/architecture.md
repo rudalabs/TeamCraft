@@ -36,9 +36,10 @@
   tessellated geometry is read by `mesh/tessellated.rs`), reads the JT 9
   tessellation inside NX parts (`mesh/jt.rs`), the display tessellation
   inside SOLIDWORKS parts (`mesh/sw.rs`) and Inventor parts
-  (`mesh/inventor.rs`) and the CGR visualisation data inside CATIA V5 parts
-  (`mesh/catia.rs`) and refines them along their stored normals
-  (`mesh/pn.rs`); stand-alone JT 10 files and JT 9.5 assemblies come with
+  (`mesh/inventor.rs`), the CGR visualisation data inside CATIA V5 parts
+  (`mesh/catia.rs`) and the display scene inside Fusion designs
+  (`mesh/f3d.rs`, archive in `fusion.rs`) and refines them along their stored
+  normals (`mesh/pn.rs`); stand-alone JT 10 files and JT 9.5 assemblies come with
   their scene graph (`mesh/jt10.rs`), Rhino models with their stored meshes
   and SubD (`mesh/rhino.rs`), SketchUp models are triangulated with earcut
   (`mesh/sketchup.rs`, `mesh/earcut.rs`; SketchUp 3–2020 through the vendored
@@ -78,6 +79,7 @@
 | `src/nxpart.rs`, `src/swpart.rs`     | NX part stream container, SOLIDWORKS 2015+ section container (references, preview images, assembly placements)                                                    |
 | `src/invpart.rs`, `src/invplace.rs`, `src/invasm.rs` | Inventor segments below `RSeStorage` (zlib or Zstandard); assembly components and placements for the 3D preview (`UFRxDoc`, `AmRxSegment`); occurrence counts for BOM quantities |
 | `src/massprops.rs`                   | mass properties of closed meshes (volume, CG, inertia; Eberly), edge check, parallel axis roll-up                                                                 |
+| `src/fusion.rs`                      | Fusion design archives: ZIP with Zstandard entries (display scene, preview image)                                                                                 |
 | `src/mesh.rs`, `src/preview.rs`      | 3D readers and the preview cache; `src/simmesh.rs` + `src/simmesh/`: VTK/VTU/VTP/FRD results with fields                                                          |
 | `src/shape.rs`                       | shape signatures (extents, area, volume, D2 distribution) for the similar part search                                                                             |
 | `src/webhooks.rs`                    | event webhooks: outbox worker, HMAC-SHA256 signature, backoff, target (SSRF) guard                                                                                |

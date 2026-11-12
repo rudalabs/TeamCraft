@@ -15,6 +15,9 @@ see the notices in the README.
 
 ### Added
 
+- 3D preview of Autodesk Fusion designs (`.f3d`) from the display mesh
+  Fusion stores in the file, refined along its exact normals like NX parts;
+  the thumbnail is rendered from it (the PNG Fusion stored is the fallback).
 - Offboarding (#173, step 9) – leavers removed only at the identity
   provider: **OpenID Connect Back-Channel Logout** at
   `/auth/oidc/backchannel-logout` – a logout token signed by the provider

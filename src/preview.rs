@@ -186,6 +186,8 @@ pub enum PreviewFormat {
     CatiaPart,
     /// SketchUp models: their faces triangulated, components placed.
     SketchUp,
+    /// Autodesk Fusion designs: the display scene they store.
+    FusionDesign,
     Pts,
     Xyz,
     Las,
@@ -197,7 +199,7 @@ pub enum PreviewFormat {
 }
 
 impl PreviewFormat {
-    pub const ALL: [PreviewFormat; 26] = [
+    pub const ALL: [PreviewFormat; 27] = [
         PreviewFormat::Stl,
         PreviewFormat::Obj,
         PreviewFormat::Ply,
@@ -217,6 +219,7 @@ impl PreviewFormat {
         PreviewFormat::InvAssembly,
         PreviewFormat::CatiaPart,
         PreviewFormat::SketchUp,
+        PreviewFormat::FusionDesign,
         PreviewFormat::Pts,
         PreviewFormat::Xyz,
         PreviewFormat::Las,
@@ -258,6 +261,7 @@ impl PreviewFormat {
             PreviewFormat::InvAssembly => "inventor-assembly",
             PreviewFormat::CatiaPart => "catia-part",
             PreviewFormat::SketchUp => "sketchup",
+            PreviewFormat::FusionDesign => "fusion-design",
             PreviewFormat::Pts => "pts",
             PreviewFormat::Xyz => "xyz",
             PreviewFormat::Las => "las",

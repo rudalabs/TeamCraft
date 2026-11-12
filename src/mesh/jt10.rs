@@ -48,9 +48,10 @@ use std::io::Read;
 use anyhow::{anyhow, bail, ensure, Result};
 
 use super::jt::{
-    arithmetic, build_lod, guid, lag1, refine_level, Bits, DeeringTable, Entry, Lod, Reader,
-    Symbols, MAX_DEPTH, MAX_VALUES, TRI_STRIP_SET_LOD,
+    arithmetic, build_lod, guid, lag1, Bits, DeeringTable, Entry, Reader, Symbols, MAX_DEPTH,
+    MAX_VALUES, TRI_STRIP_SET_LOD,
 };
+use super::pn::{refine_level, Lod};
 use super::{check_triangles, Mesh};
 
 /// Largest decompressed scene graph segment.

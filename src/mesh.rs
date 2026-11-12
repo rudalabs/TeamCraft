@@ -26,6 +26,7 @@ use anyhow::{bail, Result};
 
 mod catia;
 mod earcut;
+mod f3d;
 mod gltf;
 mod helpers;
 mod inventor;
@@ -81,6 +82,7 @@ pub fn read(format: &str, data: &[u8]) -> Result<Mesh> {
         ),
         "catia-part" => catia::read_part(data)?,
         "sketchup" => sketchup::read(data)?,
+        "fusion-design" => f3d::read_f3d(data)?,
         "vtk-legacy" => crate::simmesh::vtk_legacy(data)?,
         "vtk-unstructured" | "vtk-polydata" => crate::simmesh::vtk_xml(data)?,
         "calculix-frd" => crate::simmesh::frd(data)?,

@@ -230,7 +230,7 @@ fn build(faces: &[&Face]) -> Result<Mesh> {
             normals.extend(&face.normals);
         }
     }
-    let level = super::jt::refine_level(triangles.len());
+    let level = super::pn::refine_level(triangles.len());
     let (points, triangles) = if level > 1 {
         super::pn::refine(&points, &triangles, &normals, &normal_triangles, level)
     } else {
