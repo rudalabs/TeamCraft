@@ -175,7 +175,10 @@ an Xvfb display of 1440 × 900 without a window manager and captures the
 screen with ImageMagick. The app has no deep links, so `xdotool` drives it like
 a user: the Ctrl+2 shortcut (worklist) and clicks on navigator rows at fixed
 screen positions (the ROVER group, the checked-out bracket, the change order
-waiting for review). When the desktop layout or the demo data changes, check
+waiting for review), then Ctrl+PageUp back to the bracket, its *Graph*
+sub-tab and the sensor mast assembly above it in the graph
+(`desktop-graph.png`; `desktop-graph-nav.png` shows the bracket's graph the
+click aims at). When the desktop layout or the demo data changes, check
 that the `desktop-*.png` images still show what their names say and adjust the
 coordinates in `desktop_run`.
 

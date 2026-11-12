@@ -878,8 +878,9 @@ capture_desktop() {
     desktop_run -dark teamcraft-night
 }
 
-# desktop_run SUFFIX SKIN – starts the app with SKIN, captures the four
-# screens as desktop-*SUFFIX.png and quits the app again.
+# desktop_run SUFFIX SKIN – starts the app with SKIN, captures its screens
+# (home, worklist, revision, change order, graph, agent) as
+# desktop-*SUFFIX.png and quits the app again.
 desktop_run() {
     local suffix=$1 skin=$2 settings=$WORK/xdg-config/io.github.rudalabs.teamcraft/settings.json
     log "capturing TeamCraft Desktop, skin $skin (1440x900, Xvfb)"
@@ -927,10 +928,37 @@ desktop_run() {
     desktop_click 210 203 # "Waiting for my review": the enclosure change
     settle 2 "the change order tab"
     desktop_snap "desktop-change$suffix"
+    desktop_graph "$suffix"
     desktop_agent "$suffix"
     kill "$APP_PID" 2>/dev/null || true
     wait "$APP_PID" 2>/dev/null || true
     APP_PID=
+}
+
+# desktop_graph SUFFIX – the Graph tab of a revision: the BOM and reference
+# graph of the sensor mast assembly with its children, their ×n quantities
+# and preview images (desktop-graph.png is in the README and the book). The
+# mast tab cannot be clicked open directly – as a dependent to check its tab
+# shows the impacts above the sub-tabs, which moves them – so the way leads
+# through the bracket tab, whose layout desktop-revision.png shows: back to
+# it (Ctrl+PageUp, the change tab is the last one), its "Graph" sub-tab
+# right after "References", then the assembly above the bracket in its graph.
+# The graph fits itself into the pane (zoom capped at 1.4): the one "uses"
+# card sits at the pane's centre line, about 110 px above its middle.
+# desktop-graph-nav*.png (the bracket's graph) is the calibration image for
+# that click, not in the README. Afterwards the change tab is active again.
+desktop_graph() {
+    local suffix=$1
+    desktop_key ctrl+Page_Up
+    settle 2 "the bracket tab"
+    desktop_click 838 248 # sub-tab "Graph" of the mounting bracket
+    settle 3 "the graph of the mounting bracket"
+    desktop_snap "desktop-graph-nav$suffix"
+    desktop_click 898 528 # the card above the bracket: the sensor mast assembly
+    settle 4 "the graph of the sensor mast assembly"
+    desktop_snap "desktop-graph$suffix"
+    desktop_key ctrl+Page_Down
+    settle 2 "the change order tab"
 }
 
 # desktop_agent SUFFIX – the Agent view (Ctrl+4) with the scripted demo agent
