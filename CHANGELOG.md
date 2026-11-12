@@ -15,6 +15,12 @@ see the notices in the README.
 
 ### Added
 
+- JT 9.5 assemblies in the 3D preview: a stand-alone JT 9 file with several
+  shapes (or a placed one) is put together through its scene graph like JT
+  10 – instances, transforms, units, hidden nodes – instead of showing its
+  parts piled up at the origin. Single-part JT 9 files and the JT inside NX
+  parts read exactly as before. Tested with JT 9.5 files built around the
+  real NIST hex nut (no openly licensed JT 9.5 assembly exists).
 - 3D preview of stand-alone JT 10 files (`.jt`, ISO 14306): parts and whole
   assemblies from one file – the scene graph (LZMA via the pure-Rust
   `lzma-rs`, MIT) with transforms, units and hidden nodes, each shape's
