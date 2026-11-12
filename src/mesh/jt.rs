@@ -823,7 +823,12 @@ fn bitlength(bits: &mut Bits, count: usize) -> Result<Vec<i32>> {
 
 /// Arithmetic codec with one probability context; escape symbols (-2)
 /// take the next out-of-band value.
-pub(super) fn arithmetic(bits: &mut Bits, count: usize, context: &[Entry], oob: &[i32]) -> Result<Vec<i32>> {
+pub(super) fn arithmetic(
+    bits: &mut Bits,
+    count: usize,
+    context: &[Entry],
+    oob: &[i32],
+) -> Result<Vec<i32>> {
     let total: u64 = context.iter().map(|e| e.occurrences).sum();
     ensure!(total > 0 && total <= 0xFFFF, damaged());
     let mut out = Vec::with_capacity(count);

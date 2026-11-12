@@ -96,6 +96,9 @@ const LATE_LOADED_ATOM: [u8; 16] = guid(
     [0xa3, 0xa7, 0x00, 0xaa, 0x00, 0xd1, 0x09, 0x54],
 );
 
+/// Points and triangles of one decoded (and refined) shape.
+type Shape = (Vec<[f64; 3]>, Vec<[u32; 3]>);
+
 fn damaged() -> anyhow::Error {
     anyhow!("The JT file is damaged.")
 }
@@ -115,20 +118,22 @@ pub(crate) fn read(data: &[u8]) -> Result<Mesh> {
     let mut lods: HashMap<[u8; 16], Option<Lod>> = HashMap::new();
     let mut total = 0usize;
     for o in &occurrences {
-        if !lods.contains_key(&o.segment) {
-            let lod = match file.segment(o.segment)? {
-                Some(bytes) => read_shape(&bytes)?,
-                None => None,
-            };
-            lods.insert(o.segment, lod);
-        }
-        if let Some(Some(lod)) = lods.get(&o.segment) {
+        let lod = match lods.entry(o.segment) {
+            std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+            std::collections::hash_map::Entry::Vacant(e) => {
+                e.insert(match file.segment(o.segment)? {
+                    Some(bytes) => read_shape(&bytes)?,
+                    None => None,
+                })
+            }
+        };
+        if let Some(lod) = lod {
             total = total.saturating_add(lod.triangles.len());
         }
     }
     check_triangles(total)?;
     let level = refine_level(total);
-    let mut refined: HashMap<[u8; 16], (Vec<[f64; 3]>, Vec<[u32; 3]>)> = HashMap::new();
+    let mut refined: HashMap<[u8; 16], Shape> = HashMap::new();
     for (id, lod) in lods {
         let Some(lod) = lod else { continue };
         let shape = if level > 1 && lod.normals_valid() {
@@ -523,8 +528,7 @@ impl Graph {
                 .and_then(|i| node.children.get(i..=i))
                 .unwrap_or_default(),
             Kind::TriStripShape => {
-                if let Some(Atom::LateLoaded(segment)) = self.property(id, "JT_LLPROP_SHAPEIMPL")
-                {
+                if let Some(Atom::LateLoaded(segment)) = self.property(id, "JT_LLPROP_SHAPEIMPL") {
                     ensure!(
                         out.len() < MAX_OCCURRENCES,
                         "The JT file has more than {MAX_OCCURRENCES} shapes."
@@ -648,7 +652,7 @@ fn read_shape(segment: &[u8]) -> Result<Option<Lod>> {
     r.u8()?; // base shape LOD version
     r.u8()?; // vertex shape LOD version
     r.take(8)?; // vertex bindings
-    // NX: length of the rest and a 16-byte id, not in the specification
+                // NX: length of the rest and a 16-byte id, not in the specification
     let nx_block = super::u32_le(element, r.at)
         .ok()
         .and_then(|n| usize::try_from(n).ok())
