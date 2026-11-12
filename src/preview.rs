@@ -23,7 +23,7 @@ use std::{
     time::Duration,
 };
 
-use tokio::sync::{Semaphore, SemaphorePermit};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, SemaphorePermit};
 
 use crate::{
     error::{AppError, AppResult},
@@ -38,6 +38,11 @@ pub const CACHE_VERSION: u32 = 2;
 
 /// Conversions that run at the same time.
 pub const MAX_PARALLEL: usize = 2;
+
+/// Thumbnails drawn and assembly previews composed at the same time
+/// ([`Previews::render`]): each keeps one CPU busy and holds its meshes in
+/// memory.
+pub const MAX_RENDERS: usize = 2;
 
 /// Size and memory limits of the preview (`TEAMCRAFT_PREVIEW_MAX_*`).
 ///
@@ -405,6 +410,74 @@ pub fn worker_exe() -> Option<PathBuf> {
     })
 }
 
+/// One-at-a-time turns per key ([`Previews::render`]): who asks for a key
+/// that is being worked on waits for that work instead of repeating it.
+#[derive(Clone, Default)]
+struct Turns(Arc<Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>>);
+
+impl Turns {
+    fn place(&self, key: &str) -> Place {
+        let lock = self
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .entry(key.to_string())
+            .or_default()
+            .clone();
+        Place {
+            turns: self.clone(),
+            key: key.to_string(),
+            lock: Some(lock),
+        }
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).len()
+    }
+}
+
+/// A place in the line of a key. The key is forgotten when the last place
+/// in its line is given up – also by a request that went away while waiting.
+struct Place {
+    turns: Turns,
+    key: String,
+    lock: Option<Arc<tokio::sync::Mutex<()>>>,
+}
+
+impl Place {
+    /// Waits until it is this place's turn.
+    async fn turn(&self) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+        match &self.lock {
+            Some(lock) => Some(lock.clone().lock_owned().await),
+            None => None,
+        }
+    }
+}
+
+impl Drop for Place {
+    fn drop(&mut self) {
+        let mut line = self.turns.0.lock().unwrap_or_else(|e| e.into_inner());
+        drop(self.lock.take());
+        // only the map holds the lock now: nobody works on or waits for the key
+        if line
+            .get(&self.key)
+            .is_some_and(|lock| Arc::strong_count(lock) == 1)
+        {
+            line.remove(&self.key);
+        }
+    }
+}
+
+/// What a render holds while it works, given back in this order: the slot,
+/// the turn, then the place in the line (which may forget the key only
+/// after the turn is over).
+struct Rendering {
+    _slot: OwnedSemaphorePermit,
+    _turn: Option<tokio::sync::OwnedMutexGuard<()>>,
+    _place: Place,
+}
+
 /// Cached, isolated conversions (one per server, part of `AppState`).
 pub struct Previews {
     dir: PathBuf,
@@ -415,6 +488,10 @@ pub struct Previews {
     waiting: AtomicUsize,
     limits: PreviewLimits,
     running: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    /// The slots of [`Previews::render`].
+    renders: Arc<Semaphore>,
+    /// One render per cache entry at a time.
+    turns: Turns,
 }
 
 impl Previews {
@@ -429,7 +506,46 @@ impl Previews {
             waiting: AtomicUsize::new(0),
             limits,
             running: Mutex::new(HashMap::new()),
+            renders: Arc::new(Semaphore::new(MAX_RENDERS)),
+            turns: Turns::default(),
         }
+    }
+
+    /// Runs CPU-bound `work` on a derived cache entry – drawing a thumbnail,
+    /// composing an assembly preview – off the async runtime: at most
+    /// [`MAX_RENDERS`] at a time and one at a time per `key` (the path of
+    /// the entry). `work` must look in the cache before it does anything, so
+    /// requests that waited for the same `key` answer from what the first
+    /// one stored instead of doing it again. A request that only reads the
+    /// cache does not come here and never waits for a slot.
+    ///
+    /// The slot and the turn stay taken until `work` returns, also when the
+    /// request that started it is gone: a blocking thread cannot be stopped,
+    /// and its work is still running.
+    pub async fn render<T, F>(&self, key: &str, work: F) -> AppResult<T>
+    where
+        T: Send + 'static,
+        F: FnOnce() -> T + Send + 'static,
+    {
+        let place = self.turns.place(key);
+        let turn = place.turn().await;
+        let slot = self
+            .renders
+            .clone()
+            .acquire_owned()
+            .await
+            .map_err(|e| AppError::Other(anyhow::anyhow!("render queue closed: {e}")))?;
+        let held = Rendering {
+            _slot: slot,
+            _turn: turn,
+            _place: place,
+        };
+        tokio::task::spawn_blocking(move || {
+            let _held = held;
+            work()
+        })
+        .await
+        .map_err(|e| AppError::Other(anyhow::anyhow!("render task failed: {e}")))
     }
 
     /// The cache directory (`<vault>/previews`), also of the thumbnails.
@@ -1228,6 +1344,8 @@ mod tests {
             waiting: AtomicUsize::new(0),
             limits: PreviewLimits::default(),
             running: Mutex::new(HashMap::new()),
+            renders: Arc::new(Semaphore::new(1)),
+            turns: Turns::default(),
         };
         let (mesh, err) = previews.paths(&sha).unwrap();
         let asm = previews.assembly_path(&sha, "0123abcd").unwrap();
@@ -1295,6 +1413,99 @@ mod tests {
         assert_eq!(previews.queue(), (MAX_PARALLEL, 0));
         drop(held);
         assert_eq!(previews.queue(), (0, 0));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn renders_are_bounded_and_done_once_per_key() {
+        let root = std::env::temp_dir().join(format!("teamcraft-preview-{}", uuid::Uuid::new_v4()));
+        let vault = Vault::open(&root).await.unwrap();
+        let previews = Arc::new(Previews::new(&vault, PreviewLimits::default()));
+        let cache = Arc::new(Mutex::new(std::collections::HashSet::<String>::new()));
+        let (running, peak) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+        let mut requests = Vec::new();
+        // three requests for each of six entries, all at once
+        for n in 0..18 {
+            let (previews, cache) = (previews.clone(), cache.clone());
+            let (running, peak) = (running.clone(), peak.clone());
+            requests.push(tokio::spawn(async move {
+                let key = format!("entry-{}", n % 6);
+                let work_key = key.clone();
+                previews
+                    .render(&key, move || {
+                        if cache.lock().unwrap().contains(&work_key) {
+                            return false;
+                        }
+                        let now = running.fetch_add(1, Ordering::SeqCst) + 1;
+                        peak.fetch_max(now, Ordering::SeqCst);
+                        std::thread::sleep(Duration::from_millis(30));
+                        cache.lock().unwrap().insert(work_key);
+                        running.fetch_sub(1, Ordering::SeqCst);
+                        true
+                    })
+                    .await
+                    .unwrap()
+            }));
+        }
+        let mut rendered = 0;
+        for request in requests {
+            rendered += usize::from(request.await.unwrap());
+        }
+        // one render per entry, the other requests found it in the cache
+        assert_eq!(rendered, 6);
+        let peak = peak.load(Ordering::SeqCst);
+        assert!((1..=MAX_RENDERS).contains(&peak), "{peak} at once");
+        assert_eq!(previews.renders.available_permits(), MAX_RENDERS);
+        assert_eq!(previews.turns.len(), 0);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_render_keeps_its_slot_and_turn_when_the_request_is_gone() {
+        let root = std::env::temp_dir().join(format!("teamcraft-preview-{}", uuid::Uuid::new_v4()));
+        let vault = Vault::open(&root).await.unwrap();
+        let previews = Arc::new(Previews::new(&vault, PreviewLimits::default()));
+        let (started_tx, started_rx) = std::sync::mpsc::channel::<()>();
+        let (finish_tx, finish_rx) = std::sync::mpsc::channel::<()>();
+        let request = {
+            let previews = previews.clone();
+            tokio::spawn(async move {
+                previews
+                    .render("entry", move || {
+                        started_tx.send(()).unwrap();
+                        finish_rx.recv().unwrap();
+                    })
+                    .await
+            })
+        };
+        tokio::task::spawn_blocking(move || started_rx.recv().unwrap())
+            .await
+            .unwrap();
+        // a second request for the entry waits in line …
+        let waiter = {
+            let previews = previews.clone();
+            tokio::spawn(async move { previews.render("entry", || ()).await })
+        };
+        request.abort();
+        let _ = request.await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        // … and the work goes on without its request: slot and turn are taken
+        assert_eq!(previews.renders.available_permits(), MAX_RENDERS - 1);
+        assert_eq!(previews.turns.len(), 1);
+        assert!(!waiter.is_finished());
+        // a waiter that goes away leaves the line, the entry stays known
+        waiter.abort();
+        let _ = waiter.await;
+        assert_eq!(previews.turns.len(), 1);
+        finish_tx.send(()).unwrap();
+        for _ in 0..200 {
+            if previews.turns.len() == 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(previews.renders.available_permits(), MAX_RENDERS);
+        assert_eq!(previews.turns.len(), 0);
         std::fs::remove_dir_all(&root).ok();
     }
 

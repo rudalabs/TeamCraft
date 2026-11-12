@@ -24,7 +24,10 @@ itself must neither wait for them nor be lost or announced twice.
       Mattermost (`email_state` / `chat_state` = `pending`); a task sends the
       pending ones every few seconds, retries failures and marks them `failed`
       after `MAX_ATTEMPTS` (5); without configuration they are marked
-      `skipped`. One instance delivers (no row locking).
+      `skipped`. One instance delivers (no row locking). A run serves a few
+      recipients at the same time (`PARALLEL_RECIPIENTS`, small because mail
+      services limit the connections of a sender); the notifications of one
+      recipient keep their order.
     * `src/webhooks.rs`: rows are claimed with `FOR UPDATE SKIP LOCKED` and a
       lease, signed with HMAC-SHA256, retried with exponential backoff and
       jitter up to `MAX_ATTEMPTS` (8); redirects are never followed and
