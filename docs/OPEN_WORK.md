@@ -96,8 +96,9 @@ feature milestone – the features in *What works* are enough; what is missing i
     - [x] F5: `Strict-Transport-Security` when the public URL is https
     - [ ] F6: OIDC with a plain `http://` issuer: refuse it outside `localhost`, or verify ID token signatures (JWKS)
       for it – a decision, since it can break installations with an internal IdP
-    - [ ] F7: end TeamCraft sessions of users removed at the IdP (shorter SSO sessions, back-channel logout or a
-      periodic check)
+    - [x] F7: end TeamCraft sessions of users removed at the IdP – OpenID Connect back-channel logout
+      (`/auth/oidc/backchannel-logout`, #173 step 9). Left: shorter SSO sessions for providers without back-channel
+      logout (`TEAMCRAFT_OIDC_SESSION_HOURS`, unpublished `ga/oidc-hardening` work)
     - [ ] F8: re-check the hash of a blob while it is downloaded (or periodically), not only in `vault check`
     - [x] F9: disk quota per user and in total for uploads (`services::quotas`, `teamcraft user quota` /
       `teamcraft vault quota`, `tests/quotas.rs`)
@@ -421,7 +422,13 @@ real files and belong to section 3 once such files are at hand.
   manager, releases check-outs with a reason, sets "member until" (`project_members.expires_at`, flag only), removes
   members and demotes the old managers – each step through its own service and audited. Left: the access review page
   for internal groups, ownership hand-over from the season page (today: *Hand over work* on the user page).
-- [ ] Step 9: IdP-driven offboarding.
+- [x] Step 9: IdP-driven offboarding – (a) *SSO users without sign-in* on the admin *Users* page
+  (`services::offboarding::idle_sso_users`: no sign-in or token use for 90 days, still holding memberships, tokens or
+  check-outs); (b) `TEAMCRAFT_OIDC_TOKEN_IDLE_DAYS` caps new tokens of SSO users (`users::token_lifetime_for`);
+  (c) OpenID Connect Back-Channel Logout (`oidc::verify_logout_token`, `users::idp_logout`, migration 0071), tests
+  in `tests/oidc_flow.rs` with a signed logout token of the fake provider; (d) SCIM: research page only
+  (`docs/src/research/scim-deprovisioning.md`, not now). Left: a logout token with only `sid` (refused today), an
+  API route for the idle report.
 - [x] Step 10: desktop working folder – *Check in all* and *Sign out* list the check-outs with local changes
   (`layout::local_changes`) and offer to check them in first (sign-out also to park them); *Park…* uploads work in
   progress as new versions and keeps the lock (`POST …/files`, `files::attach`); after a forced release the
@@ -690,7 +697,7 @@ needs an issue with a reason first (see *Direction*).
 
 - [ ] Managed/SaaS and hybrid deployment (on-premises vault, cloud collaboration)
 - [ ] Permissions per object, per attribute and per lifecycle state; external (supplier) users
-- [ ] SAML, SCIM provisioning, ending sessions of users removed at the IdP (F7), built-in MFA
+- [ ] SAML, SCIM provisioning (research: *Deprovisioning through the identity provider*, not now), built-in MFA
 - [ ] Token scopes per project group (F2), project API keys
 - [ ] OpenAPI description, a stable versioned API, an event bus connector (Kafka/AMQP)
 - [ ] AI: per-user budgets (F16), prompt-injection protection for writes, AI-assisted impact analysis, semantic search
@@ -952,7 +959,8 @@ README licence table, follow the definition of done in `CLAUDE.md`. The docs are
   `tests/api_password.rs`, `tests/notification_settings_api.rs`, the metrics tests) run for the first time in its CI.
 - GA items started but not yet in a pull request (work kept in local worktrees): assistant budget (phase 4, F16),
   scoped tokens (F2), download hardening (F8, F10), retention and cleanup, parser hardening (F11,
-  F13, F14), MCP hardening (F15, F17), backup hardening (F19: file modes, signed manifest), OIDC hardening (F6, F7),
+  F13, F14), MCP hardening (F15, F17), backup hardening (F19: file modes, signed manifest), OIDC hardening (F6, F7
+  session hours – back-channel logout is done),
   OpenAPI description; not
   started: MCP versioning, CLI and configuration freeze, accessibility leftovers, SBOM and attestations, upgrade
   proofs per release, scale targets, JSON logs.

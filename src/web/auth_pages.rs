@@ -287,6 +287,42 @@ pub async fn oidc_reauth(
 }
 
 #[derive(Deserialize)]
+pub struct LogoutTokenForm {
+    logout_token: String,
+}
+
+/// `POST /auth/oidc/backchannel-logout` – OpenID Connect Back-Channel Logout
+/// (issue #173, step 9): the identity provider posts a signed logout token;
+/// the user's browser sessions end. Not behind the cross-site guard of the
+/// web pages – the provider calls it directly and the signed token is the
+/// credential. 200 when done (also for an unknown subject), 400 for a token
+/// that does not pass, never cached.
+pub async fn oidc_backchannel_logout(
+    State(st): State<AppState>,
+    Form(form): Form<LogoutTokenForm>,
+) -> Response {
+    use axum::response::IntoResponse;
+    let no_store = || [(header::CACHE_CONTROL, HeaderValue::from_static("no-store"))];
+    let Some(oidc) = st.oidc.as_ref() else {
+        let text = "Single sign-on is not configured.";
+        return (StatusCode::NOT_FOUND, no_store(), text).into_response();
+    };
+    let result = async {
+        let sub = oidc.verify_logout_token(&form.logout_token).await?;
+        users::idp_logout(&st.db, &sub).await
+    }
+    .await;
+    match result {
+        Ok(_) => (StatusCode::OK, no_store()).into_response(),
+        Err(AppError::BadRequest(message)) => {
+            tracing::warn!(%message, "refused a back-channel logout token");
+            (StatusCode::BAD_REQUEST, no_store(), message).into_response()
+        }
+        Err(e) => e.into_response(),
+    }
+}
+
+#[derive(Deserialize)]
 pub struct CallbackQuery {
     code: Option<String>,
     state: Option<String>,

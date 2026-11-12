@@ -204,9 +204,10 @@ What changed in `src/invpart.rs`:
 * the decoder is the pure-Rust `ruzstd` (MIT), the same crate the Fusion
   archives use.
 
-Tests repack the NIST parts with Zstandard (every segment, the frame also a
-few bytes off) and check that the preview is the same as from the zlib
-original; damaged Zstandard streams are errors, never panics. The fuzz
+Tests repack a NIST part with Zstandard (every segment, the frame also a
+few bytes off) and check that every segment unpacks to the same bytes as
+from the zlib original, and that a Zstandard part gives the same preview
+mesh as with zlib; damaged Zstandard streams are errors, never panics. The fuzz
 target `invpart` gets a small synthetic seed with Zstandard segments
 (`fuzz/seeds/invpart/zstd-segments.ipt`).
 

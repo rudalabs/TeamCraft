@@ -1712,14 +1712,24 @@ mod tests {
         assert!(html.contains("/access-log\""), "the whole log is linked");
         assert!(html.contains("/conditions\"") && html.contains("main-office, &lt;x&gt;"));
         assert!(html.contains("10.1.2.3") && html.contains("value=\"12\""));
-        render(
+        let html = render(
             &env,
             "admin/users.html",
             with_common(json!({
                 "users": [user()], "roles": roles(),
                 "oidc": { "admin_group": "a", "editor_group": "e", "viewer_group": null },
+                "idle_sso_days": 90,
+                "idle_sso": [{
+                    "user_id": ME, "username": "lena", "display_name": "Lena <L>",
+                    "last_login_at": null, "last_active_at": TS, "idp_logout_at": TS,
+                    "memberships": 2, "tokens": 1, "checkouts": 40,
+                }],
             })),
         );
+        assert!(html.contains("SSO users without sign-in") && html.contains("90 days"));
+        assert!(html.contains("Lena &lt;L&gt;"), "names are escaped");
+        assert!(html.contains(&format!("/users/{ME}/holdings\"")));
+        assert!(html.contains(">never<") && html.contains(">40<"));
         let html = render(
             &env,
             "admin/user_edit.html",

@@ -303,8 +303,13 @@ code base. These are the most important rules:
 * **Tests:** new behaviour comes with tests. Put unit tests next to the code
   and end-to-end tests in `tests/` (`api_flow.rs` for the REST API,
   `web_ui.rs` for the web interface).
-* **Documentation:** keep `README.md`, `docs/src/`, `platforms/*.md` and
-  `desktop/README.md` in sync with your change.
+* **Documentation:** every change updates the documentation in the same pull
+  request – a pull request without it is not finished. Check `CHANGELOG.md`
+  (an entry under *Unreleased*), `README.md` (features, licence table),
+  `docs/src/` (user and admin guide, `reference/api.md` for routes,
+  `admin/configuration.md` for settings, `dev/threat-model.md` for
+  security-relevant changes), `docs/OPEN_WORK.md`, `platforms/*.md` and, for
+  the desktop app, `desktop/README.md` and `docs/src/guide/desktop.md`.
 
 ## Dependencies, research and branding
 

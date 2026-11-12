@@ -123,3 +123,108 @@ fn identity_extraction() {
         Err(AppError::Forbidden(_))
     ));
 }
+
+/// An ES256 key pair as the provider would hold it, and its public JWK.
+fn es256_key(kid: &str) -> (ring::signature::EcdsaKeyPair, Jwk) {
+    use ring::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
+    let rng = ring::rand::SystemRandom::new();
+    let alg = &ECDSA_P256_SHA256_FIXED_SIGNING;
+    let pkcs8 = EcdsaKeyPair::generate_pkcs8(alg, &rng).unwrap();
+    let pair = EcdsaKeyPair::from_pkcs8(alg, pkcs8.as_ref(), &rng).unwrap();
+    let point = pair.public_key().as_ref().to_vec();
+    let jwk = Jwk {
+        kty: "EC".into(),
+        kid: Some(kid.into()),
+        alg: Some("ES256".into()),
+        crv: Some("P-256".into()),
+        x: Some(URL_SAFE_NO_PAD.encode(&point[1..33])),
+        y: Some(URL_SAFE_NO_PAD.encode(&point[33..65])),
+        ..Jwk::default()
+    };
+    (pair, jwk)
+}
+
+fn sign(pair: &ring::signature::EcdsaKeyPair, header: &Value, claims: &Value) -> String {
+    let enc = |v: &Value| URL_SAFE_NO_PAD.encode(serde_json::to_vec(v).unwrap());
+    let message = format!("{}.{}", enc(header), enc(claims));
+    let rng = ring::rand::SystemRandom::new();
+    let sig = pair.sign(&rng, message.as_bytes()).unwrap();
+    format!("{message}.{}", URL_SAFE_NO_PAD.encode(sig.as_ref()))
+}
+
+const ISS: &str = "https://auth.example.org/application/o/teamcraft/";
+
+fn logout_claims(now: i64) -> Value {
+    json!({
+        "iss": ISS, "aud": "teamcraft", "iat": now, "jti": "j-1", "sub": "u-4711",
+        "events": { BACKCHANNEL_LOGOUT_EVENT: {} },
+    })
+}
+
+fn check(token: &str, keys: &[Jwk], now: i64) -> Result<String, LogoutTokenError> {
+    verify_logout_token(token, keys, ISS, "teamcraft", now)
+}
+
+#[test]
+fn a_signed_logout_token_names_its_subject() {
+    let (pair, jwk) = es256_key("k1");
+    let now = 1_800_000_000;
+    let header = json!({ "alg": "ES256", "kid": "k1", "typ": "logout+jwt" });
+    let token = sign(&pair, &header, &logout_claims(now));
+    let keys = [jwk];
+    assert_eq!(check(&token, &keys, now), Ok("u-4711".to_string()));
+
+    // another key with the same id, an unknown key id
+    let (other, mut other_jwk) = es256_key("k1");
+    let foreign = sign(&other, &header, &logout_claims(now));
+    assert_eq!(
+        check(&foreign, &keys, now),
+        Err(LogoutTokenError::BadSignature)
+    );
+    other_jwk.kid = Some("k2".into());
+    assert_eq!(
+        check(&token, &[other_jwk], now),
+        Err(LogoutTokenError::UnknownKey)
+    );
+    // a changed payload under the old signature, `alg: none`, garbage
+    let parts: Vec<&str> = token.split('.').collect();
+    let mut claims = logout_claims(now);
+    claims["sub"] = json!("admin");
+    let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims).unwrap());
+    let forged = format!("{}.{payload}.{}", parts[0], parts[2]);
+    assert_eq!(
+        check(&forged, &keys, now),
+        Err(LogoutTokenError::BadSignature)
+    );
+    let none = URL_SAFE_NO_PAD.encode(br#"{"alg":"none","kid":"k1"}"#);
+    let unsigned = format!("{none}.{}.", parts[1]);
+    assert!(check(&unsigned, &keys, now).is_err());
+    assert_eq!(check("a.b", &keys, now), Err(LogoutTokenError::Malformed));
+}
+
+#[test]
+fn logout_token_claims_are_checked() {
+    let (pair, jwk) = es256_key("k1");
+    let now = 1_800_000_000;
+    let header = json!({ "alg": "ES256", "kid": "k1" });
+    let keys = [jwk];
+    let refused = |change: &dyn Fn(&mut Value)| {
+        let mut claims = logout_claims(now);
+        change(&mut claims);
+        let token = sign(&pair, &header, &claims);
+        matches!(check(&token, &keys, now), Err(LogoutTokenError::Claim(_)))
+    };
+    assert!(refused(&|c| c["iss"] = json!("https://evil.example.org")));
+    assert!(refused(&|c| c["aud"] = json!("another-app")));
+    assert!(refused(&|c| c["iat"] = json!(now - 3600)));
+    assert!(refused(&|c| c["iat"] = json!(now + 3600)));
+    assert!(refused(&|c| c["exp"] = json!(now - 3600)));
+    assert!(refused(&|c| c["events"] = json!({})));
+    assert!(refused(&|c| c["nonce"] = json!("n")));
+    assert!(refused(&|c| c["sub"] = json!("")));
+    // a list audience is fine
+    let mut claims = logout_claims(now);
+    claims["aud"] = json!(["other", "teamcraft"]);
+    let token = sign(&pair, &header, &claims);
+    assert!(check(&token, &keys, now).is_ok());
+}
