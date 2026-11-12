@@ -107,7 +107,8 @@ linked blocks and colours are not shown; such a model keeps the preview
 bitmap Rhino stored as its thumbnail.
 
 Inventor parts and assemblies are OLE compound files whose data lives in
-zlib-compressed segments below `RSeStorage` (`src/invpart.rs`). The 3D
+zlib- or Zstandard-compressed segments below `RSeStorage` (`src/invpart.rs`;
+Zstandard in newer files, told apart by the magic bytes). The 3D
 preview of a part is the display tessellation in `PmGraphicsSegment`
 (`src/mesh/inventor.rs`):
 - each B-rep face is an indexed triangle list (centimetres) with a unit

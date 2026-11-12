@@ -149,6 +149,13 @@ see the notices in the README.
 
 ### Fixed
 
+- Inventor 3D preview (#271): parts and assemblies whose segments are
+  compressed with Zstandard instead of zlib (seen in newer Inventor files;
+  every part failed with *damaged compressed data*) get their preview and
+  rendered thumbnail again. The compression is told by its magic bytes; the
+  Zstandard output is capped like the zlib output (pure-Rust `ruzstd`).
+  Preview cache version 3, thumbnail cache version 7 and shape signature
+  version 3: the failures cached before are converted again.
 - Desktop, *Graph* tab (#254): a click on a sub-assembly now turns the tab
   into that sub-assembly – tab title, header, toolbar and graph are its own –
   instead of re-centring the graph inside the tab of the assembly above it;
