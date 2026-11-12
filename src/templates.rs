@@ -1621,7 +1621,7 @@ mod tests {
             html.contains("/season\""),
             "managers find the season handover"
         );
-        let html = render(
+        let season = render(
             &env,
             "projects/season.html",
             with_common(json!({
@@ -1638,21 +1638,21 @@ mod tests {
                 "release_reason": { "min": 10, "max": 500 }, "max_members": 500,
             })),
         );
-        assert!(html.contains("Lena &lt;gone&gt;") && html.contains("expired"));
-        assert!(html.contains(&format!("name=\"release\" value=\"{ME}\"")));
+        assert!(season.contains("Lena &lt;gone&gt;") && season.contains("expired"));
+        assert!(season.contains(&format!("name=\"release\" value=\"{ME}\"")));
         assert!(
-            html.contains(&format!(
+            season.contains(&format!(
                 "name=\"remove\" value=\"{ME}\" aria-label=\"Remove lena\" checked"
             )),
             "a member whose membership expired is ticked"
         );
         assert!(
-            !html.contains(&format!(
+            !season.contains(&format!(
                 "name=\"remove\" value=\"{OTHER}\" aria-label=\"Remove erika\" checked"
             )),
             "an active member is not"
         );
-        assert!(html.contains("value=\"2026-08-01\""));
+        assert!(season.contains("value=\"2026-08-01\""));
         assert!(
             html.contains("Release 40 check-outs") && html.contains("Lena &lt;gone&gt;"),
             "a deactivated member's check-outs can be released"
