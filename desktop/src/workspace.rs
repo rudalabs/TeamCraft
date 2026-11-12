@@ -623,6 +623,10 @@ pub struct Status {
     /// accessible, e.g. a restricted project group): the local copies stay,
     /// Get, status and check-in skip it.
     pub inaccessible: bool,
+    /// Somebody else released my check-out of the revision since it was
+    /// last checked out (the server's `released`: `by_name`, `at`, `reason`,
+    /// `message`): local changes stay, but need a new check-out.
+    pub released: Option<Value>,
 }
 
 /// A local file of a revision: where it is and what the state says.
@@ -732,6 +736,7 @@ pub fn inaccessible_status(root: &Path, project: Option<&str>, item: &str, code:
         locked_by_me: false,
         locked_by_name: None,
         inaccessible: true,
+        released: None,
         files,
     }
 }
@@ -887,6 +892,7 @@ pub async fn status(
         locked_by_me: rev.locked_by_me,
         locked_by_name: rev.locked_by_name,
         inaccessible: false,
+        released: Some(server["released"].clone()).filter(Value::is_object),
         files: out,
     })
 }
@@ -963,7 +969,78 @@ pub async fn check_in(
     comment: &str,
     transfer: &Transfer<'_>,
 ) -> Result<Value, ApiError> {
+    send_local(
+        api,
+        root,
+        (project, item, code),
+        names,
+        comment,
+        transfer,
+        SendMode::CheckIn,
+    )
+    .await
+}
+
+/// Parks work in progress (issue #173, step 10): uploads the chosen files
+/// as new versions **without** releasing the lock – the upload endpoint of
+/// the web UI's *Add files* (`POST …/files`, `files::attach` on the server)
+/// – so the work survives a lost or broken laptop while the revision stays
+/// checked out. Same base-version guard (409), folders and chunked uploads
+/// as [`check_in`]; the files stay writable. An empty comment becomes
+/// [`layout::PARK_COMMENT`].
+#[allow(clippy::too_many_arguments)]
+pub async fn park(
+    api: &Api,
+    root: &Path,
+    project: Option<&str>,
+    item: &str,
+    code: &str,
+    names: &[String],
+    comment: &str,
+    transfer: &Transfer<'_>,
+) -> Result<Value, ApiError> {
+    if names.is_empty() {
+        return Err(ApiError::local(
+            "Choose the files to park – nothing was uploaded.".to_string(),
+        ));
+    }
+    send_local(
+        api,
+        root,
+        (project, item, code),
+        names,
+        &layout::park_comment(comment),
+        transfer,
+        SendMode::Park,
+    )
+    .await
+}
+
+/// What [`send_local`] does with the lock.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SendMode {
+    /// `…/checkin`: new versions and the lock released in one transaction.
+    CheckIn,
+    /// `…/files`: new versions, the lock stays.
+    Park,
+}
+
+async fn send_local(
+    api: &Api,
+    root: &Path,
+    (project, item, code): (Option<&str>, &str, &str),
+    names: &[String],
+    comment: &str,
+    transfer: &Transfer<'_>,
+    send: SendMode,
+) -> Result<Value, ApiError> {
+    let keep_lock = send == SendMode::Park;
     let rev = revision_files(api, project, item, code).await?;
+    if keep_lock && !rev.locked_by_me {
+        return Err(ApiError::local(format!(
+            "{item}/{code} is not checked out by you – check it out to park your changes."
+        )));
+    }
     let mut state = State::load(root);
     let before = state.clone();
     let news = new_local_files(root, project, item, code, &rev.files, &state).await?;
@@ -1014,9 +1091,13 @@ pub async fn check_in(
     }
     // Large files go first as resumable chunked uploads (with their base and
     // folder) and join this check-in by id – one transaction on the server.
+    let endpoint = match send {
+        SendMode::CheckIn => "checkin",
+        SendMode::Park => "files",
+    };
     let result = api
         .send_files(
-            &format!("{}/checkin", rev_path(item, code)),
+            &format!("{}/{endpoint}", rev_path(item, code)),
             item,
             code,
             &files,
@@ -1032,8 +1113,14 @@ pub async fn check_in(
     crate::addfiles::forget(root, item, code, &uploaded);
     // The checked-in content is the new base of the local files, and the
     // lock is gone: everything unchanged becomes read-only (best effort –
-    // the check-in itself has succeeded).
-    let stored = result["files"].as_array().cloned().unwrap_or_default();
+    // the check-in itself has succeeded). A park keeps the lock: the new
+    // base is recorded, the files stay writable.
+    // (`…/checkin` answers `{files: [...]}`, `…/files` the stored files.)
+    let stored = result["files"]
+        .as_array()
+        .or(result.as_array())
+        .cloned()
+        .unwrap_or_default();
     let after = revision_files(api, project, item, code)
         .await
         .map(|r| r.files)
@@ -1055,7 +1142,7 @@ pub async fn check_in(
             let meta = std::fs::metadata(path).ok();
             let mut entry = server.entry(&sha, meta.as_ref().map(|m| m.len()).unwrap_or(0), 0);
             entry.version = version;
-            entry.checked_out = false;
+            entry.checked_out = keep_lock;
             if layout::rel_of(root, path)
                 .is_some_and(|r| layout::key_of(&r) == layout::key_of(&entry.path))
             {
@@ -1064,10 +1151,14 @@ pub async fn check_in(
             state.insert(entry);
         }
     }
-    let keys: Vec<String> = state
-        .of_revision(item, code)
-        .map(|e| layout::key_of(&e.path))
-        .collect();
+    let keys: Vec<String> = if keep_lock {
+        Vec::new()
+    } else {
+        state
+            .of_revision(item, code)
+            .map(|e| layout::key_of(&e.path))
+            .collect()
+    };
     for key in keys {
         let Some(e) = state.files.get(&key).cloned() else {
             continue;

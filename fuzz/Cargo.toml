@@ -35,6 +35,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "invpart"
+path = "fuzz_targets/invpart.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "nxpart"
 path = "fuzz_targets/nxpart.rs"
 test = false

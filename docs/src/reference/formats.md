@@ -24,6 +24,18 @@ list is on every server at `/formats` and `GET /api/v1/formats`
 | SolidCraft, FieldCraft       | `.sc` `.solidcraft`, `.fieldcraft` – see [FieldCraft and SolidCraft](interop.md)                                             |
 | Rhino, Alias                 | `.3dm`, `.wire`                                                                                                              |
 
+SketchUp models (`.skp`) of SketchUp 2021 and later are a ZIP archive behind
+a UTF-16 header; `src/mesh/sketchup.rs` reads its `model.dat`, a tree of
+tag–length–value records (vertices, edges, faces with their loops, component
+definitions, instances with a 13-value transform, layers), triangulates every
+face with an earcut port (`src/mesh/earcut.rs`, holes and loops touching
+themselves included), places nested components and groups (up to 32 levels,
+mirrored ones with reversed triangles) and converts inches to millimetres.
+Hidden faces and instances, hidden layers and image entities are left out.
+Files of SketchUp 3 to 2020 (one MFC object stream) are read by the Rust
+port of OpenSKP (MIT), vendored unchanged in `vendor/openskp`, and placed and
+triangulated the same way. The thumbnail is rendered from the 3D preview.
+
 NX parts (NX 1980 and later) are read through their stream container (`SPLMSSTR`, `src/nxpart.rs`): the referenced
 component files come only from
 its reference streams (not from the save history), the preview image from
@@ -43,10 +55,22 @@ the assembly's layer settings hide (read from `/Root/UG_PART/UG_PART`), as
 in NX. Drawings have no 3D preview.
 
 Stand-alone `.jt` files (Teamcenter visualisation, exports of NX, CATIA,
-Creo) are previewed with the same reader when they are JT 9 with
-topologically compressed triangle LODs, as NX writes them; files of other JT
-versions (JT 10 with its other compression) report their version instead of a
-preview.
+Creo):
+
+- **JT 10** (`src/mesh/jt10.rs`) carries parts and assembly in one file. The
+  scene graph (an LZMA-compressed segment) gives every shape occurrence with
+  its transform, the units of the model and the nodes NX marks hidden
+  (section and trace-line geometry). Each shape's finest level of detail is
+  decoded with the JT 9 topology coder plus the newer integer codecs, its
+  hash checked, refined along the stored normals within the same budget as
+  NX parts and placed per instance.
+- **JT 9** with topologically compressed triangle LODs, as NX writes them:
+  an assembly (several shapes, or a placed one) is put together through its
+  scene graph like JT 10 – the JT 9.5 field widths (`I16` versions, `F32`
+  transforms), zlib instead of LZMA, metres unless the file names its units;
+  a single part goes through the reader of NX parts as before.
+- Other versions report their version. Not read: files that keep their parts
+  in other `.jt` files ("shattered"), colours, PMI and the B-rep segments.
 
 SOLIDWORKS files from 2015 on are read through their section container (`src/swpart.rs`). The 3D preview of a part is
 the display tessellation
@@ -66,6 +90,21 @@ virtual components are left out, and components are found by the file
 name of their stored path. Files saved before 2015 (OLE compound files) and
 drawings have no 3D preview.
 
+CATIA V5 parts (`.CATPart`, container `V5_CFV2`) are previewed from the
+visualisation data CATIA saves with them (`src/mesh/catia.rs`). That data is
+the container `CATCGRCont`, a `V5_CFV2` document nested in the file; its
+scene graph holds one uncompressed mesh per body. The reader takes:
+
+* the vertices in millimetres, stored with prefix sharing;
+* the exact surface normals of the curved faces;
+* the triangle lists, strips and fans of each B-rep face.
+
+The mesh is refined along the stored normals like an NX part. A part saved
+without visualisation data has no 3D preview. Products (`.CATProduct`) and
+drawings have none yet: a product references its parts by container id, not
+by file name. Details are in
+[Research: 3D preview of CATIA V5 parts](../research/catia-cgr-preview.md).
+
 Rhino models (`.3dm`, versions 1 to 8) are read as openNURBS archives (`src/mesh/rhino.rs`): nested chunks, the object,
 layer, block-definition
 and settings tables. The 3D preview shows what Rhino stored for display –
@@ -81,6 +120,26 @@ converted from the model unit to millimetres. Polysurfaces, extrusions and
 NURBS surfaces saved without render meshes, curves, points, annotations,
 linked blocks and colours are not shown; such a model keeps the preview
 bitmap Rhino stored as its thumbnail.
+
+Inventor parts and assemblies are OLE compound files whose data lives in
+zlib- or Zstandard-compressed segments below `RSeStorage` (`src/invpart.rs`;
+Zstandard in newer files, told apart by the magic bytes). The 3D
+preview of a part is the display tessellation in `PmGraphicsSegment`
+(`src/mesh/inventor.rs`):
+- each B-rep face is an indexed triangle list (centimetres) with a unit
+  surface normal per vertex;
+- the faces of solid bodies are taken (all faces of a part without a
+  solid), welded on their exact coordinates and refined along the normals
+  like NX parts, and shown in millimetres.
+
+An assembly is put together from the previews of its part and
+sub-assembly files (`src/invplace.rs`): the referenced files and the
+visibility of each occurrence come from the stream `UFRxDoc`, the
+placements from `AmRxSegment`, including the poses a parent gives the
+children of flexible sub-assemblies. Hidden and suppressed components are
+left out, and components are found by the file name of their stored path.
+Not covered: design views other than the saved one, weld beads, drawings
+and presentations.
 
 SOLIDWORKS files from 2015 on are no OLE files any more but a sequence of
 Deflate-compressed sections (`src/swpart.rs`; verified with SOLIDWORKS 2018
@@ -147,7 +206,7 @@ Edge's OLE container); `.sc` must be a SolidCraft ZIP or JSON design.
 | IGES                     | `.iges` `.igs`                                |
 | Parasolid                | `.x_t` `.xmt_txt` `.x_b` `.xmt_bin`           |
 | ACIS                     | `.sat` `.sab`                                 |
-| JT (ISO 14306), PLM XML  | `.jt` (refs), `.plmxml`                       |
+| JT (ISO 14306), PLM XML  | `.jt` (3D, refs), `.plmxml`                   |
 | OpenCascade BREP, VDA-FS | `.brep` `.brp`, `.vda`                        |
 | 3D PDF (U3D / PRC)       | `.pdf` – recognised by its embedded 3D stream |
 

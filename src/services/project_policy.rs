@@ -1142,19 +1142,33 @@ pub async fn denied_groups(pool: &PgPool, interfaces: &[Interface]) -> AppResult
     if interfaces.is_empty() {
         return Ok(Vec::new());
     }
+    Ok(
+        sqlx::query_scalar::<_, Uuid>(&denied_groups_sql(interfaces))
+            .fetch_all(pool)
+            .await?,
+    )
+}
+
+/// The query of [`denied_groups`] (no parameters), for a caller that reads
+/// the groups in a statement of its own: `COALESCE(ARRAY(…), '{}')` gives
+/// them as one more column, without another round trip (the personal access
+/// token of every API request, `users::actor_for_api_token`).
+pub(crate) fn denied_groups_sql(interfaces: &[Interface]) -> String {
     // column names come from `Interface::as_str`, never from input
-    let off = interfaces
-        .iter()
-        .map(|i| format!("NOT pp.{}", i.as_str()))
-        .collect::<Vec<_>>()
-        .join(" OR ");
-    Ok(sqlx::query_scalar::<_, Uuid>(&format!(
+    let off = if interfaces.is_empty() {
+        "FALSE".to_string()
+    } else {
+        interfaces
+            .iter()
+            .map(|i| format!("NOT pp.{}", i.as_str()))
+            .collect::<Vec<_>>()
+            .join(" OR ")
+    };
+    format!(
         "SELECT pp.project_id FROM project_policies pp
          JOIN projects p ON p.id = pp.project_id
          WHERE p.visibility = 'restricted' AND ({off})"
-    ))
-    .fetch_all(pool)
-    .await?)
+    )
 }
 
 /// The actor as it is seen through `interfaces`: groups that switched one of

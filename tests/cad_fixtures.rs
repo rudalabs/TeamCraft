@@ -1,6 +1,6 @@
 //! Real CAD files from NIST and the MIT-licensed Rhino models of rhino3dm
-//! (`tests/fixtures/cad`, see its README): the
-//! copies are unchanged, TeamCraft recognises their formats, finds the
+//! and SketchUp models of OpenSKP (`tests/fixtures/cad`, see its README):
+//! the copies are unchanged, TeamCraft recognises their formats, finds the
 //! preview images in Inventor, NX and SOLIDWORKS files and the parts of
 //! the NX and SOLIDWORKS assemblies, and turns every STEP file (AP203 and
 //! AP242) into a complete 3D preview. No database needed.
@@ -50,7 +50,7 @@ fn manifest() -> Vec<Entry> {
 #[tokio::test]
 async fn files_are_unchanged_and_recognised() {
     let entries = manifest();
-    assert_eq!(entries.len(), 35, "every fixture is listed");
+    assert_eq!(entries.len(), 35 + 39, "every fixture is listed");
     for e in &entries {
         let shown = e.path.display();
         let data = std::fs::read(&e.path).unwrap_or_else(|err| panic!("{shown}: {err}"));
@@ -331,6 +331,74 @@ fn damaged_solidworks_parts_never_panic() {
     }
 }
 
+/// Inventor parts show the display tessellation they store, welded on its
+/// exact coordinates and refined along its normals; ctc-01 has the bounding
+/// box of its NX and STEP versions.
+#[test]
+fn inventor_parts_get_a_closed_3d_preview() {
+    for (rel, min, max) in [
+        (
+            "ctc-01/inventor-2021/INV_nist_ctc_01_asme1_2021.ipt",
+            [0.0, 0.0, -100.0],
+            [800.0, 450.0, 50.0],
+        ),
+        (
+            "ftc-11/inventor-2021/INV_nist_ftc_11_asme1_2021.ipt",
+            [-31.5, -31.5, 0.0],
+            [31.5, 31.5, 3.009],
+        ),
+    ] {
+        assert_eq!(
+            preview::PreviewFormat::of(rel),
+            Some(preview::PreviewFormat::InvPart)
+        );
+        let mesh = preview::convert(preview::PreviewFormat::InvPart, &fixture(rel))
+            .unwrap_or_else(|e| panic!("{rel}: {e}"));
+        mesh.check().unwrap();
+        // 1 560 and 2 404 stored triangles, refined
+        assert!(
+            mesh.triangle_count() > 5_000,
+            "{rel}: {}",
+            mesh.triangle_count()
+        );
+        assert!(is_closed(&mesh), "{rel}: the mesh is not closed");
+        let b = mesh.bounds();
+        for i in 0..3 {
+            assert!((b[i] - min[i]).abs() < 0.05, "{rel}: {b:?}");
+            assert!((b[i + 3] - max[i]).abs() < 0.05, "{rel}: {b:?}");
+        }
+        let s = teamcraft::shape::compute(&mesh).unwrap_or_else(|e| panic!("{rel}: {e}"));
+        assert!(s.is_valid() && s.closed && s.volume > 0.0, "{rel}: {s:?}");
+    }
+}
+
+/// A damaged Inventor part is an error, never a panic: bytes all over a
+/// real part are overwritten, and the file is cut short.
+#[test]
+fn damaged_inventor_parts_never_panic() {
+    let rel = "ftc-11/inventor-2021/INV_nist_ftc_11_asme1_2021.ipt";
+    let bytes = std::fs::read(fixture(rel)).unwrap();
+    for cut in (0..bytes.len()).step_by(bytes.len() / 40) {
+        let _ = mesh::read("inventor-part", &bytes[..cut]);
+        let _ = teamcraft::invplace::components(&bytes[..cut]);
+    }
+    let mut state = 0x2545_f491_4f6c_dd1du64;
+    for _ in 0..40 {
+        let mut damaged = bytes.clone();
+        for _ in 0..16 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            let at = (state % damaged.len() as u64) as usize;
+            damaged[at] = (state >> 32) as u8;
+        }
+        if let Ok(mesh) = mesh::read("inventor-part", &damaged) {
+            mesh.check().unwrap();
+        }
+        let _ = teamcraft::invplace::components(&damaged);
+    }
+}
+
 /// A damaged JT stream is an error, never a panic: every byte of the
 /// shape segment of a real part is flipped in turn (in steps).
 #[test]
@@ -350,6 +418,154 @@ fn damaged_nx_parts_never_panic() {
     }
     for cut in (start..end).step_by(997) {
         let _ = mesh::read("nx-part", &data[..cut]);
+    }
+}
+
+/// The stand-alone JT 10.5 export of the NIST assembly: all 36 instances of
+/// its 8 parts at their places (checked against NX to 6e-6 mm), every
+/// part closed and consistently oriented, in millimetres. The box measures
+/// 152.4 × 101.6 mm like NIST's STEP file; the screws stand out on top.
+#[test]
+fn jt_assemblies_get_a_placed_3d_preview() {
+    let rel = "mtc-assembly/nx/NIST mtc crada assembly.jt";
+    assert_eq!(
+        preview::PreviewFormat::of(rel),
+        Some(preview::PreviewFormat::Jt)
+    );
+    let mesh = preview::convert(preview::PreviewFormat::Jt, &fixture(rel)).unwrap();
+    mesh.check().unwrap();
+    assert_eq!(mesh.parts, 36);
+    // LOD 0 of the 36 instances; too many triangles for a refinement
+    assert_eq!(mesh.triangle_count(), 269_304);
+    let b = mesh.bounds();
+    let expect = [-4.0, -4.0, -8.6, 148.4, 97.6, 99.05];
+    for (got, want) in b.iter().zip(expect) {
+        assert!((got - want).abs() < 0.001, "{b:?}");
+    }
+    let mut edges = std::collections::HashMap::<(u32, u32), u32>::new();
+    for t in mesh.indices.chunks_exact(3) {
+        for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+            *edges.entry((a, b)).or_default() += 1;
+        }
+    }
+    assert!(
+        edges
+            .iter()
+            .all(|(&(a, b), &n)| n == 1 && edges.get(&(b, a)) == Some(&1)),
+        "every part is closed and consistently oriented"
+    );
+    let s = teamcraft::shape::compute(&mesh).unwrap();
+    assert!(s.is_valid() && s.closed && s.volume > 0.0, "{s:?}");
+    let bytes = mesh.encode();
+    assert_eq!(mesh::Mesh::decode(&bytes).unwrap(), mesh);
+    assert!(thumbnail::rendered("jt") && thumbnail::supports("jt"));
+}
+
+/// The JT assembly as the geometry file of *Mass settings*: one closed mesh
+/// of the whole assembly in its frame, whose volume is the sum of the NIST
+/// NX part files times their instance counts (both in mm, within the
+/// difference of their tessellations).
+#[test]
+fn jt_assembly_mass_matches_its_parts() {
+    let jt = preview::convert(
+        preview::PreviewFormat::Jt,
+        &fixture("mtc-assembly/nx/NIST mtc crada assembly.jt"),
+    )
+    .unwrap();
+    let g = teamcraft::massprops::compute(&jt).unwrap();
+    assert!(g.closed && g.checked, "{g:?}");
+    assert!(!g.inverted_fixed, "every part is oriented outwards");
+    let mut parts = 0.0;
+    for (rel, count) in [
+        ("mtc-assembly/nx/NIST mtc crada box.prt", 1.0),
+        ("mtc-assembly/nx/NIST mtc crada cover.prt", 1.0),
+        ("mtc-assembly/nx/NIST mtc crada plate.prt", 1.0),
+        ("mtc-assembly/nx/NIST mtc crada polycarb.prt", 1.0),
+        ("mtc-assembly/nx/90591A141 HEX NUT.prt", 10.0),
+        ("mtc-assembly/nx/91274A118 SHCS.prt", 14.0),
+        ("mtc-assembly/nx/91274A141 SHCS.prt", 4.0),
+        ("mtc-assembly/nx/91304A112 FHSCS.prt", 4.0),
+    ] {
+        let part = preview::convert(preview::PreviewFormat::NxPart, &fixture(rel)).unwrap();
+        parts += count * teamcraft::massprops::compute(&part).unwrap().volume;
+    }
+    let ratio = g.volume / parts;
+    assert!((ratio - 1.0).abs() < 0.01, "{} vs {parts} mm³", g.volume);
+}
+
+/// A damaged JT file is an error, never a panic: bytes all over the file
+/// (scene graph, shape segments, TOC) are flipped in turn, and the file is
+/// cut short.
+#[test]
+fn damaged_jt_files_never_panic() {
+    let data = std::fs::read(fixture("mtc-assembly/nx/NIST mtc crada assembly.jt")).unwrap();
+    let step = data.len() / 40;
+    for at in (0..data.len()).step_by(step) {
+        let mut copy = data.clone();
+        copy[at] ^= 0x5A;
+        let _ = mesh::read("jt", &copy);
+    }
+    for cut in (0..data.len()).step_by(data.len() / 12) {
+        let _ = mesh::read("jt", &data[..cut]);
+    }
+}
+
+const CATIA_PART: &str = "ctc-01/catia-v5/nist_ctc_01_asme1_rd_ct5290_ra.CATPart";
+
+/// A CATIA V5 part is previewed from the visualisation (CGR) data CATIA
+/// stores in it: closed, in millimetres, and exactly as large as the STEP
+/// export of the same model (vertex box -400..400, -225..225, -100..50).
+#[test]
+fn catia_parts_get_a_closed_3d_preview() {
+    assert_eq!(
+        preview::PreviewFormat::of(CATIA_PART),
+        Some(preview::PreviewFormat::CatiaPart)
+    );
+    let mesh = preview::convert(preview::PreviewFormat::CatiaPart, &fixture(CATIA_PART))
+        .unwrap_or_else(|e| panic!("{e}"));
+    mesh.check().unwrap();
+    // 6 932 stored triangles, refined along the stored normals
+    assert!(mesh.triangle_count() > 6_932, "{}", mesh.triangle_count());
+    let mut edges = std::collections::HashMap::<(u32, u32), u32>::new();
+    for t in mesh.indices.chunks_exact(3) {
+        for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+            *edges.entry((a, b)).or_default() += 1;
+        }
+    }
+    assert!(
+        edges
+            .iter()
+            .all(|(&(a, b), &n)| n == 1 && edges.get(&(b, a)) == Some(&1)),
+        "the mesh is not closed"
+    );
+    let b = mesh.bounds();
+    for (got, want) in b.iter().zip([-400.0, -225.0, -100.0, 400.0, 225.0, 50.0]) {
+        assert!((got - want).abs() < 0.01, "{b:?}");
+    }
+    let s = teamcraft::shape::compute(&mesh).unwrap();
+    assert!(s.is_valid() && s.closed && s.volume > 0.0, "{s:?}");
+    let bytes = mesh.encode();
+    assert_eq!(mesh::Mesh::decode(&bytes).unwrap(), mesh);
+}
+
+/// Damaged CATIA files are an error or a smaller mesh, never a panic.
+#[test]
+fn damaged_catia_parts_never_panic() {
+    let data = std::fs::read(fixture(CATIA_PART)).unwrap();
+    // the nested CGR document holds the mesh
+    let start = data
+        .windows(8)
+        .skip(1)
+        .position(|w| w == b"V5_CFV2\0")
+        .unwrap()
+        + 1;
+    for at in (start..data.len()).step_by(2_999) {
+        let mut copy = data.clone();
+        copy[at] ^= 0x5A;
+        let _ = mesh::read("catia-part", &copy);
+    }
+    for cut in (0..data.len()).step_by(4999) {
+        let _ = mesh::read("catia-part", &data[..cut]);
     }
 }
 
@@ -679,6 +895,274 @@ fn damaged_rhino_models_never_panic() {
         }
         for cut in (0..data.len()).step_by(211) {
             let _ = mesh::read("rhino", &data[..cut]);
+        }
+    }
+}
+
+fn openskp(name: &str) -> PathBuf {
+    root().join("openskp").join(name)
+}
+
+/// SketchUp 2021+ models of the OpenSKP test files (MIT, see the README):
+/// faces triangulated, nested and scaled components placed, inches turned
+/// into millimetres. The triangle counts and boxes are those of the Python
+/// prototype, whose world meshes matched OpenSKP's triangle for triangle.
+#[test]
+fn sketchup_models_get_a_3d_preview() {
+    for (name, triangles, lo, hi) in [
+        (
+            "SU_File.skp",
+            104,
+            [-607.232, -2951.215, 0.0],
+            [1000.0, 0.0, 1000.0],
+        ),
+        (
+            "Untitled.skp",
+            18_636,
+            [118.805, -2059.068, 0.0],
+            [13535.744, 5188.08, 2820.0],
+        ),
+        (
+            "annotation_layers_vff.skp",
+            2,
+            [0.0; 3],
+            [1016.0, 1016.0, 0.0],
+        ),
+        (
+            "arcs_2021.skp",
+            33,
+            [1143.0, -127.0, 0.0],
+            [2743.2, 203.2, 0.0],
+        ),
+        // a component scaled by SketchUp's homogeneous term
+        (
+            "instance_scale_term_2021.skp",
+            24,
+            [0.0; 3],
+            [533.4, 25.4, 25.4],
+        ),
+        // three levels of nested components
+        ("nesting_2021.skp", 6, [0.0; 3], [1270.0, 254.0, 0.0]),
+        (
+            "scene_without_camera_2021.skp",
+            2,
+            [0.0; 3],
+            [254.0, 254.0, 0.0],
+        ),
+        (
+            "style_watermark.skp",
+            104,
+            [-607.232, -2951.215, 0.0],
+            [1000.0, 0.0, 1000.0],
+        ),
+    ] {
+        assert_eq!(
+            preview::PreviewFormat::of(name),
+            Some(preview::PreviewFormat::SketchUp)
+        );
+        let mesh = preview::convert(preview::PreviewFormat::SketchUp, &openskp(name))
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        mesh.check().unwrap();
+        assert_eq!(mesh.triangle_count(), triangles, "{name}");
+        let b = mesh.bounds();
+        for i in 0..3 {
+            assert!((b[i] - lo[i] as f32).abs() < 0.01, "{name}: {b:?}");
+            assert!((b[i + 3] - hi[i] as f32).abs() < 0.01, "{name}: {b:?}");
+        }
+        let bytes = mesh.encode();
+        assert_eq!(mesh::Mesh::decode(&bytes).unwrap(), mesh);
+    }
+    // the cube and cylinder of SU_File are closed solids
+    let mesh = mesh::read("sketchup", &std::fs::read(openskp("SU_File.skp")).unwrap()).unwrap();
+    let s = teamcraft::shape::compute(&mesh).unwrap();
+    assert!(s.closed && s.volume > 0.0, "{s:?}");
+}
+
+/// SketchUp files of version 3 to 2020 (the classic container, read by the
+/// vendored OpenSKP walker) get the same 3D preview as the prototype; the
+/// same model saved by different versions gives the same mesh, also across
+/// the two containers. Files without faces say so.
+#[test]
+fn classic_sketchup_files_get_a_3d_preview() {
+    for (name, triangles, lo, hi) in [
+        (
+            "chair_and_table.skp",
+            352,
+            [-685.8, -254.0, 0.0],
+            [558.8, 254.0, 863.6],
+        ),
+        (
+            "capilla_quiroz_v17.skp",
+            638,
+            [-8298.663, 0.0, -594.839],
+            [19924.861, 5644.155, 3707.783],
+        ),
+        // skewed components (rotation not symmetric)
+        (
+            "gondola_v20.skp",
+            53_269,
+            [46168.913, 3323.771, 0.0],
+            [49988.522, 8140.882, 3140.218],
+        ),
+        (
+            "arcs_2017.skp",
+            33,
+            [1143.0, -127.0, 0.0],
+            [2743.2, 203.2, 0.0],
+        ),
+        (
+            "arcs_2020.skp",
+            33,
+            [1143.0, -127.0, 0.0],
+            [2743.2, 203.2, 0.0],
+        ),
+        (
+            "instance_scale_term_v6.skp",
+            24,
+            [0.0; 3],
+            [533.4, 25.4, 25.4],
+        ),
+        ("nesting_v6.skp", 6, [0.0; 3], [1270.0, 254.0, 0.0]),
+        ("nesting_2013.skp", 6, [0.0; 3], [1270.0, 254.0, 0.0]),
+        ("nesting_2017.skp", 6, [0.0; 3], [1270.0, 254.0, 0.0]),
+        ("nesting_2020.skp", 6, [0.0; 3], [1270.0, 254.0, 0.0]),
+        (
+            "legacy_v3_synthetic.skp",
+            26,
+            [0.0; 3],
+            [9652.0, 762.0, 0.0],
+        ),
+        (
+            "legacy_v4_synthetic.skp",
+            26,
+            [0.0; 3],
+            [9652.0, 762.0, 0.0],
+        ),
+        (
+            "legacy_v5_synthetic.skp",
+            26,
+            [0.0; 3],
+            [9652.0, 762.0, 0.0],
+        ),
+        (
+            "legacy_v6_synthetic.skp",
+            26,
+            [0.0; 3],
+            [9652.0, 762.0, 0.0],
+        ),
+        (
+            "legacy_v2019_synthetic.skp",
+            26,
+            [0.0; 3],
+            [9652.0, 762.0, 0.0],
+        ),
+        ("legacy_v3_textured.skp", 2, [0.0; 3], [508.0, 508.0, 0.0]),
+        ("legacy_v4_textured.skp", 2, [0.0; 3], [508.0, 508.0, 0.0]),
+        ("legacy_v5_textured.skp", 2, [0.0; 3], [508.0, 508.0, 0.0]),
+        (
+            "legacy_v2020_textured.skp",
+            2,
+            [0.0; 3],
+            [508.0, 508.0, 0.0],
+        ),
+        (
+            "annotation_layers_legacy.skp",
+            2,
+            [0.0; 3],
+            [1016.0, 1016.0, 0.0],
+        ),
+        ("legacy_annotations.skp", 2, [0.0; 3], [2540.0, 2540.0, 0.0]),
+        (
+            "legacy_text_arrows_2017.skp",
+            2,
+            [0.0; 3],
+            [1016.0, 1016.0, 0.0],
+        ),
+        ("sdk_saved_2019.skp", 2, [0.0; 3], [254.0, 254.0, 0.0]),
+        ("sdk_saved_2020.skp", 2, [0.0; 3], [254.0, 254.0, 0.0]),
+        (
+            "sdk_saved_sections_2019.skp",
+            2,
+            [0.0; 3],
+            [254.0, 254.0, 0.0],
+        ),
+        (
+            "sdk_saved_sections_2020.skp",
+            2,
+            [0.0; 3],
+            [254.0, 254.0, 0.0],
+        ),
+    ] {
+        let mesh = preview::convert(preview::PreviewFormat::SketchUp, &openskp(name))
+            .unwrap_or_else(|e| panic!("{name}: {e}"));
+        mesh.check().unwrap();
+        assert_eq!(mesh.triangle_count(), triangles, "{name}");
+        let b = mesh.bounds();
+        for i in 0..3 {
+            assert!((b[i] - lo[i] as f32).abs() < 0.01, "{name}: {b:?}");
+            assert!((b[i + 3] - hi[i] as f32).abs() < 0.01, "{name}: {b:?}");
+        }
+    }
+    // the same model from SketchUp 2013 and 2021: the same triangles
+    let triangles = |name: &str| {
+        let m = mesh::read("sketchup", &std::fs::read(openskp(name)).unwrap()).unwrap();
+        // each triangle as its sorted corners (bits), in any order
+        let mut t: Vec<Vec<[u32; 3]>> = m
+            .indices
+            .chunks_exact(3)
+            .map(|t| {
+                let mut corners: Vec<[u32; 3]> = t
+                    .iter()
+                    .map(|&i| {
+                        let p = &m.positions[i as usize * 3..i as usize * 3 + 3];
+                        [p[0].to_bits(), p[1].to_bits(), p[2].to_bits()]
+                    })
+                    .collect();
+                corners.sort();
+                corners
+            })
+            .collect();
+        t.sort();
+        t
+    };
+    assert_eq!(triangles("nesting_2013.skp"), triangles("nesting_2021.skp"));
+    assert_eq!(triangles("arcs_2017.skp"), triangles("arcs_2021.skp"));
+    for name in [
+        "blank_v17.skp",
+        "legacy_empty_2020.skp",
+        "legacy_textured_colorize_2017.skp",
+        "single_material_v17.skp",
+        "zero_material_custom_layer_v18.skp",
+    ] {
+        let err = mesh::read("sketchup", &std::fs::read(openskp(name)).unwrap()).unwrap_err();
+        assert!(
+            err.to_string().contains("no visible faces"),
+            "{name}: {err}"
+        );
+    }
+}
+
+/// Damaged SketchUp files are errors, never panics: bytes flipped all over
+/// the file and the file cut short – small files of both containers (2021+
+/// and the classic one from SketchUp 6, 2017 and 2020).
+#[test]
+fn damaged_sketchup_files_never_panic() {
+    for name in [
+        "nesting_2021.skp",
+        "SU_File.skp",
+        "nesting_v6.skp",
+        "chair_and_table.skp",
+        "legacy_v2019_synthetic.skp",
+        "arcs_2020.skp",
+    ] {
+        let data = std::fs::read(openskp(name)).unwrap();
+        for at in (0..data.len()).step_by(data.len() / 400 + 1) {
+            let mut copy = data.clone();
+            copy[at] ^= 0x5A;
+            let _ = mesh::read("sketchup", &copy);
+        }
+        for cut in (0..data.len()).step_by(data.len() / 100 + 1) {
+            let _ = mesh::read("sketchup", &data[..cut]);
         }
     }
 }

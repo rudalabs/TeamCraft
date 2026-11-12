@@ -4,7 +4,7 @@
 
 import { $, TAURI, api, append, call, dialog, enc, errorText, field, h, label, state, toast } from "./core.js";
 import { canEdit, canEditProject, freshProjects, refreshWorklistCount } from "./shell.js";
-import { selectView } from "./navigator.js";
+import { activeProject, selectView } from "./navigator.js";
 import { table } from "./tabs.js";
 import { openRevision } from "./revision.js";
 
@@ -273,6 +273,9 @@ export function openImportFolderDialog() {
     TAURI.dialog.open({ directory: true, title: "CAD folder to import" }).then(function (dir) { if (dir && !running) { folder.value = dir; forgetScan(); } });
   } } }, "Choose…") : null;
   var project = h("select", null, projects.map(function (p) { return h("option", { value: p.code, text: p.code + " – " + p.name }); }));
+  // the group one works in (Home), when one may import into it
+  var active = activeProject();
+  if (active && projects.indexOf(active) !== -1) project.value = active.code;
   var fromNames = h("input", { type: "checkbox" });
   var extras = h("input", { type: "checkbox", checked: true });
   var bom = h("input", { type: "checkbox", checked: true });

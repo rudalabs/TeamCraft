@@ -15,6 +15,20 @@ see the notices in the README.
 
 ### Added
 
+- JT 9.5 assemblies in the 3D preview: a stand-alone JT 9 file with several
+  shapes (or a placed one) is put together through its scene graph like JT
+  10 – instances, transforms, units, hidden nodes – instead of showing its
+  parts piled up at the origin. Single-part JT 9 files and the JT inside NX
+  parts read exactly as before. Tested with JT 9.5 files built around the
+  real NIST hex nut (no openly licensed JT 9.5 assembly exists).
+- 3D preview of stand-alone JT 10 files (`.jt`, ISO 14306): parts and whole
+  assemblies from one file – the scene graph (LZMA via the pure-Rust
+  `lzma-rs`, MIT) with transforms, units and hidden nodes, each shape's
+  finest level of detail through the JT 9 topology coder plus the JT 10
+  integer codecs, hash-checked and refined along its normals. The thumbnail
+  is rendered from the 3D preview. Verified with the NIST box assembly (36
+  placements equal to NX, sizes equal to NIST's STEP files). JT 9 files
+  keep the reader of #200.
 - Offboarding (#173, step 8): **Season handover** of a project group
   (`/projects/{id}/season`, managers and administrators): tick the members
   who leave – or let the page tick those inactive since a date or past their
@@ -38,6 +52,17 @@ see the notices in the README.
   them back), release the check-outs. Deactivating the only active manager of
   a group without a successor needs a confirmation; every step is audited.
   Audit entries of the command line are recorded as `system` without a user.
+- Desktop app, *Home* (#255): a **Files** view, the one Home starts with –
+  the folders of the active project group and the files in them, as in its
+  working folder: folders first, then the files by name as a file manager
+  orders them (`Part2` before `Part10`), the file name first in every row.
+  One folder is loaded at a time (`GET /api/v1/projects/{code}/files`: the
+  sub-folders with their file counts and the files of the latest revision of
+  every item, by name, 500 per request), so a group with more than 500 items
+  is listed completely – *All items* shows the first 500 by number. Items
+  without files follow the files at the top of the group. *New* and *Import
+  CAD Folder…* start with the active group. With an older server Home shows
+  *All items*.
 - Desktop app (#255): a **Projects** page (rail, `Ctrl/Cmd+5`) to choose the
   active project group, create one, get groups into the workspace and import
   a CAD folder. **Home** becomes a file browser of the active group: names
@@ -105,9 +130,36 @@ see the notices in the README.
   loosen. The access review shows the conditions and whether each member met
   them. The assistant applies the request's conditions (and, for a token, the
   `api_tokens` switch) at every tool step. Migration 0068.
+- 3D preview of CATIA V5 parts (`.CATPart`) from the visualisation (CGR)
+  data CATIA stores in the file, refined along its exact surface normals
+  like NX parts. Their thumbnail is rendered from it. Products are not
+  previewed yet.
+
+### Changed
+
+- Performance: a request with a personal access token (REST API, MCP, the
+  desktop app) is authenticated with one query instead of three; the use of
+  the token is still recorded once a minute.
+- Performance: the 3D preview of an NX, SOLIDWORKS or Inventor assembly
+  converts its parts two at a time instead of one after the other and places
+  the instances without copying the part for each of them (less memory, the
+  same mesh).
+- Performance: thumbnails drawn from the 3D preview and assembly previews are
+  made once however many requests ask for them at the same time, and at most
+  two at a time; images already in the cache are answered without waiting.
+- Notification delivery serves three recipients at the same time (each
+  recipient's notifications in order, e-mail and chat side by side): a slow
+  mail server no longer holds up the whole run or the chat messages.
 
 ### Fixed
 
+- Inventor 3D preview (#271): parts and assemblies whose segments are
+  compressed with Zstandard instead of zlib (seen in newer Inventor files;
+  every part failed with *damaged compressed data*) get their preview and
+  rendered thumbnail again. The compression is told by its magic bytes; the
+  Zstandard output is capped like the zlib output (pure-Rust `ruzstd`).
+  Preview cache version 3, thumbnail cache version 7 and shape signature
+  version 3: the failures cached before are converted again.
 - Desktop, *Graph* tab (#254): a click on a sub-assembly now turns the tab
   into that sub-assembly – tab title, header, toolbar and graph are its own –
   instead of re-centring the graph inside the tab of the assembly above it;
@@ -135,6 +187,15 @@ Changes since the `v0.2.6` tag.
 
 ### Added
 
+- 3D preview of SketchUp models (`.skp`, SketchUp 3 to 2026): the faces are
+  triangulated (earcut port, holes included), components and groups placed
+  with their transforms, nested and scaled ones too, in millimetres; hidden
+  faces, hidden components, hidden tags (layers) and images are left out. The
+  thumbnail is rendered from the 3D preview; a file without faces keeps its
+  stored picture. SketchUp 2021+ files are read by an own reader, older ones
+  by the Rust port of OpenSKP (MIT), vendored unchanged in `vendor/openskp`.
+  39 test files of OpenSKP in `tests/fixtures/cad/openskp`. Research:
+  `docs/src/research/sketchup-preview.md`.
 - The *Material* field (*New item*, *Edit revision*, desktop app) suggests the
   materials of the library with their density while you type (a `<datalist>`,
   also without JavaScript); a name that is not in the library gets a hint.
@@ -223,7 +284,6 @@ Changes since the `v0.2.5` tag.
   `PUT /api/v1/branding/name` sets them (admins). The footer, About, version
   and licence notices stay TeamCraft. `TEAMCRAFT_INSTANCE_NAME` is now only
   the default.
-
 - Need-to-know project groups, step 5 (#151): access review of a restricted
   group (migration 0053, `project_access_reviews`). Page `/projects/{id}/access-review` for managers and
   administrators: members with role, group role, source (manual or identity
@@ -439,6 +499,14 @@ Changes since the `v0.2.5` tag.
 - Mutation testing with cargo-mutants (#170): configuration, a report-only
   check on pull requests and a weekly run; the gaps of the first
   whole-repository run are closed with unit tests (#207).
+- 3D preview of Inventor parts (`.ipt`) from the display tessellation
+  Inventor stores in the file, welded and refined along its exact surface
+  normals like NX and SOLIDWORKS parts. Inventor assemblies (`.iam`) are
+  put together from the previews of their part and sub-assembly files, with
+  the placements stored in the assembly (re-posed flexible sub-assemblies
+  included); hidden and suppressed components are left out. The
+  thumbnails of Inventor parts and assemblies are rendered from the 3D
+  preview. New fuzz target `invpart`.
 
 ### Changed
 

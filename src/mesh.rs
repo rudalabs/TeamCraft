@@ -24,9 +24,13 @@
 
 use anyhow::{bail, Result};
 
+mod catia;
+mod earcut;
 mod gltf;
 mod helpers;
+mod inventor;
 mod jt;
+mod jt10;
 mod model;
 mod obj;
 mod off;
@@ -36,6 +40,7 @@ mod pn;
 mod points;
 pub mod render;
 pub mod rhino;
+mod sketchup;
 mod step;
 mod stl;
 mod sw;
@@ -64,12 +69,18 @@ pub fn read(format: &str, data: &[u8]) -> Result<Mesh> {
         "las" => points::read_las(data)?,
         "step" => step::read(data)?,
         "nx-part" => jt::read_nx(data)?,
-        "jt" => jt::read_file(data)?,
+        "jt" => jt10::read(data)?,
         "solidworks-part" => sw::read_part(data)?,
         "solidworks-assembly" => bail!(
             "A SOLIDWORKS assembly is shown with the previews of its parts (found by file name)."
         ),
         "rhino" => rhino::read(data)?,
+        "inventor-part" => inventor::read_part(data)?,
+        "inventor-assembly" => bail!(
+            "An Inventor assembly is shown with the previews of its parts (found by file name)."
+        ),
+        "catia-part" => catia::read_part(data)?,
+        "sketchup" => sketchup::read(data)?,
         "vtk-legacy" => crate::simmesh::vtk_legacy(data)?,
         "vtk-unstructured" | "vtk-polydata" => crate::simmesh::vtk_xml(data)?,
         "calculix-frd" => crate::simmesh::frd(data)?,

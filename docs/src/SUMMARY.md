@@ -57,14 +57,18 @@
 # Research
 
 - [Research notes](research/index.md)
+    - [3D preview of CATIA V5 parts](research/catia-cgr-preview.md)
     - [Instance counts of Inventor assemblies](research/inventor-instance-counts.md)
     - [Crash reports from the desktop app](research/crash-reporting.md)
     - [Mass properties from exported meshes](research/mass-properties.md)
     - [3D preview of Fusion designs](research/fusion-ogs-preview.md)
+    - [3D preview of Inventor files](research/inventor-display-preview.md)
     - [3D preview of SOLIDWORKS files](research/solidworks-display-preview.md)
     - [Mutation testing with cargo-mutants](research/mutation-testing.md)
     - [3D preview of NX parts](research/nx-jt-preview.md)
     - [3D preview of Rhino models](research/rhino-3dm-preview.md)
+    - [3D preview of stand-alone JT files](research/jt10-preview.md)
+    - [3D preview of SketchUp models](research/sketchup-preview.md)
     - [Text from HTML reports](research/html-report-text.md)
     - [Text from PDF reports](research/pdf-text-extraction.md)
     - [One provider interface for the assistant](research/agent-interface.md)

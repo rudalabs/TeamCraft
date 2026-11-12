@@ -1,12 +1,15 @@
-//! 3D previews of NX and SOLIDWORKS assemblies.
+//! 3D previews of NX, SOLIDWORKS and Inventor assemblies.
 //!
 //! An assembly's preview is put together from the previews of its
 //! component files, with the placements the assembly stores: NX in its
 //! structure stream (`nxasm`), SOLIDWORKS in its component tree
-//! (`swpart::placements`, sub-assemblies already resolved there).
+//! (`swpart::placements`, sub-assemblies already resolved there), Inventor
+//! in `UFRxDoc` and `AmRxSegment` (`invplace`, sub-assemblies are files of
+//! their own; a parent may re-pose children of a flexible
+//! sub-assembly, `invplace::Override`).
 //!
 //! 1. The components are found **by file name** (`NAME.prt` for NX, the
-//!    file name of the stored path for SOLIDWORKS), the way file
+//!    file name of the stored path for SOLIDWORKS and Inventor), the way file
 //!    references are matched (`references::files_of_revision`): a file of
 //!    the assembly's own revision first, otherwise the latest revision of
 //!    another item the viewer may see. Components that are not in
@@ -14,7 +17,10 @@
 //! 2. A component that is an assembly itself is resolved the same way,
 //!    its placements composed with the parent's (depth and cycles bounded).
 //! 3. Every part is converted like any other part (isolated preview
-//!    process, cache per content), then placed and appended.
+//!    process, cache per content; as many at a time as the preview queue
+//!    runs), then every instance is placed straight into the assembly mesh.
+//!    The composition runs through `Previews::render`: once, however many
+//!    viewers and thumbnails ask for the assembly at the same time.
 //!
 //! The result depends on which component versions were found, so it is
 //! cached under a key built from the content hashes of everything used
@@ -30,7 +36,11 @@
 //!   and `mesh::MAX_TRIANGLES` triangles; an assembly that contains itself
 //!   is not entered again.
 
-use std::{collections::HashMap, path::PathBuf};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
@@ -39,9 +49,10 @@ use uuid::Uuid;
 use crate::{
     auth::Actor,
     error::{AppError, AppResult},
+    invplace::Override,
     mesh::{Mesh, MAX_TRIANGLES},
     nxasm::{self, Kind},
-    preview::PreviewFormat,
+    preview::{PreviewFormat, MAX_PARALLEL},
     services::access,
     AppState,
 };
@@ -66,6 +77,7 @@ struct Found {
 enum Family {
     Nx,
     SolidWorks,
+    Inventor,
 }
 
 impl Family {
@@ -73,6 +85,7 @@ impl Family {
         match format {
             "nx-part" => Some(Family::Nx),
             "solidworks-assembly" => Some(Family::SolidWorks),
+            "inventor-assembly" => Some(Family::Inventor),
             _ => None,
         }
     }
@@ -81,7 +94,7 @@ impl Family {
     fn key(self, name: &str) -> String {
         match self {
             Family::Nx => format!("{}.prt", name.to_lowercase()),
-            Family::SolidWorks => name.to_lowercase(),
+            Family::SolidWorks | Family::Inventor => name.to_lowercase(),
         }
     }
 
@@ -89,6 +102,7 @@ impl Family {
         match self {
             Family::Nx => format == "nx-part",
             Family::SolidWorks => matches!(format, "solidworks-part" | "solidworks-assembly"),
+            Family::Inventor => matches!(format, "inventor-part" | "inventor-assembly"),
         }
     }
 
@@ -97,6 +111,7 @@ impl Family {
         match self {
             Family::Nx => PreviewFormat::NxPart,
             Family::SolidWorks => PreviewFormat::SwPart,
+            Family::Inventor => PreviewFormat::InvPart,
         }
     }
 }
@@ -157,14 +172,17 @@ async fn resolve(
 const MAX_TREE: u64 = 64 * 1024 * 1024;
 
 /// What the file of a blob is (read with seeks, off the async runtime). A
-/// SOLIDWORKS part has no components; a SOLIDWORKS assembly lists its
-/// parts, sub-assemblies resolved.
+/// SOLIDWORKS or Inventor part has no components; a SOLIDWORKS assembly
+/// lists its parts, sub-assemblies resolved; an Inventor assembly lists its
+/// visible parts and sub-assemblies.
 async fn kind(st: &AppState, sha256: &str, format: &str) -> AppResult<Kind> {
     let path = st.vault.object_path(sha256)?;
     let format = format.to_string();
     tokio::task::spawn_blocking(move || match format.as_str() {
         "solidworks-part" => Kind::Part(Vec::new()),
         "solidworks-assembly" => solidworks_assembly(&path).unwrap_or(Kind::Other),
+        "inventor-part" => Kind::Part(Vec::new()),
+        "inventor-assembly" => crate::invplace::kind_of(&path).unwrap_or(Kind::Other),
         _ => nxasm::kind_of(&path).unwrap_or(Kind::Other),
     })
     .await
@@ -211,14 +229,21 @@ pub async fn plan(
     };
     let mut hasher = Sha256::new();
     hasher.update(sha256.as_bytes());
-    // (components, placement of the assembly, its revision, path of hashes)
-    let mut stack = vec![(top, identity, revision_id, vec![sha256.to_string()])];
-    while let Some((components, parent, revision, path)) = stack.pop() {
+    // (components, placement of the assembly, its revision, path of hashes,
+    // poses the levels above give components further down – Inventor)
+    let mut stack = vec![(
+        top,
+        identity,
+        revision_id,
+        vec![sha256.to_string()],
+        Vec::new(),
+    )];
+    while let Some((components, parent, revision, path, overrides)) = stack.pop() {
         let keys: Vec<String> = components.iter().map(|c| family.key(&c.name)).collect();
         let found = resolve(&st.db, actor, revision, &keys).await?;
         let mut kinds: HashMap<String, Kind> = HashMap::new();
         for c in components.iter().rev() {
-            let placement = c.within(&parent);
+            let placement = Override::pose(&overrides, c).within(&parent);
             let Some(file) = found.get(&family.key(&c.name)) else {
                 plan.missing.push(c.name.clone());
                 hasher.update(b"\0missing:");
@@ -255,7 +280,8 @@ pub async fn plan(
                 if path.len() < MAX_DEPTH {
                     let mut deeper = path.clone();
                     deeper.push(file.sha256.clone());
-                    stack.push((children.clone(), placement, file.revision_id, deeper));
+                    let below = Override::passed_down(&overrides, c);
+                    stack.push((children.clone(), placement, file.revision_id, deeper, below));
                 } else {
                     plan.missing.push(c.name.clone());
                 }
@@ -283,56 +309,99 @@ pub async fn mesh(
     if tokio::fs::metadata(&path).await.is_ok() {
         return Ok(Some(path));
     }
-    // every distinct part once, through the normal (isolated, cached) preview
-    let mut meshes: HashMap<String, PathBuf> = HashMap::new();
-    for (part, _) in &plan.parts {
-        if meshes.contains_key(part) {
-            continue;
-        }
-        if let Ok(p) = st.previews.mesh(&st.vault, part, plan.part_format).await {
-            meshes.insert(part.clone(), p);
-        }
-    }
+    let meshes = part_meshes(st, &plan).await?;
+    // composed once, however many viewers (and the thumbnail) ask for it
     let target = path.clone();
-    let built = tokio::task::spawn_blocking(move || compose(&plan, &meshes, &target))
-        .await
-        .map_err(|e| AppError::Other(anyhow::anyhow!("composing the assembly failed: {e}")))?
+    let built = st
+        .previews
+        .render(&path.to_string_lossy(), move || {
+            compose(&plan, &meshes, &target)
+        })
+        .await?
         .map_err(|e| AppError::Other(anyhow::anyhow!("cannot store the assembly preview: {e}")))?;
     Ok(built.then_some(path))
 }
 
+/// The preview mesh of every distinct part, through the normal (isolated,
+/// cached) preview: as many conversions at a time as the preview queue runs
+/// ([`MAX_PARALLEL`]) instead of one after the other. A part that has no
+/// preview is left out.
+async fn part_meshes(st: &AppState, plan: &Plan) -> AppResult<HashMap<String, PathBuf>> {
+    let mut seen = HashSet::new();
+    let distinct: Vec<String> = plan
+        .parts
+        .iter()
+        .filter(|(part, _)| seen.insert(part.as_str()))
+        .map(|(part, _)| part.clone())
+        .collect();
+    let workers = MAX_PARALLEL.min(distinct.len());
+    let queue = Arc::new(Mutex::new(distinct.into_iter()));
+    // the tasks end with this request: a dropped `JoinSet` stops them
+    let mut tasks = tokio::task::JoinSet::new();
+    for _ in 0..workers {
+        let (previews, vault, queue) = (st.previews.clone(), st.vault.clone(), queue.clone());
+        let format = plan.part_format;
+        tasks.spawn(async move {
+            let mut found = Vec::new();
+            loop {
+                let next = queue.lock().unwrap_or_else(|e| e.into_inner()).next();
+                let Some(part) = next else { break };
+                if let Ok(path) = previews.mesh(&vault, &part, format).await {
+                    found.push((part, path));
+                }
+            }
+            found
+        });
+    }
+    let mut meshes = HashMap::new();
+    while let Some(found) = tasks.join_next().await {
+        meshes.extend(
+            found.map_err(|e| {
+                AppError::Other(anyhow::anyhow!("converting the parts failed: {e}"))
+            })?,
+        );
+    }
+    Ok(meshes)
+}
+
 /// Places the part meshes and writes the assembly mesh to `target`;
-/// `false` when no part could be placed.
+/// `false` when no part could be placed. Run through `Previews::render`:
+/// a request that waited for another one's composition finds `target`.
 fn compose(
     plan: &Plan,
     meshes: &HashMap<String, PathBuf>,
     target: &std::path::Path,
 ) -> std::io::Result<bool> {
+    if target.exists() {
+        return Ok(true);
+    }
+    // where every part is placed for the last time: its mesh is given up
+    // there, so only the parts still to be placed are held in memory
+    let last: HashMap<&str, usize> = plan
+        .parts
+        .iter()
+        .enumerate()
+        .map(|(at, (part, _))| (part.as_str(), at))
+        .collect();
     let mut decoded: HashMap<&str, Option<Mesh>> = HashMap::new();
     let mut out = Mesh::default();
-    for (part, placement) in &plan.parts {
+    for (at, (part, placement)) in plan.parts.iter().enumerate() {
         let mesh = decoded.entry(part.as_str()).or_insert_with(|| {
             meshes
                 .get(part)
                 .and_then(|p| std::fs::read(p).ok())
                 .and_then(|b| Mesh::decode(&b).ok())
         });
-        let Some(mesh) = mesh.as_ref() else { continue };
-        if out.triangle_count() + mesh.triangle_count() > MAX_TRIANGLES {
-            break;
-        }
-        let mut placed = mesh.clone();
-        placed.fields.clear();
-        placed.faces = None;
-        for p in placed.positions.chunks_exact_mut(3) {
-            if let [x, y, z] = p {
-                let q = placement.place([f64::from(*x), f64::from(*y), f64::from(*z)]);
-                *x = q[0] as f32;
-                *y = q[1] as f32;
-                *z = q[2] as f32;
+        if let Some(mesh) = mesh.as_ref() {
+            if out.triangle_count() + mesh.triangle_count() > MAX_TRIANGLES {
+                break;
             }
+            // placed straight into the assembly, without a copy of the part
+            out.append_placed(mesh, |p| placement.place(p));
         }
-        out.append(placed);
+        if last.get(part.as_str()) == Some(&at) {
+            decoded.remove(part.as_str());
+        }
     }
     if out.positions.is_empty() || out.check().is_err() {
         return Ok(false);

@@ -641,6 +641,63 @@ pub async fn workspace_checkin(
     .await
 }
 
+/// Park the chosen files: new versions on the server, the lock stays (issue
+/// #173, step 10 – work in progress survives a lost laptop).
+#[tauri::command]
+pub async fn workspace_park(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    project: Option<String>,
+    item: String,
+    code: String,
+    files: Vec<String>,
+    comment: String,
+) -> CmdResult<Value> {
+    let api = signed_in_api(&state)?;
+    let root = workspace_root(&app, &state);
+    let cancel = new_upload(&state);
+    let progress = upload_progress_events(app);
+    let transfer = Transfer {
+        cancel: &cancel,
+        progress: &progress,
+    };
+    workspace::park(
+        &api,
+        &root,
+        project.as_deref(),
+        &item,
+        &code,
+        &files,
+        &comment,
+        &transfer,
+    )
+    .await
+}
+
+/// Which of the given check-outs have local changes in the working folder
+/// (before *Check in all* and before signing out – issue #173, step 10).
+/// Compares one revision after the other; one that cannot be compared is
+/// listed as unreadable, not as clean.
+#[tauri::command]
+pub async fn workspace_local_changes(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    revisions: Vec<layout::CheckoutRef>,
+) -> CmdResult<layout::LocalChanges> {
+    let api = signed_in_api(&state)?;
+    let root = workspace_root(&app, &state);
+    let mut results = Vec::with_capacity(revisions.len());
+    for r in revisions {
+        let files: Result<Vec<(String, String)>, String> =
+            workspace::status(&api, &root, r.project.as_deref(), &r.item, &r.code)
+                .await
+                .map(|s| s.files.into_iter().map(|f| (f.name, f.state)).collect())
+                .map_err(|e| e.to_string());
+        results.push((r, files));
+    }
+    Ok(layout::local_changes(results))
+}
+
 /// A fresh cancel switch for the upload that starts now (`cancel_upload`
 /// flips the switch of the running one).
 fn new_upload(state: &State<'_, AppState>) -> Arc<AtomicBool> {

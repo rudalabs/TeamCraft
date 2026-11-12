@@ -417,7 +417,12 @@ real files and belong to section 3 once such files are at hand.
   manager, releases check-outs with a reason, sets "member until" (`project_members.expires_at`, flag only), removes
   members and demotes the old managers – each step through its own service and audited. Left: the access review page
   for internal groups, ownership hand-over from the season page (today: *Hand over work* on the user page).
-- [ ] Steps 9–10: IdP-driven offboarding, desktop working folder.
+- [ ] Step 9: IdP-driven offboarding.
+- [x] Step 10: desktop working folder – *Check in all* and *Sign out* list the check-outs with local changes
+  (`layout::local_changes`) and offer to check them in first (sign-out also to park them); *Park…* uploads work in
+  progress as new versions and keeps the lock (`POST …/files`, `files::attach`); after a forced release the
+  Workspace tab says *Released by X; your local changes are kept and need a new check-out* (`released` of
+  `…/file-status`, `checkouts::released_from`, read from the audit log).
 
 **Desktop app**
 
@@ -461,8 +466,10 @@ real files and belong to section 3 once such files are at hand.
 
 - [ ] Test real STEP exports of the CAD programs, assembly placements (`mapped_item` – parts of an assembly can
   overlap) and length units
-- [ ] Readers for IGES, BREP, Parasolid, JT, FBX, DAE, USD and E57 – recognised, not previewed (no pure-Rust readers
-  yet; candidate: `e57` crate)
+- [ ] Readers for IGES, BREP, Parasolid, FBX, DAE, USD and E57 – recognised, not previewed (no pure-Rust readers
+  yet; candidate: `e57` crate). JT 9 and 10 are read with their scene graph (`src/mesh/jt10.rs`); open there: JT 8, shattered
+  JT files (parts in other `.jt` files), a real JT 9.5 assembly as a test file (the tests build synthetic ones) – no
+  openly licensed test files yet
 
 **Simulation management (FEA/CFD)**
 

@@ -157,8 +157,12 @@ curl -s -X POST -H "$H" -F file=@hub.step -F 'bases={"hub.step": 3}' \
 
 `GET …/revisions/{code}/file-status` returns every file with its current
 `version`, `sha256`, uploader and the lock (`locked_by`, `locked_by_name`,
-`locked_at`, `locked_by_me`, `locked_by_other`). `POST` the same path with the
-client's files to get the sync state of each local copy:
+`locked_at`, `locked_by_me`, `locked_by_other`). When somebody else released
+*your* check-out of the revision and nobody has checked it out since,
+`released` says so (`by_name`, `at`, `reason` and the `message` *Released by
+X; your local changes are kept and need a new check-out.*); otherwise it is
+`null`. `POST` the same path with the client's files to get the sync state of
+each local copy:
 
 ```sh
 curl -s -X POST -H "$H" -H 'Content-Type: application/json' \
@@ -280,6 +284,21 @@ one revision. Both answer `{nodes, total}`; a node has `item_number`,
 for BOM lines, `find_number` and `quantity`. A child in a restricted group the
 caller cannot read is a placeholder (`restricted: true`, no identity); hidden
 assemblies are not counted in `used_in`.
+
+The desktop file browser (*Home*, *Files*) reads one folder of a group at a
+time: `GET /projects/{code}/files?folder=&limit=&offset=` answers
+`{folder, folders, entries, total}` for the folder (`chassis/brackets`; empty
+= the top of the group; normalised like the `folder` of an upload). `folders`
+are the folders directly below it (`name`, `path` to ask for, `files` = files
+in it at any depth). `entries` are its files by name, each with the item it
+belongs to: `file_id`, `filename`, `size_bytes`, `format`, `format_label`,
+`format_kind` (`part`, `assembly`, `drawing`, …; `null` if unknown),
+`item_number`, `item_type`, and `name`, `code`, `state` and
+`checked_out_by_name` of the item's latest revision – the browser shows the
+files of the latest revision of every item. At the top of the group the items
+without files follow the files (`file_id` and `filename` are `null`), so
+every item of the group is in the browser. `total` counts the entries of the
+folder; `limit` is at most 500.
 
 `POST /worklist/checkin-all` (body optional: `{"revisions": [id, …]}`) checks
 in all of my check-outs – or the listed ones – **without new files**, one

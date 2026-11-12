@@ -158,7 +158,12 @@ Or work through these steps by hand, in this order:
    `teamcraft user create --username rescue --role admin` (break glass).
 2. **Before they go**, the leaver uses *Check in all* on the dashboard and
    checks in the local changes of their desktop working folder. Work that
-   was never checked in exists only on their computer.
+   was never checked in exists only on their computer. The desktop app
+   lists check-outs with local changes before *Check in all* and before
+   signing out and offers to check them in; *Park…* puts work in progress
+   on the server without giving up the check-out, so it survives a lost
+   laptop. After a forced release the former holder's Workspace tab says who
+   released it; their local files stay and need a new check-out.
 3. **Hand over their work** (administrators): *Users → user → Hand over
    work* moves item ownerships, draft and rejected change orders, open
    change requests and pending reviews (see above).

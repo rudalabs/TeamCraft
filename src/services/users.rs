@@ -135,19 +135,39 @@ struct TokenActorRow {
     #[sqlx(flatten)]
     actor: ActorRow,
     scope: String,
+    /// The use is not recorded yet (see [`TOKEN_USE_RECORDED_EVERY`]).
+    record_use: bool,
+    /// Groups that switched personal access tokens off.
+    denied: Vec<Uuid>,
 }
+
+/// How often the use of a token is written down (`last_used_at`, the
+/// sliding expiry) – a PostgreSQL interval. Every API request presents its
+/// token; one write a minute per token keeps the write load low.
+const TOKEN_USE_RECORDED_EVERY: &str = "1 minute";
 
 /// The user of a personal access token and the token's scope; `None` for an
 /// unknown, expired or revoked token or a deactivated user. A use moves the
 /// expiry of a token with a sliding lifetime (`idle_days`) forward.
+///
+/// Every API and MCP request comes through here, so it is one query: the
+/// user, whether the use has to be recorded and the groups that switched
+/// personal access tokens off are read in the same statement. The write
+/// follows only when it is due.
 pub async fn actor_for_api_token(
     pool: &PgPool,
     token: &str,
 ) -> AppResult<Option<(Actor, TokenScope)>> {
     let token_hash = auth::hash_token(token);
     let cols = actor_columns();
+    // Interfaces switched off per group (need-to-know policy): a PAT sees
+    // those groups as hidden. The web session is not affected.
+    let denied = project_policy::denied_groups_sql(&[Interface::ApiTokens]);
     let row = sqlx::query_as::<_, TokenActorRow>(&format!(
-        "SELECT {cols}, t.scope
+        "SELECT {cols}, t.scope,
+                (t.last_used_at IS NULL
+                 OR t.last_used_at < now() - interval '{TOKEN_USE_RECORDED_EVERY}') AS record_use,
+                COALESCE(ARRAY({denied}), '{{}}'::uuid[]) AS denied
          FROM api_tokens t JOIN users u ON u.id = t.user_id
          WHERE t.token_hash = $1 AND (t.expires_at IS NULL OR t.expires_at > now()) AND u.active"
     ))
@@ -155,26 +175,28 @@ pub async fn actor_for_api_token(
     .fetch_optional(pool)
     .await?;
     let Some(row) = row else { return Ok(None) };
-    // Only touch last_used_at (and a sliding expiry) once per minute to keep
-    // write load low.
-    sqlx::query(
-        "UPDATE api_tokens SET last_used_at = now(),
-                expires_at = CASE WHEN idle_days IS NULL THEN expires_at
-                                  ELSE now() + make_interval(days => idle_days) END
-         WHERE token_hash = $1 AND (last_used_at IS NULL OR last_used_at < now() - interval '1 minute')",
-    )
-    .bind(&token_hash)
-    .execute(pool)
-    .await?;
+    if row.record_use {
+        // the condition again: of requests arriving together, one writes
+        sqlx::query(&format!(
+            "UPDATE api_tokens SET last_used_at = now(),
+                    expires_at = CASE WHEN idle_days IS NULL THEN expires_at
+                                      ELSE now() + make_interval(days => idle_days) END
+             WHERE token_hash = $1
+               AND (last_used_at IS NULL
+                    OR last_used_at < now() - interval '{TOKEN_USE_RECORDED_EVERY}')"
+        ))
+        .bind(&token_hash)
+        .execute(pool)
+        .await?;
+    }
     // an unknown stored scope (the CHECK constraint prevents it) grants nothing
     let Some(scope) = TokenScope::parse(&row.scope) else {
         return Ok(None);
     };
-    // Interfaces switched off per group (need-to-know policy): a PAT sees
-    // those groups as hidden. The web session is not affected.
-    let actor =
-        project_policy::narrow(pool, Actor::from(row.actor), &[Interface::ApiTokens]).await?;
-    Ok(Some((actor, scope)))
+    Ok(Some((
+        Actor::from(row.actor).without_groups(&row.denied),
+        scope,
+    )))
 }
 
 /// Stores the UI skin of the signed-in user.
