@@ -47,9 +47,15 @@ async fn snapshot(pool: &sqlx::PgPool) -> Vec<i64> {
 }
 
 fn csv_of(lines: usize) -> String {
+    csv_with("SC", "Part", lines)
+}
+
+/// A flat BOM table of `lines` parts numbered `<prefix>-00001` … and named
+/// `<name> 1` ….
+fn csv_with(prefix: &str, name: &str, lines: usize) -> String {
     let mut s = String::from("Item,Part Number,Name,QTY\n");
     for i in 1..=lines {
-        s.push_str(&format!("{i},SC-{i:05},Part {i},{}\n", i % 7 + 1));
+        s.push_str(&format!("{i},{prefix}-{i:05},{name} {i},{}\n", i % 7 + 1));
     }
     s
 }
@@ -95,16 +101,43 @@ fn into_target(target: Uuid) -> ImportOptions {
     }
 }
 
+/// How much longer than a tenth of the table the whole table may take: 10
+/// for an import that grows linearly with the lines, 100 for one that grows
+/// with their square. Today it is about 25 (3.9 s and 101 s on a developer
+/// machine, 2026-11-12): the import already grows faster than linearly
+/// (docs/OPEN_WORK.md). The margin above that absorbs a busy CI runner during
+/// one of the two imports; a step towards quadratic still fails.
+const MAX_TEN_FOLD_GROWTH: u32 = 60;
+
 #[tokio::test]
 async fn ten_thousand_lines_import_in_one_transaction() {
     let app = app_or_skip!();
     let (actor, _) = app.user_in("eng", Role::Editor, &["ROCKET"]).await;
+    let project_id = Some(app.project_id("ROCKET").await);
+
+    // A tenth of the table first: the time of the full table is compared with
+    // it, not with a fixed limit of 120 s, which measured the runner: the
+    // import took about 100 s on a developer machine and up to 126 s on
+    // GitHub's runners next to the other tests. What this test guards is that
+    // the import time does not grow much faster than the number of lines.
+    let small = table(&csv_with("SM", "Small part", 1_000));
+    let small_options = ImportOptions {
+        project_id,
+        name: "Small".into(),
+        ..Default::default()
+    };
+    let started = Instant::now();
+    imports::run(&app.pool, &actor, &small, "small.csv", &small_options, None)
+        .await
+        .expect("import of 1 000 lines");
+    let took_small = started.elapsed();
+
     let csv = csv_of(10_000);
     let t = table(&csv);
     assert_eq!(t.rows.len(), 10_000);
     let before = snapshot(&app.pool).await;
     let options = ImportOptions {
-        project_id: Some(app.project_id("ROCKET").await),
+        project_id,
         name: "Big".into(),
         ..Default::default()
     };
@@ -113,7 +146,15 @@ async fn ten_thousand_lines_import_in_one_transaction() {
         .await
         .expect("import");
     let took = started.elapsed();
-    assert!(took < Duration::from_secs(120), "took {took:?}");
+    eprintln!("1 000 lines: {took_small:?}, 10 000 lines: {took:?}");
+    // a floor of 1 s for the small import, so that a very fast machine does
+    // not turn the fixed costs of the big one into a failure
+    let budget = took_small.max(Duration::from_secs(1)) * MAX_TEN_FOLD_GROWTH;
+    assert!(
+        took < budget,
+        "10 000 lines took {took:?}, 1 000 lines {took_small:?}: the import grows faster than \
+         the number of lines (limit {budget:?})"
+    );
     assert_eq!(result.lines, 10_000);
     assert_eq!(result.created.len(), 10_000);
 
@@ -125,7 +166,7 @@ async fn ten_thousand_lines_import_in_one_transaction() {
             .fetch_one(&app.pool)
             .await
             .unwrap();
-    assert_eq!(imports_logged, 1);
+    assert_eq!(imports_logged, 2, "the tenth and the whole table");
     // all rows of one transaction share one commit time
     let distinct: i64 =
         sqlx::query_scalar("SELECT COUNT(DISTINCT created_at) FROM items WHERE number LIKE 'SC-%'")

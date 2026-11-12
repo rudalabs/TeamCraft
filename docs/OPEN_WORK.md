@@ -188,6 +188,10 @@ half a state behind. Prefer tests that fail on a real regression over tests that
   twice. Open: an item whose *creation* answer was lost (network gone between the server's commit and the app's
   log) is created again on the next run – fixed in code with an idempotency key for `POST /items`
   (`tests/item_idempotency.rs`) – **database tests written, not yet run against a real database**
+- [ ] BOM import time grows faster than the number of lines: 1 000 lines 3.9 s, 10 000 lines 101 s on a developer
+  machine (2026-11-12, debug build, `ten_thousand_lines_import_in_one_transaction`), about n^1.4. Find the step that
+  grows (plan lookups, per-row statements, counters) and make it linear; then lower `MAX_TEN_FOLD_GROWTH` in
+  `tests/import_scale_and_concurrency.rs` from 60 towards 20
 - [x] **Atomic processes** – the folder import per item is covered too (see *Import*); the rest is done, see *Done*
 - [ ] Coverage map: keep the feature → tests table of #65 in `CONTRIBUTING.md` (or `docs/src/dev/`) up to date, and
   make CI fail when the integration tests are skipped (`TEAMCRAFT_REQUIRE_DB_TESTS=1`, already set) – #65 was merged
@@ -254,12 +258,12 @@ half a state behind. Prefer tests that fail on a real regression over tests that
 - [ ] Flaky desktop test on macOS: `resume::tests::a_wrong_part_is_started_over_and_a_complete_one_only_renamed`
   (`desktop/src/resume.rs`, the assertion on the recorded `Range` headers) fails in about 2 of 15 runs – record the
   header before the test server answers, or compare the set of ranges instead of their order
-- [ ] Decide the release builds on `main` (disputed in the CI review, so not changed): today every push to `main`
-  builds all 14 release jobs (server, desktop installers, Flatpak, image; ~110–170 runner-min, ~50 min wall clock)
-  and a newer push cancels the run, so cancelled commits get no `:edge` image. Options: (a) keep as is; (b) image +
-  Docker smoke test per push, the other artifacts nightly, on tags and by hand; (c) per push only when packaging
-  inputs change. Either way: add `packaging/**` and `desktop/tauri.conf.json` to the PR paths of `release.yml`, so a
-  Flatpak or bundle change is built before it is merged
+- [x] Release builds on `main` (#275): every push to `main` built all 14 release jobs (~110–170 runner-min) and
+  a newer push cancelled the running build, so about half of the commits on `main` showed a red ✗ without a real
+  failure. Now nightly (skipped when only documentation changed since the last good build), on `v*` tags and by
+  hand; `:edge` follows `main` within a day. A pull request that changes `packaging/**` or
+  `desktop/tauri.conf.json` builds everything before it is merged. CI, CodeQL and the desktop workflow no longer
+  cancel or replace runs on `main` either
 - [ ] Run `scale.yml` once by hand – its schedule has never fired yet – and make a failing scheduled run open an
   issue instead of only an e-mail
 - [x] `fuzz.yml` had never built a single target: the prebuilt `cargo-fuzz` from `taiki-e/install-action` is a musl

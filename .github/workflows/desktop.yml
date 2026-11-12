@@ -35,9 +35,12 @@ on:
 permissions:
   contents: read
 
+# A newer push to a pull request replaces its running checks; each commit on
+# main keeps its own run, so that no commit on main shows a red ✗ only
+# because a later push cancelled its run (#275).
 concurrency:
-  group: desktop-${{ github.ref }}-${{ github.event_name }}
-  cancel-in-progress: true
+  group: desktop-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always

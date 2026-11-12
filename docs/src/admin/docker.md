@@ -6,7 +6,8 @@ is built on your machine – the image `ghcr.io/rudalabs/teamcraft` comes from
 GitHub's container registry for `linux/amd64` and `linux/arm64`.
 
 > TeamCraft has no release yet (version 0.x). Until there is one, the
-> installer uses the development image `edge`, built from the `main` branch.
+> installer uses the development image `edge`, built every night from the
+> `main` branch.
 > Keep backups (see below).
 
 ## Install
@@ -166,7 +167,7 @@ well too.
 
 | Tag            | Built from                                                     |
 |----------------|----------------------------------------------------------------|
-| `edge`         | every push to `main`                                           |
+| `edge`         | `main`, rebuilt every night when it changed                    |
 | `0.2.0`, `0.2` | the release tag `v0.2.0`                                       |
 | `latest`       | the newest release without a suffix such as `-rc.1` – also 0.x |
 

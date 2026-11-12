@@ -5,8 +5,8 @@
 * **Never build container images locally** – no `docker build`, `docker buildx`,
   `docker compose build`, `docker compose up --build`. The `Dockerfile` and
   `deploy/` may be edited; the image is built only by GitHub Actions (`release.yml`: build-only on pull requests,
-  published to ghcr.io only for
-  pushes to `main` (`:edge`) and `v*` tags).
+  published to ghcr.io only from
+  `main` (`:edge`, nightly or *Run workflow*) and `v*` tags).
 * **Python** only as script files in `./local/`, run with
   `.venv/bin/python ./local/<script>.py` – the user reviews every script. No `python -c`.
 * **Secrets** live only in `secrets/` (git-ignored as a whole). Never print
@@ -20,7 +20,8 @@
 * No organisation-specific names, logos, seed data or deployment files,
   and nothing that resembles Siemens Teamcenter or Microsoft Teams branding.
 * Releases: `.github/workflows/release.yml` builds the server binaries and
-  desktop installers as artifacts on every push to `main`, publishes the
+  desktop installers as artifacts from `main` every night (when it changed) and on
+  *Run workflow*, not per push, publishes the
   container image `ghcr.io/rudalabs/teamcraft` (`:edge` from `main`,
   `:<version>`/`:latest` from tags) and a GitHub Release for a `v*` tag (CONTRIBUTING.md, "Releases and versions").
   Never push a tag, bump the
@@ -201,6 +202,11 @@ desktop/           TeamCraft Desktop (Tauri 2, own Cargo project – never part 
   immediately (no confirmation for one's own actions).
 * **Pure Rust:** no Node.js, no downloaded engines; 3D conversion stays in `mesh.rs`.
 * **Config:** a new variable goes into `config.rs` and `docs/src/admin/configuration.md`.
+* **Docs to keep in sync:** `README.md`, `docs/src/**`, `platforms/*.md`,
+  `desktop/README.md`, `docker-compose.yml`, `CONTRIBUTING.md` (repeats the
+  conventions and commands for outside contributors), `SECURITY.md`.
+* **Merging:** only with a green *CI result* against the current `main`; a red `main`
+  is fixed before anything else is merged (CONTRIBUTING.md, "Merging").
 * **Docs to keep in sync:** `README.md`, `CHANGELOG.md`, `docs/src/**`,
   `docs/OPEN_WORK.md`, `platforms/*.md`, `desktop/README.md`,
   `docker-compose.yml`, `CONTRIBUTING.md` (repeats the conventions and

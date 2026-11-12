@@ -15,7 +15,9 @@ rules of the [support policy](../admin/support-policy.md) apply.
 
 - [ ] `main` is green: the CI workflow (`ci.yml`, fmt, clippy, tests on
   PostgreSQL 16 and 18, macOS and Windows builds), `docs.yml` and
-  `release.yml` (build only) all pass on the commit to release.
+  `release.yml` (build only; it runs nightly, so start it with *Run workflow*
+  on `main` when the commit is newer than the last nightly build) all pass on
+  the commit to release.
 - [ ] The latest run of the scale check (`scale.yml`, manual or weekly) passed
   on this commit or a later one, or a failure is known and written down in
   the release notes.
