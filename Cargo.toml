@@ -39,6 +39,8 @@ crc32fast = "1"
 encoding_rs = "0.8"
 # Raw Deflate segments of SOLIDWORKS 2015+ files; the same flate2/zlib-rs that zip already uses
 flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
+# Zstandard streams of Inventor 2026+ files: a pure-Rust decoder (MIT), no C library
+ruzstd = { version = "0.9", default-features = false, features = ["std"] }
 # ZIP export "Pack and Go" (MIT); Deflate via flate2/zlib-rs, no other codecs
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs", "chrono"] }
 # SketchUp 3-2020 files (classic MFC container): the Rust port of OpenSKP (MIT),

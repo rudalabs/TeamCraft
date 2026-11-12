@@ -154,10 +154,11 @@ Before the fix, none of the 229 files gave a 3D preview.
 * Read both codecs in `src/invpart.rs`, chosen by the first bytes of the
   body: a Zstandard frame with `ruzstd`, anything else as zlib.
 * Accept the `u32` type words of Inventor 2027 in arrays.
-* For occurrence records without a title, take the visibility from the
-  active design view and ignore flag `0x40`. For records with a title,
-  keep the flag. The two forms are told apart per record, not by a version
-  number, so a file that mixes the old and the new parts still reads.
+* For an assembly none of whose occurrence records has a title, take the
+  visibility from the active design view and ignore flag `0x40`. For every
+  other assembly, keep the flag. The form is told by the records, not by a
+  version number or the compression, because it is not known which
+  release changed which part.
 * The files of Inventor 2019 to 2022 must read exactly as before: the NIST
   fixtures and the existing tests stay as they are.
 

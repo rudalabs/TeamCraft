@@ -27,7 +27,7 @@ use std::io::Cursor;
 use anyhow::{anyhow, bail, Result};
 
 use super::{Mesh, MAX_TRIANGLES};
-use crate::invpart::{self, Segment, ELEM_U32, POINT3F, VECTOR3F};
+use crate::invpart::{self, Segment, POINT3F, VECTOR3F};
 
 /// The segment with the display tessellation of a part.
 pub(crate) const PART_GRAPHICS: &str = "PmGraphicsSegment";
@@ -148,7 +148,7 @@ fn face(segment: &Segment, payload: &[u8], solid: bool) -> Option<Face> {
         return Some(Face::default());
     }
     if segment.element_class(positions.elem)? != POINT3F
-        || indices.elem != ELEM_U32
+        || !invpart::is_u32(indices.elem)
         || indices.count % 3 != 0
         || (normals.count != 0
             && (segment.element_class(normals.elem)? != VECTOR3F
@@ -307,7 +307,7 @@ mod tests {
             .flatten()
             .flat_map(|i| i.to_le_bytes())
             .collect();
-        p.extend(array(ELEM_U32, 3 * tris.len(), &idx));
+        p.extend(array(invpart::ELEM_U32, 3 * tris.len(), &idx));
         match normal {
             Some(n) => p.extend(array(0x101, pts.len(), &floats(&vec![n; pts.len()]))),
             None => p.extend(array(0, 0, &[])),
