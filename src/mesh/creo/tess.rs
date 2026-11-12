@@ -618,9 +618,14 @@ pub fn tessellate(brep: &Brep, fixed: &HashMap<i64, Conv>) -> Result<Coarse> {
                     pts.push(*p);
                 }
             }
-            let Ok(tris) = earcutr::earcut(&coords, &hole_starts, 2) else {
-                continue;
-            };
+            let pairs: Vec<[f64; 2]> = coords
+                .chunks_exact(2)
+                .filter_map(|c| <[f64; 2]>::try_from(c).ok())
+                .collect();
+            let tris: Vec<usize> = crate::mesh::earcut::earcut(&pairs, &hole_starts)
+                .into_iter()
+                .flatten()
+                .collect();
             if tris.len() < 3 {
                 continue;
             }

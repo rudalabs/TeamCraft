@@ -49,14 +49,14 @@ pub(super) fn read(data: &[u8]) -> Result<Mesh> {
     Ok(w.mesh)
 }
 
-/// Welds identical vertices of a triangle soup (STL).
-struct Welder {
+/// Welds identical vertices of a triangle soup (STL, SketchUp).
+pub(super) struct Welder {
     map: HashMap<[u32; 3], u32>,
-    mesh: Mesh,
+    pub(super) mesh: Mesh,
 }
 
 impl Welder {
-    fn new(triangles: usize) -> Welder {
+    pub(super) fn new(triangles: usize) -> Welder {
         Welder {
             map: HashMap::with_capacity(triangles / 2),
             mesh: Mesh {
@@ -67,7 +67,7 @@ impl Welder {
         }
     }
 
-    fn push(&mut self, p: [f32; 3]) {
+    pub(super) fn push(&mut self, p: [f32; 3]) {
         let key = [p[0].to_bits(), p[1].to_bits(), p[2].to_bits()];
         let next = self.mesh.vertex_count() as u32;
         let index = *self.map.entry(key).or_insert_with(|| {

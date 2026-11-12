@@ -41,6 +41,9 @@ encoding_rs = "0.8"
 flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 # ZIP export "Pack and Go" (MIT); Deflate via flate2/zlib-rs, no other codecs
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs", "chrono"] }
+# SketchUp 3-2020 files (classic MFC container): the Rust port of OpenSKP (MIT),
+# vendored unchanged because it is not on crates.io – see vendor/README.md
+openskp = { path = "vendor/openskp", version = "1.5.0" }
 # SMTP for e-mail notifications (MIT); rustls/ring/webpki-roots as reqwest already uses
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls", "hostname"] }
 minijinja = "2"
@@ -49,8 +52,6 @@ minijinja = "2"
 gltf = { version = "1.4", default-features = false, features = ["utils"] }
 quick-xml = "0.42"
 truck-stepio = "0.3"
-# Ear clipping of the Creo B-rep faces in their parameter plane (ISC, pure Rust)
-earcutr = "0.4"
 # Text of PDF reports (MIT OR Apache-2.0), only in the isolated `text-extract` process
 pdf_oxide = { version = "0.3", default-features = false, features = ["legacy-crypto"] }
 truck-meshalgo = { version = "0.4", default-features = false, features = ["analyzers", "filters", "tessellation"] }

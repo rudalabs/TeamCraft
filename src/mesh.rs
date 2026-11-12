@@ -25,6 +25,7 @@
 use anyhow::{bail, Result};
 
 pub mod creo;
+mod earcut;
 mod gltf;
 mod helpers;
 mod inventor;
@@ -38,6 +39,7 @@ mod pn;
 mod points;
 pub mod render;
 pub mod rhino;
+mod sketchup;
 mod step;
 mod stl;
 mod sw;
@@ -77,6 +79,7 @@ pub fn read(format: &str, data: &[u8]) -> Result<Mesh> {
         "inventor-assembly" => bail!(
             "An Inventor assembly is shown with the previews of its parts (found by file name)."
         ),
+        "sketchup" => sketchup::read(data)?,
         "vtk-legacy" => crate::simmesh::vtk_legacy(data)?,
         "vtk-unstructured" | "vtk-polydata" => crate::simmesh::vtk_xml(data)?,
         "calculix-frd" => crate::simmesh::frd(data)?,

@@ -180,6 +180,8 @@ pub enum PreviewFormat {
     InvPart,
     /// Inventor assemblies: put together from the previews of their parts.
     InvAssembly,
+    /// SketchUp models: their faces triangulated, components placed.
+    SketchUp,
     /// PTC Creo parts: tessellated from the B-rep they store.
     CreoPart,
     Pts,
@@ -193,7 +195,7 @@ pub enum PreviewFormat {
 }
 
 impl PreviewFormat {
-    pub const ALL: [PreviewFormat; 25] = [
+    pub const ALL: [PreviewFormat; 26] = [
         PreviewFormat::Stl,
         PreviewFormat::Obj,
         PreviewFormat::Ply,
@@ -211,6 +213,7 @@ impl PreviewFormat {
         PreviewFormat::Rhino,
         PreviewFormat::InvPart,
         PreviewFormat::InvAssembly,
+        PreviewFormat::SketchUp,
         PreviewFormat::CreoPart,
         PreviewFormat::Pts,
         PreviewFormat::Xyz,
@@ -251,6 +254,7 @@ impl PreviewFormat {
             PreviewFormat::Rhino => "rhino",
             PreviewFormat::InvPart => "inventor-part",
             PreviewFormat::InvAssembly => "inventor-assembly",
+            PreviewFormat::SketchUp => "sketchup",
             PreviewFormat::CreoPart => "creo-part",
             PreviewFormat::Pts => "pts",
             PreviewFormat::Xyz => "xyz",
