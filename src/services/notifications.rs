@@ -470,11 +470,17 @@ pub struct Notification {
     /// `none`, `pending`, `sent`, `failed` or `skipped`.
     pub email_state: String,
     pub chat_state: String,
+    /// Why the Mattermost delivery failed (empty unless `chat_state` is `failed`),
+    /// e.g. *Mattermost user "xy" not found*; shown to the recipient.
+    pub chat_error: String,
 }
 
 const NOTIFICATION_COLUMNS: &str =
     "id, kind, title, body, link, subject_type, subject_ref, actor_name,
-    created_at, read_at, email_state, chat_state";
+    created_at, read_at, email_state, chat_state,
+    CASE WHEN chat_state = 'failed'
+         THEN COALESCE(substring(delivery_error from 'Mattermost: (.*)$'), '')
+         ELSE '' END AS chat_error";
 
 /// The newest notifications of a user.
 pub async fn list(

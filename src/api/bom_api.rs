@@ -162,6 +162,7 @@ pub(super) struct WorksetQuery {
 pub(super) async fn get_workset(
     State(st): State<AppState>,
     ApiUser(me): ApiUser,
+    log: AccessCtx,
     Path((number, code)): Path<(String, String)>,
     Query(q): Query<WorksetQuery>,
 ) -> AppResult<Json<Value>> {
@@ -169,9 +170,18 @@ pub(super) async fn get_workset(
     let me = project_policy::narrow(&st.db, me, &[project_policy::Interface::DesktopSync]).await?;
     let rev = revision_at(&st, &me, &number, &code).await?;
     let rule = bom_rule(q.rule.as_deref().filter(|r| !r.trim().is_empty()))?;
-    Ok(Json(json!(
-        workset::resolve(&st.db, &me, rev.id, rule, q.references.unwrap_or(true)).await?
-    )))
+    let set = workset::resolve(&st.db, &me, rev.id, rule, q.references.unwrap_or(true)).await?;
+    // one entry per logged group of the set (the files follow as downloads)
+    let ids: Vec<Uuid> = set.revisions.iter().map(|r| r.revision_id).collect();
+    access_log::record_structure(
+        &st.db,
+        &log.through(access_log::Channel::Desktop),
+        &me,
+        access_log::Kind::Workset,
+        &ids,
+    )
+    .await?;
+    Ok(Json(json!(set)))
 }
 
 #[derive(Deserialize)]
@@ -332,4 +342,38 @@ pub(super) async fn get_structure_roots(
     Ok(Json(json!(
         structure::roots(&st.db, &me, project.id, page).await?
     )))
+}
+
+// ---------------------------------------------------------------------------
+// Mass properties
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+pub(super) struct MassQuery {
+    rule: Option<String>,
+    /// Reference point `x,y,z` in metres.
+    #[serde(rename = "ref")]
+    reference: Option<String>,
+}
+
+/// Mass, CG and inertia tensors of the structure below a revision (see
+/// `services::mass_properties`).
+pub(super) async fn get_mass_properties(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path((number, code)): Path<(String, String)>,
+    Query(q): Query<MassQuery>,
+) -> AppResult<Response> {
+    let rev = revision_at(&st, &me, &number, &code).await?;
+    let rule = bom_rule(q.rule.as_deref())?;
+    let reference = mass_properties::parse_point(q.reference.as_deref())?;
+    Ok(Json(mass_properties::rollup(&st, &me, rev.id, rule, reference).await?).into_response())
+}
+
+/// The material library (densities in kg/m³).
+pub(super) async fn list_materials(
+    State(st): State<AppState>,
+    ApiUser(_me): ApiUser,
+) -> AppResult<Response> {
+    Ok(Json(mass_properties::materials(&st.db).await?).into_response())
 }

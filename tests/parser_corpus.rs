@@ -18,14 +18,15 @@ fn fixture_types(target: &str) -> Option<&'static [&'static str]> {
         "htmltext" => &["html", "htm", "txt", "tsv"],
         "swpart" => &["sldprt", "sldasm", "slddrw"],
         "nxpart" => &["prt"],
+        "invpart" => &["ipt", "iam"],
         "thumbnail" => &[
-            "ipt", "iam", "sldprt", "sldasm", "prt", "catpart", "par", "asm",
+            "ipt", "iam", "sldprt", "sldasm", "prt", "catpart", "par", "asm", "3dm",
         ],
         "bomtable" => &["tsv", "csv"],
         "resultscan" | "solversummary" => &["csv", "tsv", "txt"],
         // The STEP tessellation is slow in a debug build: only small files.
         "mesh_step" => &["stp"],
-        "mesh" => &[],
+        "mesh" => &["3dm"],
         _ => return None,
     })
 }
@@ -165,6 +166,7 @@ fn every_target_has_seeds_or_fixtures_of_its_own() {
     for (target, ext) in [
         ("swpart", "sldasm"),
         ("nxpart", "prt"),
+        ("invpart", "ipt"),
         ("thumbnail", "ipt"),
     ] {
         assert!(

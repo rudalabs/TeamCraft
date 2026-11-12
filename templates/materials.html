@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Materials{% endblock %}
+{% block nav_materials %}active{% endblock %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1>Materials</h1>
+    <p class="subtitle">
+      Densities for the mass properties: the material of a revision (e.g. “Aluminium 7075-T6”) is looked up here by name, ignoring case.
+      A density override on the revision wins; a measured mass wins over both.
+    </p>
+  </div>
+</div>
+
+<div class="card">
+  {% if materials %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">Name</th><th scope="col" class="num">Density (kg/m³)</th><th scope="col">Notes</th>{% if is_admin %}<th scope="col"><span class="visually-hidden">Actions</span></th>{% endif %}</tr></thead>
+    <tbody>
+    {% for mat in materials %}
+      <tr>
+        {% if is_admin %}
+        <td colspan="3">
+          <form class="inline" method="post" action="/materials/{{ mat.id }}">
+            <input type="text" name="name" value="{{ mat.name }}" maxlength="200" required aria-label="Name">
+            <input type="text" inputmode="decimal" name="density" value="{{ mat.density_kg_m3|num(6) }}" required size="10" aria-label="Density in kg/m³">
+            <input type="text" name="notes" value="{{ mat.notes }}" maxlength="2000" aria-label="Notes">
+            <button type="submit" class="small">Save</button>
+          </form>
+        </td>
+        <td>
+          <form class="inline" method="post" action="/materials/{{ mat.id }}/delete">
+            <button type="submit" class="small danger" data-confirm="Remove {{ mat.name }} from the library?">Remove</button>
+          </form>
+        </td>
+        {% else %}
+        <td class="nowrap">{{ mat.name }}</td>
+        <td class="num">{{ mat.density_kg_m3|num(6) }}</td>
+        <td class="muted">{{ mat.notes }}</td>
+        {% endif %}
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  {% else %}
+  <p class="empty">The library is empty.{% if is_admin %} Add the first material below, e.g. <em>Aluminium 7075-T6</em> with 2810 kg/m³.{% else %} An administrator adds materials.{% endif %}</p>
+  {% endif %}
+</div>
+
+{% if is_admin %}
+<div class="card">
+  <h2>New material</h2>
+  <form class="stack" method="post" action="/materials">
+    <div class="form-row">
+      <label>Name <input type="text" name="name" maxlength="200" required placeholder="Aluminium 7075-T6"></label>
+      <label>Density (kg/m³) <input type="text" inputmode="decimal" name="density" required placeholder="2810"></label>
+      <label>Notes <span class="hint">optional: source, infill, tolerance</span>
+        <input type="text" name="notes" maxlength="2000"></label>
+    </div>
+    <div class="actions"><button class="primary" type="submit">Add material</button></div>
+  </form>
+</div>
+{% endif %}
+{% endblock %}

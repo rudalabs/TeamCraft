@@ -9,6 +9,7 @@ fn actor(role: Role, projects: Vec<Uuid>) -> Actor {
         display_name: "U".into(),
         role,
         skin: String::new(),
+        preferred_cad: String::new(),
         projects,
         hidden_projects: Vec::new(),
     }

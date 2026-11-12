@@ -12,6 +12,10 @@ roll-up and three **revision rules**:
 | Latest released | its newest released revision                                                      |
 | As released     | the exact revision the parent was released with (e.g. the as-built configuration) |
 
+The roll-up adds the entered masses. The centre of gravity and the inertia
+tensor of the structure, computed from the 3D files of the parts, are on the **Mass properties** page –
+see [Mass properties](mass-properties.md).
+
 ### Working with a large structure
 
 For a big product (hundreds or thousands of lines across several project
@@ -46,7 +50,10 @@ opens the where-used page, which walks up through the sub-assemblies (1, 2,
 exports as CSV and as Excel workbook (which the BOM import reads back), and **Pack and Go** downloads a revision with
 the files of its whole structure
 as ZIP (`<item>_<revision>/`, `bom.csv`, `manifest.json` with SHA-256 per
-file).
+file). For every released revision the manifest also names the change order
+that released it and who approved it when (`released_by`: change, title,
+release time, approvals); a change order the downloader may not see is only
+marked `restricted`.
 
 ## Creating a BOM from the CAD references
 
@@ -57,19 +64,21 @@ the BOM is empty) shows what the BOM would be, one row per child:
 
 * item, name, **quantity** and where it comes from – *CAD instances* (NX:
   the placed instances of the component, hidden layers left out; SOLIDWORKS:
-  the instances in the component tree without *exclude from BOM*) or
-  *assumed 1* (the file does not tell; the line gets the note *quantity not
+  the instances in the component tree without *exclude from BOM*; STEP
+  assemblies with external part files: the assembly occurrences of each
+  file) or *assumed 1* (the file does not tell; the line gets the note *quantity not
   known from the CAD file – check it*);
 * the CAD file that references it;
 * a status: *new line* (ticked), *already in the BOM*, *differs* (BOM 2, CAD
-  4 – changed only when you tick it and *Also change the quantity*), or
-  *circular* (refused, as when adding a line by hand).
+  4 – changed only when you tick it and *Also change the quantity*), or *circular* (refused, as when adding a line by
+  hand).
 
 Only assembly files count (NX files only when they have component
-instances); a drawing's link to its model stays a *drawing of* reference.
+instances, STEP files only when their occurrences lead to external part
+files); a drawing's link to its model stays a *drawing of* reference.
 Referenced files TeamCraft does not have are listed as *not in TeamCraft* and
-never created; parts in project groups you cannot see are only counted.
-*Add the ticked lines* needs the revision checked out by you (the page
+never created; parts in project groups you cannot see are only counted. *Add the ticked lines* needs the revision
+checked out by you (the page
 offers *Check out and create*) and adds all lines in one transaction. The
 REST API has the same two steps: `GET …/bom/from-references` returns the
 plan, `POST …/bom/from-references` with
@@ -144,8 +153,8 @@ SOLIDWORKS 2015+ files through their containers, see
 [Formats](../reference/formats.md)) and matched against
 the vault: referenced files that are *not in TeamCraft* are flagged and the
 missing BOM lines are suggested. The other direction warns before damage:
-removing a file that CAD files of other items still reference names them
-(up to three, then a count) in the confirmation, so a part still used in an
+removing a file that CAD files of other items still reference names them (up to three, then a count) in the
+confirmation, so a part still used in an
 assembly or drawing is not deleted by accident. Deleting an item is refused
 while it is used in a BOM.
 

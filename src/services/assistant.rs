@@ -29,6 +29,11 @@ pub struct Run {
     pub allow_drafts: bool,
     pub input_tokens: u64,
     pub output_tokens: u64,
+    /// "Open 3D preview" links of `open_3d_preview` results, checked by
+    /// `assistant::open_links` (this server's viewer pages only, relative).
+    /// Shown under the fresh answer; the stored thread keeps text only.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<assistant::OpenLink>,
     /// Where the question was asked, as resolved with the user's rights
     /// (conversation requests only).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -191,7 +196,7 @@ async fn run_once(
     let allow_drafts = question.allow_drafts && me.can_edit();
     let system = assistant::system_prompt(me, allow_drafts);
     let instruction = question.instruction();
-    let tools = McpTools::new(st, me);
+    let tools = McpTools::new(st, me).with_origin(question.origin.clone());
     if prior_taint {
         tools
             .tainted
@@ -250,6 +255,7 @@ async fn run_once(
     let answer = result.map_err(AssistantError::into_app_error)?;
     let tainted = tools.tainted.load(std::sync::atomic::Ordering::SeqCst);
     let trace = std::mem::take(&mut guard.trace);
+    let links = assistant::open_links(&trace.open_hints, &st.config.public_url);
     Ok((
         Run {
             action: guard.question.action,
@@ -261,6 +267,7 @@ async fn run_once(
             allow_drafts,
             input_tokens: trace.input_tokens,
             output_tokens: trace.output_tokens,
+            links,
             context: None,
         },
         tainted,
@@ -468,6 +475,7 @@ pub async fn resolve_context(
 /// A request of the web sidebar or the REST API: validates the raw fields
 /// and the page context the client sent (`context`, see
 /// [`crate::pagecontext`]), then asks.
+#[allow(clippy::too_many_arguments)]
 pub async fn chat(
     st: &AppState,
     me: &Actor,
@@ -476,6 +484,7 @@ pub async fn chat(
     context: &Value,
     allow_drafts: bool,
     thread: bool,
+    origin: crate::auth::Origin,
 ) -> AppResult<Run> {
     if !enabled(st) {
         return Err(AssistantError::Disabled.into_app_error());
@@ -500,6 +509,7 @@ pub async fn chat(
         allow_drafts,
     )
     .map_err(AppError::BadRequest)?;
+    let question = Question { origin, ..question };
     ask_with_page(st, me, question, &page, thread).await
 }
 

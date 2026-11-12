@@ -124,9 +124,9 @@ enum Command {
     /// runs every conversion in its own process with a time limit).
     #[command(hide = true)]
     PreviewMesh {
-        /// Format id: stl, obj, ply, off, 3mf, amf, gltf, glb, 3ds, step, nx-part, solidworks-part,
-        /// pts, xyz, las –
-        /// or tcm for a cached preview mesh (only --signature)
+        /// Format id: stl, obj, ply, off, 3mf, amf, gltf, glb, 3ds, step, nx-part, solidworks-part, rhino,
+        /// inventor-part, pts, xyz, las –
+        /// or tcm for a cached preview mesh (only --signature / --mass-properties)
         #[arg(long)]
         format: String,
         #[arg(long)]
@@ -137,6 +137,9 @@ enum Command {
         /// Also write the shape signature (JSON) for the similar part search.
         #[arg(long)]
         signature: Option<std::path::PathBuf>,
+        /// Also write the mass properties (JSON) per unit density in model units.
+        #[arg(long)]
+        mass_properties: Option<std::path::PathBuf>,
         /// Refuse an input file larger than this before opening it.
         #[arg(long, default_value_t = u64::MAX)]
         max_input_bytes: u64,
@@ -170,6 +173,34 @@ enum UserCommand {
     },
     /// List all accounts.
     List,
+    /// What an account still holds before somebody leaves: check-outs, open
+    /// change orders, pending reviews, change requests, owned items,
+    /// memberships and API tokens (read-only; every project group, as the
+    /// operator of the server).
+    Holdings {
+        #[arg(long)]
+        username: String,
+    },
+    /// Deactivate an account as an offboarding step: optionally hand its
+    /// work and manager roles over, release its check-outs and delete its
+    /// API tokens (as the operator of the server; every step is audited).
+    Deactivate {
+        #[arg(long)]
+        username: String,
+        /// Release every check-out the account holds.
+        #[arg(long)]
+        release_checkouts: bool,
+        /// Hand items, change orders, requests, reviews and manager roles
+        /// over to this account.
+        #[arg(long)]
+        hand_over_to: Option<String>,
+        /// Delete the account's API tokens.
+        #[arg(long)]
+        revoke_tokens: bool,
+        /// Leave groups the account alone manages without an active manager.
+        #[arg(long)]
+        confirm_no_manager: bool,
+    },
     /// Show the storage usage and quota of an account; with --mb set the
     /// quota (counted over the sizes of the versions the user stored).
     Quota {
@@ -285,6 +316,7 @@ fn main() -> ExitCode {
         input,
         output,
         signature,
+        mass_properties,
         max_input_bytes,
         max_memory_bytes,
     }) = &cli.command
@@ -295,6 +327,7 @@ fn main() -> ExitCode {
             input,
             output.as_deref(),
             signature.as_deref(),
+            mass_properties.as_deref(),
             *max_input_bytes,
         );
     }
@@ -480,6 +513,18 @@ async fn serve(no_migrate: bool) -> Result<ExitCode> {
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e, "session cleanup failed"),
             }
+            // need-to-know groups whose access review is due (#151)
+            match services::access_review::remind_due(&pool).await {
+                Ok(n) if n > 0 => tracing::info!(groups = n, "reminded of due access reviews"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "access review reminders failed"),
+            }
+            // groups that lost their last present manager (#173)
+            match services::manager_gaps::alert_admins(&pool).await {
+                Ok(n) if n > 0 => tracing::info!(groups = n, "manager gap alerts sent"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "manager gap alerts failed"),
+            }
             match services::imports::purge_stale(&pool, &vault).await {
                 Ok(n) if n > 0 => tracing::info!(removed = n, "removed stale staged imports"),
                 Ok(_) => {}
@@ -563,22 +608,23 @@ async fn serve(no_migrate: bool) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// `teamcraft preview-mesh`: one conversion and/or shape signature, errors
-/// as the last line of stderr.
+/// `teamcraft preview-mesh`: one conversion, shape signature and/or mass
+/// properties, errors as the last line of stderr.
 fn preview_mesh(
     format: &str,
     input: &std::path::Path,
     output: Option<&std::path::Path>,
     signature: Option<&std::path::Path>,
+    mass: Option<&std::path::Path>,
     max_input_bytes: u64,
 ) -> ExitCode {
-    if output.is_none() && signature.is_none() {
-        eprintln!("Error: give --output and/or --signature");
+    if output.is_none() && signature.is_none() && mass.is_none() {
+        eprintln!("Error: give --output, --signature and/or --mass-properties");
         return ExitCode::FAILURE;
     }
     // the kernel's panic messages are not meant for users
     std::panic::set_hook(Box::new(|_| {}));
-    match teamcraft::preview::run_job(format, input, output, signature, max_input_bytes) {
+    match teamcraft::preview::run_job(format, input, output, signature, mass, max_input_bytes) {
         Ok(mesh) => {
             // for people running it by hand (the server ignores stdout)
             let partial = mesh
@@ -814,6 +860,51 @@ async fn user_command(command: UserCommand) -> Result<ExitCode> {
                 user.username,
                 describe_usage(&usage)
             )?;
+        }
+        UserCommand::Holdings { username } => {
+            let user = services::users::find_by_username(&pool, &username)
+                .await?
+                .with_context(|| format!("no user named '{username}'"))?;
+            let report =
+                services::offboarding::holdings(&pool, &teamcraft::auth::Actor::system(), user.id)
+                    .await?;
+            write!(
+                std::io::stdout(),
+                "{}",
+                services::offboarding::to_text(&report)
+            )?;
+        }
+        UserCommand::Deactivate {
+            username,
+            release_checkouts,
+            hand_over_to,
+            revoke_tokens,
+            confirm_no_manager,
+        } => {
+            let user = services::users::find_by_username(&pool, &username)
+                .await?
+                .with_context(|| format!("no user named '{username}'"))?;
+            let hand_over_to = match hand_over_to {
+                Some(name) => Some(
+                    services::users::find_by_username(&pool, &name)
+                        .await?
+                        .with_context(|| format!("no user named '{name}'"))?
+                        .id,
+                ),
+                None => None,
+            };
+            let opts = services::deactivation::Offboarding {
+                release_checkouts,
+                hand_over_to,
+                revoke_tokens,
+                confirm_no_manager,
+            };
+            let actor = teamcraft::auth::Actor::system();
+            let report = services::deactivation::deactivate(&pool, &actor, user.id, &opts).await?;
+            writeln!(std::io::stdout(), "{}", report.summary())?;
+            if report.releases.iter().any(|o| !o.ok) {
+                return Ok(ExitCode::from(2));
+            }
         }
         UserCommand::List => {
             let users = services::users::list(&pool).await?;

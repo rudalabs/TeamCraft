@@ -944,3 +944,99 @@ async fn local_agents_off_closes_the_mcp_endpoint() {
     assert_eq!(r.status, StatusCode::UNAUTHORIZED);
     app.teardown().await;
 }
+
+/// The desktop app allows a local agent's calls of the read-only tools
+/// without asking the user (`desktop/src/autoallow.rs`), taking the read-only
+/// set from `tools/list`. That must not widen anyone's rights: every
+/// read-only tool that takes an item answers an outsider of a restricted
+/// group – over the desktop's marked connection – like an item that does not
+/// exist ("not found"), while a member reads it. (`read_permissions.rs`,
+/// `outsiders_see_nothing_of_a_restricted_group`, calls every tool and
+/// checks that nothing leaks.)
+#[tokio::test]
+async fn read_only_tools_of_a_local_agent_keep_need_to_know() {
+    let app = app_or_skip!();
+    let (_, erika) = app.user("erika", Role::Editor).await;
+    let (_, otto) = app.user_in("otto", Role::Editor, &["ROCKET"]).await;
+    let r = app
+        .api(
+            Method::POST,
+            "/api/v1/projects",
+            &erika,
+            Some(json!({ "code": "NTK", "name": "Need to know", "visibility": "restricted" })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let secret = app
+        .create_item(
+            &erika,
+            json!({ "item_type": "part", "name": "Zirconia secret", "project": "NTK" }),
+        )
+        .await;
+
+    // the read-only set as the desktop reads it, with the outsider's token
+    let list = rpc_as_local_agent(
+        &app,
+        &otto,
+        json!({ "jsonrpc": "2.0", "id": 1, "method": "tools/list" }),
+    )
+    .await;
+    assert_eq!(list.status, StatusCode::OK, "{}", list.text());
+    let read_only: Vec<String> = list.json()["result"]["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|t| t["annotations"]["readOnlyHint"] == true)
+        .map(|t| t["name"].as_str().unwrap().to_string())
+        .collect();
+    let item_tools = [
+        "get_item",
+        "get_revision",
+        "get_bom",
+        "where_used",
+        "item_history",
+        "bom_health",
+    ];
+    for name in item_tools {
+        assert!(read_only.iter().any(|t| t == name), "{name} is read-only");
+    }
+    // the write tools are not in it
+    for name in ["create_draft_change", "comment_change_request"] {
+        assert!(!read_only.iter().any(|t| t == name), "{name} writes");
+    }
+
+    let call = |token: String, name: &'static str, item: String| {
+        let app = &app;
+        async move {
+            rpc_as_local_agent(
+                app,
+                &token,
+                json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+                        "params": { "name": name, "arguments": { "item": item } } }),
+            )
+            .await
+        }
+    };
+    for name in item_tools {
+        // a member reads the item
+        let r = call(erika.clone(), name, secret.clone()).await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+        assert_eq!(r.json()["result"]["isError"], false, "{name}: {}", r.text());
+        // the outsider gets "not found", as for a number that does not exist
+        let r = call(otto.clone(), name, secret.clone()).await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+        let res = r.json()["result"].clone();
+        assert_eq!(res["isError"], true, "{name}: {res}");
+        let text = res.to_string();
+        assert!(text.contains("not found"), "{name}: {text}");
+        assert!(!text.contains("Zirconia"), "{name} leaks: {text}");
+        let missing = call(otto.clone(), name, "PRT-999999".into()).await.json()["result"].clone();
+        assert_eq!(missing["isError"], true, "{name}: {missing}");
+        assert_eq!(
+            text.replace(&secret, "#"),
+            missing.to_string().replace("PRT-999999", "#"),
+            "{name}: a hidden item answers like a missing one"
+        );
+    }
+    app.teardown().await;
+}

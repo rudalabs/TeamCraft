@@ -613,3 +613,117 @@ async fn solidworks_instance_counts_become_quantities() {
     assert_eq!(c["quantity_source"], "cad_instances", "{p}");
     assert_eq!(c["quantity"].as_f64().unwrap(), f64::from(expected));
 }
+
+/// A STEP assembly whose parts live in their own files (#247): pump.stp
+/// places bolt.stp four times – through a sub-assembly inside the file that
+/// is placed twice – and nut.stp once.
+fn step_assembly() -> Vec<u8> {
+    let product = |n: u32| {
+        format!(
+            "#{n}1=PRODUCT('P{n}','P{n}','',(#9));\n\
+             #{n}2=PRODUCT_DEFINITION_FORMATION('','',#{n}1);\n\
+             #{n}3=PRODUCT_DEFINITION('design','',#{n}2,#8);\n"
+        )
+    };
+    let usage = |id: u32, parent: u32, child: u32| {
+        format!("#{id}=NEXT_ASSEMBLY_USAGE_OCCURRENCE('{id}','','',#{parent}3,#{child}3,$);\n")
+    };
+    // 1 = pump, 2 = frame (inside the file), 3 = bolt, 4 = nut
+    let mut data = (1..=4).map(product).collect::<String>();
+    data += "#900=DOCUMENT_FILE('bolt.stp','',$,#1,'','');\n\
+             #901=APPLIED_DOCUMENT_REFERENCE(#900,'',(#33));\n\
+             #910=DOCUMENT_FILE('nut.stp','',$,#1,'','');\n\
+             #911=APPLIED_DOCUMENT_REFERENCE(#910,'',(#43));\n";
+    data += &usage(100, 1, 2);
+    data += &usage(101, 1, 2);
+    data += &usage(102, 2, 3);
+    data += &usage(103, 2, 3);
+    data += &usage(104, 1, 4);
+    format!(
+        "ISO-10303-21;\nHEADER;\nFILE_DESCRIPTION((''),'2;1');\n\
+         FILE_NAME('pump.stp','2026-11-11T10:00:00',(''),(''),'','','');\n\
+         FILE_SCHEMA(('AUTOMOTIVE_DESIGN'));\nENDSEC;\nDATA;\n{data}ENDSEC;\nEND-ISO-10303-21;\n"
+    )
+    .into_bytes()
+}
+
+/// The counts of a STEP assembly are stored with its references and reach
+/// the plan; a quantity-1 line of an earlier folder import is corrected with
+/// `update_quantities` (the desktop's *Quantities from CAD…*).
+#[tokio::test]
+async fn step_assemblies_give_quantities_and_correct_earlier_lines() {
+    let app = app_or_skip!();
+    let (_, eng) = app.user_in("eng", Role::Editor, &["ROCKET"]).await;
+    let bolt = item(&app, &eng, "part", "ROCKET").await;
+    upload(&app, &eng, &bolt, "bolt.stp", b"ISO-10303-21;\n").await;
+    let nut = item(&app, &eng, "part", "ROCKET").await;
+    upload(&app, &eng, &nut, "nut.stp", b"ISO-10303-21;\n").await;
+    let asm = item(&app, &eng, "assembly", "ROCKET").await;
+    upload(&app, &eng, &asm, "pump.stp", &step_assembly()).await;
+
+    let refs = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/items/{asm}/revisions/A/references"),
+            &eng,
+            None,
+        )
+        .await
+        .json();
+    let mut counts: Vec<(String, i64)> = refs["files"][0]["references"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            (
+                r["name"].as_str().unwrap().to_string(),
+                r["instances"].as_i64().unwrap(),
+            )
+        })
+        .collect();
+    counts.sort();
+    assert_eq!(
+        counts,
+        [("bolt.stp".to_string(), 4), ("nut.stp".to_string(), 1)],
+        "{refs}"
+    );
+
+    // an earlier folder import left the bolt with quantity 1
+    checkout(&app, &eng, &asm).await;
+    let r = app
+        .api(
+            Method::POST,
+            &format!("/api/v1/items/{asm}/revisions/A/bom"),
+            &eng,
+            Some(json!({ "child": bolt, "quantity": 1 })),
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::CREATED, "{}", r.text());
+    let p = plan(&app, &eng, &asm).await.json();
+    let c = child(&p, &bolt);
+    assert_eq!(c["status"], "differs", "{p}");
+    assert_eq!(c["quantity"].as_f64().unwrap(), 4.0);
+    assert_eq!(c["quantity_source"], "cad_instances");
+    assert_eq!(child(&p, &nut)["status"], "new");
+
+    let r = apply(
+        &app,
+        &eng,
+        &asm,
+        json!({ "children": [bolt, nut], "update_quantities": true }),
+    )
+    .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let lines = bom(&app, &eng, &asm).await;
+    let quantity = |n: &str| {
+        lines
+            .iter()
+            .find(|l| l["child_number"] == json!(n))
+            .unwrap_or_else(|| panic!("{n} missing in {lines:?}"))["quantity"]
+            .as_f64()
+            .unwrap()
+    };
+    assert_eq!(quantity(&bolt), 4.0);
+    assert_eq!(quantity(&nut), 1.0);
+    app.teardown().await;
+}

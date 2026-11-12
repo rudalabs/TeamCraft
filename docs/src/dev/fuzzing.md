@@ -16,7 +16,8 @@ allocate what a file only claims.
 | Corpus test                  | `tests/parser_corpus.rs`                                                                                                                           | every `cargo test` (stable): seeds and matching fixtures whole, cut and with a few bytes corrupted |
 | Damage test                  | `tests/parser_robustness.rs`                                                                                                                       | every `cargo test`: small hand-made samples, every prefix and hundreds of corruptions              |
 
-The targets are `stepbom`, `swpart`, `nxpart`, `cadrefs`, `bomtable`,
+The targets are `stepbom`, `swpart`, `nxpart`, `invpart` (Inventor segments, part meshes and assembly placements),
+`cadrefs`, `bomtable`,
 `thumbnail`, `textindex`, `htmltext` (HTML reports and the charset detection of text files), `mesh` (STL, OBJ, PLY, OFF,
 3MF, AMF, glTF, 3DS,
 points, LAS, VTK legacy and XML, CalculiX FRD) and `mesh_step` (the STEP
@@ -64,6 +65,13 @@ The first corpus directory collects new inputs. It is git-ignored, like
 `fuzz/artifacts` and `fuzz/target`. `cargo fuzz` needs a sanitizer-capable
 nightly toolchain: Linux and macOS work. On Windows run the corpus test
 instead (`cargo test --test parser_corpus`). The fuzz workflow does the rest.
+
+The workflow pins `--target x86_64-unknown-linux-gnu`. The prebuilt
+`cargo-fuzz` it installs is a musl binary, and `cargo fuzz` otherwise defaults
+the target to its own build triple (musl), which is not installed on the
+runner and whose static libc the AddressSanitizer refuses. A local
+`cargo install cargo-fuzz` builds a host (GNU) binary, so local runs need no
+flag; only CI does.
 
 ## When a target crashes
 

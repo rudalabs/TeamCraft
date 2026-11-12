@@ -2,7 +2,7 @@
 
 TeamCraft Desktop (`desktop/`, Tauri 2) is a rich client for Linux, macOS and
 Windows: a navigator tree of the project groups, object tabs (overview,
-files, structure, where used, changes, history, 3D viewer), a worklist with
+files, structure, where used, references, graph, changes, history, 3D viewer), a worklist with
 check-outs and reviews, and a **local working folder**:
 
 * *New* (`Ctrl/Cmd+N`) creates an item together with its files: choose the
@@ -13,7 +13,9 @@ check-outs and reviews, and a **local working folder**:
   locked; parts you changed locally, or whose place is taken by another file,
   are never overwritten and are listed in the report (*Settings → Workspace*
   switches this off);
-* *All items / Structure* in the navigator head: *Structure* shows, per project
+* *Files / All items / Structure* in the navigator head: *Files* shows the
+  folders and files of the project group as in its working folder (see
+  below); *Structure* shows, per project
   group, the assemblies and the parts no BOM uses; an assembly expands into its
   parts one level at a time with quantity, state, lock owner and ⧉ N for a part
   used in several assemblies;
@@ -32,7 +34,14 @@ check-outs and reviews, and a **local working folder**:
   the same folder can also be imported into another group. BOM lines come
   from the references in the assembly files – for NX also from `.prt` files (such an assembly is imported as a part
   item, NX does not tell parts and
-  assemblies apart by the file type). *Help → How to
+  assemblies apart by the file type). Their quantity is how often the
+  assembly places the part where the file tells it (SOLIDWORKS 2015+, NX,
+  Inventor and STEP assemblies with external part files; instances excluded
+  from the BOM and suppressed Inventor occurrences do not count, a part that
+  is only placed that way gets no BOM line but stays referenced); for other
+  formats (Solid Edge, …) it is 1
+  with the note *check the quantity* – set the real quantities with *Import
+  BOM…* from the CAD program's BOM export. *Help → How to
   Import a CAD Folder* is the step-by-step tutorial (Pack and Go, unique file
   names, check and release);
 * *Import BOM…* (in the *Structure* tab and the *More* menu of a revision you
@@ -44,6 +53,28 @@ check-outs and reviews, and a **local working folder**:
   missing items. *Part numbers from the file* or *New numbers* (the group's
   numbering scheme), and whether items with the same number are reused, are
   chosen in the dialog;
+* *Quantities from CAD…* (next to *Import BOM…*) compares the BOM with the
+  instances counted in the revision's CAD files (SOLIDWORKS 2015+, NX, STEP
+  assemblies with external part files): missing lines and lines whose
+  quantity differs – such as the quantity 1 of an assembly imported before
+  the counts existed – are ticked; *Apply* adds and corrects them in one step (the same plan as *Create BOM from CAD
+  references…* in the web UI). A
+  quantity the CAD file does not tell never replaces an existing one;
+* the *Graph* tab draws a navigable reference and BOM graph around the
+  revision: the focused item in the middle, its BOM children and references
+  below, the assemblies that use it above. Node colour is the lifecycle state,
+  node size (and the ⚙ badge) the item's own BOM complexity; the small ×n in
+  the top-left corner of a child is how many instances of it the assembly
+  contains (summed over its BOM lines). Click a node to go to it: the tab
+  becomes that item – a sub-assembly shows its own graph, anything else its
+  overview – and *← Back*, always in the same place (left of the tab row),
+  leads back the way you came, one step per click; clicking the assembly you
+  came from is the same step back. A click on the item in the middle opens
+  its own overview. `Ctrl`+click (`⌘`+click on macOS) opens a node in a tab
+  of its own instead. The mouse wheel zooms on the cursor, dragging pans and
+  a double-click on the background fits the graph again. Large assemblies are
+  laid out in rows, and only the first 48 neighbours get a preview and their
+  complexity;
 * the *Workspace* tab shows per file where it is, whether it is up to date,
   modified, outdated, in conflict, new, missing or a name clash, whether it
   is read-only, and who holds the lock for how long; opening an outdated
@@ -78,6 +109,10 @@ check-outs and reviews, and a **local working folder**:
 * on Windows with Inventor or Solid Edge installed, *STEP* (workspace) and
   the check-in option create STEP exports for the 3D preview with that
   program; the Files tab shows the preview image stored in native files.
+* with a *Preferred CAD program* set on your account page in the web UI, the
+  Files tab of a revision collapses the native files of other CAD programs
+  (see [Files](files.md#preferred-cad-program)); the app reads the setting at
+  sign-in.
 * *Agent* (rail, *View → Agent*, `Ctrl/Cmd+4`, or *Agent* in a revision or
   change tab) is the app's one place for AI. It runs on one of two
   backends, decided by the server's policy and your choice:
@@ -135,6 +170,14 @@ toolbar of the open object with its one next step filled (see
 released, a ring: in review, a half-filled ring: in work, – obsolete, the
 name in the tooltip); the search field is `Ctrl+F` (`⌘F`).
 
+**Moving tabs:** drag an object tab to a new place (a bar shows where it
+lands; the tab keeps its state, and a plain click still just selects it).
+Without a mouse: `Ctrl+Shift+PageUp` / `PageDown` move the active tab left or
+right, `Ctrl+PageUp` / `PageDown` (or `Ctrl+Tab` / `Ctrl+Shift+Tab`) switch
+to the previous or next tab, and the arrow keys move between the tabs when
+the tab strip has the focus. The right-click menu of a tab offers *Move to
+start*, *Move to end*, *Close*, *Close others* and *Close tabs to the right*.
+
 ## The toolbar
 
 The toolbar sits right below the tab strip and acts on the active tab. Its
@@ -177,13 +220,42 @@ number of files, BOM lines, where
 used, references, change orders and open change requests – a click opens the
 matching sub-tab.
 
-*Home*, *Refresh* and the dialogs that offer project groups (*New*, *Get
-Project Groups…*, *Import CAD Folder…*) load the groups and your memberships
-from the server again, so a group created or joined in the web UI shows
-without restarting the app.
+**Projects** (the rail button below *Agent*, `Ctrl/Cmd+5`) is where you
+choose the **active project group**: your groups first, then the others.
+CAD editors create a new group there (*New* – you become its manager; tick *Restricted* to keep it to its members), and
+the page offers *Get…* (copy
+groups into your workspace) and *Import CAD folder…*. The choice is kept on
+this computer.
+
+**Home** is a file browser of the active group, in three views:
+
+* *Files* (the view Home starts with): the **folders** of the group and the
+  **files** in them, as in its working folder – folders first, then the files
+  by name the way a file manager orders them (without regard to case, `Part2`
+  before `Part10`), each with the state and the lock of its item. The file
+  name comes first and the number and revision after it, so a narrow navigator
+  cuts the number, not the name. A folder opens its own level – a large group
+  is never loaded as a whole, and a folder with more than 500 files offers
+  *show … more*. The files are those of the latest revision of every item;
+  items without files are listed below the files at the top of the group.
+  The number next to the order is the rows of the whole group. A click on a
+  file opens its item;
+* *All items*: every item in one list, the name first (the first 500 by
+  number);
+* *Structure*: the assemblies with their parts.
+
+*Files* and *All items* are sorted by name (or by number, type or state – the
+choice is kept). *Change…* goes back to *Projects*. *New* and *Import CAD
+Folder…* start with the active group. With a server older than the *Files*
+view, Home shows *All items* instead.
+
+*Home*, *Projects*, *Refresh* and the dialogs that offer project groups (*New*, *Get Project Groups…*, *Import CAD
+Folder…*) load the groups and your
+memberships from the server again, so a group created or joined in the web UI
+shows without restarting the app.
 
 Keyboard: `Ctrl/Cmd+N` new item, `Ctrl/Cmd+F` search, `F5` refresh,
-`Ctrl/Cmd+1/2/3/4` Home, Worklist, Changes, Agent, `Ctrl/Cmd+W` close the tab,
+`Ctrl/Cmd+1/2/3/4/5` Home, Worklist, Changes, Agent, Projects, `Ctrl/Cmd+W` close the tab,
 `Ctrl/Cmd` + `+` / `-` / `0` (or `Ctrl` + mouse wheel) zoom.
 
 ## How files appear on your computer
@@ -230,8 +302,8 @@ structure is then fetched like *Get* does under the *latest* rule, in the same
 progress dialog. Per file: missing – downloaded read-only; up to date –
 skipped; an unchanged older copy – updated; changed here, checked out by you,
 or a different file at the same place – kept untouched and listed (*kept – your
-local changes*, *name clash*). Cancelling leaves no partial file.
-**Add files.** *Add files…* (Files section and *More ▾* of a revision) takes
+local changes*, *name clash*). Cancelling leaves no partial file. **Add files.** *Add files…* (Files section and *More
+▾* of a revision) takes
 files from a file picker, checks the revision out first if you have not,
 and **copies** them into its working folder – the originals are never moved
 or changed. New files go into the revision's main folder or a sub-folder of
@@ -310,3 +382,28 @@ downloads or installs anything itself; install the new version as you
 installed this one. *×* hides the notice until the next version; *Settings → Updates* switches the check off (for
 example on computers without
 internet access).
+
+## Crash reports
+
+When the app crashes – a panic in the app, an uncaught error in its user
+interface, or a session that ended without closing normally (for example the
+web view crashed, the app hung and was force-quit, or the computer lost
+power) – it writes a report into the `crash-reports` folder of its settings
+directory. Before the report is written, the home folder (and with it your
+user name), server addresses and sign-in tokens are removed. The report holds
+no item data and no files.
+
+At the next start a dialog shows the whole report:
+
+* *Report on GitHub…* opens a new issue at the TeamCraft repository in your
+  browser, prefilled with the report. You read it, add what you were doing,
+  and submit it yourself; a GitHub account is needed. The full text is also
+  copied to the clipboard, in case the link had to shorten it.
+* *Copy* puts the report on the clipboard, for example for an e-mail.
+* *Delete report* removes it without sharing.
+
+Nothing is ever sent without that choice. Closing the dialog keeps the report
+for the next start. *Don't ask again* (or *Settings → Crash reports*) stops
+the question; the reports then stay on the computer only. Background and the
+alternatives that were considered: [Crash reports from the desktop
+app](../research/crash-reporting.md).

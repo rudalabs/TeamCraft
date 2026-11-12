@@ -40,6 +40,10 @@ const MAX_DEPTH: usize = 64;
 /// file cannot overflow the stack (real files nest a few levels at most).
 const MAX_NESTING: usize = 32;
 
+/// Sub-assembly occurrences expanded at most by [`external_instance_counts`]
+/// (a deep structure of many-times-placed sub-assemblies grows fast).
+const MAX_OCCURRENCES: usize = 1_000_000;
+
 /// Whether the file name is a STEP file (`.step`, `.stp`, `.p21`).
 pub fn is_step(filename: &str) -> bool {
     filename
@@ -214,6 +218,164 @@ pub fn read(bytes: &[u8]) -> Result<BomTable, String> {
         extra_columns: Vec::new(),
         warnings: walk.warnings,
     })
+}
+
+/// How often a STEP assembly with **external references** places each
+/// referenced file (#247): the parts live in their own files
+/// (`'bolt.stp'`), the assembly file holds the structure. Which file a
+/// product definition stands for is read from
+///
+/// * `DOCUMENT_FILE('bolt.stp', …)` – the file (its id, or its name; a path
+///   is reduced to the file name), or the id of an
+///   `APPLIED_EXTERNAL_IDENTIFICATION_ASSIGNMENT('bolt.stp', …, (#doc))`;
+/// * linked to the definition by `APPLIED_DOCUMENT_REFERENCE(#doc, …,
+///   (#definition))`, `PRODUCT_DEFINITION_WITH_ASSOCIATED_DOCUMENTS(…,
+///   (#doc))` or `DOCUMENT_PRODUCT_EQUIVALENCE` / `…_ASSOCIATION(…, #doc,
+///   #product|formation|definition)`.
+///
+/// Every `NEXT_ASSEMBLY_USAGE_OCCURRENCE` below the top assemblies counts
+/// once for the file of its child; a child without a file of its own is a
+/// sub-assembly inside this file, whose occurrences count with its own
+/// multiplicity (depth bounded). File names in their original spelling;
+/// `None` when no occurrence leads to an external file (a monolithic STEP
+/// file, a single part, no STEP file).
+pub fn external_instance_counts(bytes: &[u8]) -> Option<HashMap<String, u32>> {
+    let text = String::from_utf8_lossy(bytes);
+    if !text
+        .trim_start_matches('\u{feff}')
+        .trim_start()
+        .starts_with("ISO-10303-21")
+    {
+        return None;
+    }
+    // document → file name
+    let mut doc_names: HashMap<u64, String> = HashMap::new();
+    let mut doc_ids: HashMap<u64, String> = HashMap::new();
+    // (document, referenced definition / formation / product)
+    let mut doc_links: Vec<(u64, u64)> = Vec::new();
+    let mut formations: HashMap<u64, u64> = HashMap::new();
+    let mut definitions: HashMap<u64, u64> = HashMap::new();
+    let mut usages: Vec<(u64, u64)> = Vec::new();
+    let file_name = |s: &str| -> Option<String> {
+        let last = s.rsplit(['\\', '/']).next().unwrap_or(s).trim();
+        (last.contains('.') && !last.starts_with('.')).then(|| last.to_string())
+    };
+    for_each_instance(&text, |id, keyword, body| {
+        let is = |name: &str| keyword.eq_ignore_ascii_case(name);
+        if is("DOCUMENT_FILE") {
+            let p = params(body);
+            if let Some(n) = file_name(&string(&p, 0)).or_else(|| file_name(&string(&p, 1))) {
+                doc_ids.insert(id, n);
+            }
+        } else if is("APPLIED_EXTERNAL_IDENTIFICATION_ASSIGNMENT") {
+            let p = params(body);
+            if let (Some(n), Some(Param::List(items))) = (file_name(&string(&p, 0)), p.get(3)) {
+                for item in items {
+                    if let Param::Ref(doc) = item {
+                        doc_names.entry(*doc).or_insert_with(|| n.clone());
+                    }
+                }
+            }
+        } else if is("APPLIED_DOCUMENT_REFERENCE") {
+            let p = params(body);
+            if let (Some(doc), Some(Param::List(items))) = (reference(&p, 0), p.get(2)) {
+                for item in items {
+                    if let Param::Ref(target) = item {
+                        doc_links.push((doc, *target));
+                    }
+                }
+            }
+        } else if is("DOCUMENT_PRODUCT_EQUIVALENCE") || is("DOCUMENT_PRODUCT_ASSOCIATION") {
+            let p = params(body);
+            if let (Some(doc), Some(target)) = (reference(&p, 2), reference(&p, 3)) {
+                doc_links.push((doc, target));
+            }
+        } else if is("PRODUCT_DEFINITION_FORMATION")
+            || is("PRODUCT_DEFINITION_FORMATION_WITH_SPECIFIED_SOURCE")
+        {
+            if let Some(product) = reference(&params(body), 2) {
+                formations.insert(id, product);
+            }
+        } else if is("PRODUCT_DEFINITION") || is("PRODUCT_DEFINITION_WITH_ASSOCIATED_DOCUMENTS") {
+            let p = params(body);
+            if let Some(formation) = reference(&p, 2) {
+                definitions.insert(id, formation);
+            }
+            if let Some(Param::List(docs)) = p.get(4) {
+                for d in docs {
+                    if let Param::Ref(doc) = d {
+                        doc_links.push((*doc, id));
+                    }
+                }
+            }
+        } else if is("NEXT_ASSEMBLY_USAGE_OCCURRENCE") {
+            let p = params(body);
+            if let (Some(parent), Some(child)) = (reference(&p, 3), reference(&p, 4)) {
+                usages.push((parent, child));
+            }
+        }
+    });
+    // the DOCUMENT_FILE's own id wins over an assignment
+    for (doc, name) in doc_ids {
+        doc_names.insert(doc, name);
+    }
+    if usages.is_empty() || doc_names.is_empty() {
+        return None;
+    }
+    // file name per definition: linked directly, or through its formation
+    // or product
+    let mut by_target: HashMap<u64, &str> = HashMap::new();
+    for (doc, target) in &doc_links {
+        if let Some(name) = doc_names.get(doc) {
+            by_target.entry(*target).or_insert(name.as_str());
+        }
+    }
+    let file_of = |definition: u64| -> Option<&str> {
+        let formation = definitions.get(&definition).copied();
+        let product = formation.and_then(|f| formations.get(&f).copied());
+        [Some(definition), formation, product]
+            .into_iter()
+            .flatten()
+            .find_map(|t| by_target.get(&t).copied())
+    };
+    let mut children: HashMap<u64, Vec<u64>> = HashMap::new();
+    let mut used = HashSet::new();
+    let mut parents = Vec::new();
+    for (parent, child) in usages {
+        children
+            .entry(parent)
+            .or_insert_with(|| {
+                parents.push(parent);
+                Vec::new()
+            })
+            .push(child);
+        used.insert(child);
+    }
+    let mut counts: HashMap<String, u32> = HashMap::new();
+    // (definition, depth) – one entry per occurrence, so a sub-assembly
+    // placed twice inside this file counts its parts twice
+    let mut stack: Vec<(u64, usize)> = parents
+        .iter()
+        .filter(|p| !used.contains(*p))
+        .map(|&p| (p, 0))
+        .collect();
+    let mut steps = 0usize;
+    while let Some((parent, depth)) = stack.pop() {
+        steps += 1;
+        if depth >= MAX_DEPTH || steps > MAX_OCCURRENCES {
+            break;
+        }
+        for &child in children.get(&parent).into_iter().flatten() {
+            match file_of(child) {
+                Some(name) => {
+                    let n = counts.entry(name.to_string()).or_default();
+                    *n = n.saturating_add(1);
+                }
+                None => stack.push((child, depth + 1)),
+            }
+        }
+    }
+    (!counts.is_empty()).then_some(counts)
 }
 
 /// Depth-first walk through the structure, producing the rows in BOM order.
@@ -887,5 +1049,116 @@ mod tests {
             ")".repeat(n)
         );
         assert!(read(&step(&file)).is_err());
+    }
+
+    /// Found by cargo mutants: a comment between parameters is skipped; a
+    /// stray `/` (damaged file) costs one parameter, not the rest of the list.
+    #[test]
+    fn comments_and_stray_slashes_between_parameters() {
+        assert_eq!(
+            params("#1, /* the part */ #2,'x'"),
+            [Param::Ref(1), Param::Ref(2), Param::Str("x".into())]
+        );
+        assert_eq!(params("/x,#5"), [Param::Other, Param::Ref(5)]);
+        // a quoted `)` or `,` inside a skipped typed value ends nothing
+        assert_eq!(
+            params("NAME('x)y'),LABEL('a,b'),#7"),
+            [Param::Other, Param::Other, Param::Ref(7)]
+        );
+    }
+
+    /// Found by cargo mutants: the nesting depth goes down again after a
+    /// list, so many sibling lists are all read (nesting beyond
+    /// `MAX_NESTING`: `deeply_nested_parameters_do_not_overflow_the_stack`).
+    #[test]
+    fn sibling_lists_do_not_count_as_nesting() {
+        let siblings: Vec<String> = (1..=MAX_NESTING * 3).map(|i| format!("(#{i})")).collect();
+        let parsed = params(&siblings.join(","));
+        assert_eq!(parsed.len(), MAX_NESTING * 3);
+        assert!(parsed
+            .iter()
+            .all(|p| matches!(p, Param::List(l) if l.len() == 1)));
+    }
+
+    /// Found by cargo mutants: comments, unset parameters (`*`) and quoted
+    /// semicolons when splitting into instances.
+    #[test]
+    fn instances_with_unset_parameters_comments_and_quotes() {
+        let text = "#1=PRODUCT('a;b','',(#2),*);\n/* a comment; with #9=X(); */\
+                    #2=PRODUCT_CONTEXT('it''s',*,'mechanical');#3=X(1.5/2.);";
+        let mut seen = Vec::new();
+        for_each_instance(text, |id, keyword, _| seen.push((id, keyword.to_string())));
+        assert_eq!(
+            seen,
+            [
+                (1, "PRODUCT".to_string()),
+                (2, "PRODUCT_CONTEXT".to_string()),
+                (3, "X".to_string())
+            ]
+        );
+    }
+
+    /// The document of an external file and its link to a definition.
+    fn external(doc: u32, name: &str, link: &str) -> String {
+        format!("#{doc}=DOCUMENT_FILE('{name}','',#7,'','','');\n{link}\n")
+    }
+
+    #[test]
+    fn external_references_count_their_occurrences() {
+        // assembly #13 places bolt #23 four times and nut #33 twice; the
+        // bolt's file is linked to its definition, the nut's to its product
+        let mut data =
+            product(1, "PUMP", "Pump") + &product(2, "B", "Bolt") + &product(3, "N", "Nut");
+        data += &external(
+            900,
+            "C:\\parts\\bolt.stp",
+            "#901=APPLIED_DOCUMENT_REFERENCE(#900,'',(#23));",
+        );
+        data += &external(
+            910,
+            "nut.stp",
+            "#911=DOCUMENT_PRODUCT_EQUIVALENCE('','',#910,#31);",
+        );
+        for (i, child) in [2, 2, 2, 2, 3, 3].into_iter().enumerate() {
+            data += &usage(100 + i as u32, 1, child);
+        }
+        let counts = external_instance_counts(&step(&data)).unwrap();
+        assert_eq!(counts.get("bolt.stp"), Some(&4));
+        assert_eq!(counts.get("nut.stp"), Some(&2));
+        assert_eq!(counts.len(), 2);
+    }
+
+    #[test]
+    fn inline_sub_assemblies_multiply_and_associated_documents_link() {
+        // pump #13 → frame #23 (inline, no file) twice; frame → screw #33
+        // three times; the screw's file through its definition's documents
+        let mut data = product(1, "PUMP", "Pump") + &product(2, "F", "Frame");
+        data += "#31=PRODUCT('S','Screw','',(#9));\n\
+                 #32=PRODUCT_DEFINITION_FORMATION('','',#31);\n\
+                 #33=PRODUCT_DEFINITION_WITH_ASSOCIATED_DOCUMENTS('design','',#32,#8,(#920));\n";
+        data += "#920=DOCUMENT_FILE('','',#7,'','','');\n\
+                 #921=APPLIED_EXTERNAL_IDENTIFICATION_ASSIGNMENT('screw.step',$,#6,(#920));\n";
+        data += &usage(100, 1, 2);
+        data += &usage(101, 1, 2);
+        for i in 0..3 {
+            data += &usage(110 + i, 2, 3);
+        }
+        let counts = external_instance_counts(&step(&data)).unwrap();
+        assert_eq!(counts, HashMap::from([("screw.step".to_string(), 6)]));
+    }
+
+    #[test]
+    fn monolithic_files_and_other_bytes_have_no_counts() {
+        let data = product(1, "PUMP", "Pump") + &product(2, "B", "Bolt") + &usage(100, 1, 2);
+        assert_eq!(external_instance_counts(&step(&data)), None);
+        assert_eq!(external_instance_counts(b"\x00bolt.stp\x00"), None);
+        // a document without any occurrence
+        let doc = product(2, "B", "Bolt")
+            + &external(
+                900,
+                "bolt.stp",
+                "#901=APPLIED_DOCUMENT_REFERENCE(#900,'',(#23));",
+            );
+        assert_eq!(external_instance_counts(&step(&doc)), None);
     }
 }

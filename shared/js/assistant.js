@@ -17,6 +17,9 @@
 //     getContext() → the page context (see docs/src/user-guide/assistant.md)
 //     canEdit      boolean: the draft tools may be offered
 //     link(number) → Node | null: how an item number is shown in an answer
+//     openLink({url, label, item, revision, file}) → Node | null: how an
+//                  "Open 3D preview" link of a fresh answer is shown (url is
+//                  checked: /files/<uuid>/preview); default: a same-origin <a>
 //     privacy      string: where the data goes ("Anthropic", "your organisation's model server" …)
 //     onToggle(open)
 //     onBusy(busy) a question started or ended
@@ -216,6 +219,38 @@ export function markdown(text, link) {
 }
 
 // ---------------------------------------------------------------------
+// "Open 3D preview" links of a run (open_3d_preview results)
+// ---------------------------------------------------------------------
+
+// The only target an open link may have: this server's 3D viewer page of a
+// file. The server checks the same (assistant::open_links); this is the
+// second check, as the run comes over the network.
+var VIEWER_PATH = /^\/files\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/preview$/;
+
+/** The checked viewer path of an open link, or null. */
+export function viewerPath(link) {
+  if (!link || link.action !== "open" || link.kind !== "preview3d") return null;
+  var url = typeof link.url === "string" ? link.url : "";
+  return VIEWER_PATH.test(url) ? url : null;
+}
+
+/** A <p> of buttons for the open links, or null when none passes the check.
+ * `custom(link)` → Node | null lets an app open it its own way (the
+ * desktop's viewer tab); otherwise a plain same-origin <a>. */
+export function openLinks(links, custom) {
+  if (!Array.isArray(links)) return null;
+  var nodes = [];
+  links.slice(0, 3).forEach(function (link) {
+    var path = viewerPath(link);
+    if (!path) return;
+    var label = String(link.label || "Open 3D preview").slice(0, 120);
+    var node = custom ? custom({ url: path, label: label, item: String(link.item || ""), revision: String(link.revision || ""), file: String(link.file || "") }) : null;
+    nodes.push(node || el("a", { class: "tc-a-open", href: path, text: label }));
+  });
+  return nodes.length ? el("p", { class: "tc-a-links" }, nodes) : null;
+}
+
+// ---------------------------------------------------------------------
 // The drawer
 // ---------------------------------------------------------------------
 
@@ -361,6 +396,8 @@ export function mount(host, o) {
     }
     var node = el("div", { class: "tc-a-msg tc-a-assistant" }, [markdown(m.text, o.link)]);
     if (extras && extras.truncated) node.appendChild(el("p", { class: "tc-a-note", text: "The answer was cut off at the length limit – ask a narrower question for the rest." }));
+    var links = openLinks(extras && extras.links, o.openLink);
+    if (links) node.appendChild(links);
     if (extras && extras.tools) {
       var tools = extras.tools.map(function (t) {
         return el("span", { class: "badge" + (t.ok ? "" : " badge-rejected"), title: t.ok ? "tool call" : "tool call failed", text: t.name });
@@ -440,7 +477,7 @@ export function mount(host, o) {
         var last = log.querySelectorAll(".tc-a-assistant");
         var tail = last[last.length - 1];
         if (tail && run) {
-          var fresh = renderMessage({ role: "assistant", text: (run.answer && run.answer.text) || "" }, { truncated: run.answer && run.answer.truncated, tools: run.tools, steps: run.steps, model: run.model, allow_drafts: run.allow_drafts });
+          var fresh = renderMessage({ role: "assistant", text: (run.answer && run.answer.text) || "" }, { truncated: run.answer && run.answer.truncated, links: run.links, tools: run.tools, steps: run.steps, model: run.model, allow_drafts: run.allow_drafts });
           tail.replaceWith(fresh);
         }
         scrollDown();

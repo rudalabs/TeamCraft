@@ -87,6 +87,18 @@ fn id_token_validation() {
 }
 
 #[test]
+fn a_fresh_sign_in_needs_a_recent_auth_time() {
+    let now = 10_000;
+    assert!(fresh_sign_in(&json!({ "auth_time": now - 30 }), now).is_ok());
+    assert!(fresh_sign_in(&json!({ "auth_time": now - 300 }), now).is_ok());
+    // too old, missing, not a number, far in the future
+    assert!(fresh_sign_in(&json!({ "auth_time": now - 301 }), now).is_err());
+    assert!(fresh_sign_in(&json!({}), now).is_err());
+    assert!(fresh_sign_in(&json!({ "auth_time": "now" }), now).is_err());
+    assert!(fresh_sign_in(&json!({ "auth_time": now + 3_600 }), now).is_err());
+}
+
+#[test]
 fn identity_extraction() {
     let cfg = config(None);
     let claims = json!({

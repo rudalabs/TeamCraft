@@ -320,16 +320,24 @@ export function agentTool(p) {
     agent.current = null;
     agentRow(t.el);
   }
-  ["title", "kind", "status", "text"].forEach(function (k) { if (p[k] !== null && p[k] !== undefined) t[k] = p[k]; });
+  ["title", "kind", "status", "text", "auto"].forEach(function (k) { if (p[k] !== null && p[k] !== undefined) t[k] = p[k]; });
   clear(t.el);
   t.el.className = "agent-tool status-" + t.status;
   append(t.el, [
     h("span.agent-tool-dot", { "aria-hidden": "true" }),
     h("span.agent-tool-title", { text: t.title }),
-    h("span.badge", { text: TOOL_STATUS[t.status] || label(t.status) })
+    h("span.badge", { text: TOOL_STATUS[t.status] || label(t.status) }),
+    t.auto ? h("span.badge.agent-tool-auto", { text: "Allowed automatically (read-only)", title: "TeamCraft's read-only tool " + t.auto + " – allowed once without asking; the server answers only with what you may see. Settings → Agents… can ask every time." }) : null
   ]);
   if (t.text) t.el.appendChild(h("details.agent-tool-out", null, [h("summary", { text: "Output" }), h("pre", { text: t.text })]));
   schedulePaint(true);
+}
+
+/** A read-only TeamCraft tool the desktop allowed without asking: marked in the tool-call list. */
+export function agentAutoAllowed(p) {
+  var id = p.tool_id || ("auto:" + p.session + ":" + agent.toolOrder.length);
+  var known = agent.tools[id];
+  agentTool({ id: id, title: known && known.title !== id ? null : p.title, auto: p.tool });
 }
 
 export function agentPermission(p) {
@@ -381,6 +389,7 @@ export function onAgentEvent(p) {
     case "plan": agent.plan = p.entries || []; schedulePaint(true); break;
     case "permission": agentPermission(p); break;
     case "permission_done": donePermission(p.session + ":" + p.key); break;
+    case "auto_allowed": agentAutoAllowed(p); break;
     case "file_read": if (!p.ok) agentNote("Refused to read " + p.path + " (only the workspace folder is shared).", "warn"); break;
     case "notice": agentNote(p.text, "info"); break;
     case "models": agent.running.models = p.models; schedulePaint(true); break;
@@ -749,6 +758,7 @@ export function agentSettingsDialog() {
       return name;
     }
     p.agents.forEach(function (a) { addRow(a); });
+    var askReadOnly = h("input", { type: "checkbox", checked: !!p.ask_read_only });
     var presets = AGENT_PRESETS.map(function (pr) {
       return h("button.chip", { type: "button", on: { click: function () {
         addRow({ name: pr.name, command: windows && pr.command === "npx" ? "npx.cmd" : pr.command, args: pr.args }, pr.hint).focus();
@@ -758,14 +768,16 @@ export function agentSettingsDialog() {
       h("p.hint", { text: "An agent is a program on this computer that speaks the Agent Client Protocol (ACP). TeamCraft starts it only when you press Start, in your workspace folder, and gives it TeamCraft's tools with your sign-in – it can do in TeamCraft what you can do, but never submit, approve or release." }),
       h("p.hint", { text: "Through TeamCraft it may only read files in the workspace folder – no writing, no terminal. The agent is still a program running as you: its own tools ask for permission here, answer them with care. Desktop apps often do not see your shell's PATH – an absolute program path is safest." }),
       rows,
-      h("div.assistant-quick", null, presets)
+      h("div.assistant-quick", null, presets),
+      h("label.check", null, [askReadOnly, " Ask before read-only TeamCraft tools"]),
+      h("p.hint", { text: "Off: when the agent calls one of TeamCraft's read-only tools (search, get an item, BOM …), it is allowed once without asking and marked in the tool list – the server answers with your rights only, like the web UI. Write tools (drafts, comments), other servers' tools and the agent's own tools always ask." })
     ]);
     dialog("Agents", body, [
       { label: "Close", onClick: function (d) { d.close(); } },
       {
         label: "Save", primary: true, submit: true, onClick: function (d) {
           var entries = Array.prototype.map.call(rows.children, function (r) { return r.agentEntry(); });
-          call("set_agent_profiles", { agents: entries }).then(function (saved) {
+          call("set_agent_profiles", { agents: entries, askReadOnly: askReadOnly.checked }).then(function (saved) {
             agent.profiles = saved;
             d.close();
             toast(saved.agents.length === 1 ? "1 agent saved" : saved.agents.length + " agents saved");

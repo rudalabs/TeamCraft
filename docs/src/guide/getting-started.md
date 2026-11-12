@@ -51,6 +51,12 @@ the dark look of earlier versions. The distribution skins (Arch, CachyOS,
 EndeavourOS, KDE, Kubuntu, openSUSE, Ubuntu) are dark. The choice is personal
 and also styles the login page in that browser.
 
+**Preferred CAD program:** if your parts exist in several CAD formats, *Account → Preferred CAD program* shows the files
+of your program (and all
+neutral formats such as STEP) first and collapses the native files of other
+programs – see [Files](files.md#preferred-cad-program). The setting is
+personal and applies in the browser and the desktop app.
+
 **Keyboard:** `/` or `Ctrl+K` (`⌘K`) jumps to the search field. The single-key
 `/` can be switched off under *Account → Appearance → Keyboard* (per browser).
 

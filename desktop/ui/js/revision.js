@@ -8,25 +8,30 @@ import { typeIcon } from "./navigator.js";
 import { openTab, reloadActive, renderActive, renderTabs, table } from "./tabs.js";
 import { agentButton } from "./agent.js";
 import { groupImpacts, impactGroup, revChanges, revHistory, revReferences } from "./references.js";
+import { graphBackControl, revGraph } from "./graph.js";
 import { addFilesDialog, checkinDialog, doCancelCheckout, doCheckout, doObsolete, doRevise, editDialog, filesHint, getStructureDialog, openFile, openWorkspaceFolder, releaseDialog, revViewer, revWorkspace } from "./workspace.js";
 import { openChange } from "./change.js";
 import { openRequest, requestChangeDialog } from "./requests.js";
-import { importBomDialog } from "./bom-import.js";
+import { bomFromCadDialog, importBomDialog } from "./bom-import.js";
 
-export function openRevision(number, code, sub) {
-  openTab({ key: "rev:" + number + ":" + code, kind: "revision", number: number, code: code, title: number + "/" + code, sub: sub || "overview" });
+/** Opens a revision tab; `viewerFile` (a file id) picks the file of its 3D viewer. */
+export function openRevision(number, code, sub, viewerFile) {
+  openTab({ key: "rev:" + number + ":" + code, kind: "revision", number: number, code: code, title: number + "/" + code, sub: sub || "overview", viewerFile: viewerFile || null });
 }
 
-export function loadRevision(tab) {
-  if (tab.data) return Promise.resolve(tab.data);
-  var base = "/items/" + enc(tab.number);
+/** What a revision tab shows: the revision with its files, BOM, changes, the
+ *  item with its revisions, the references and – for my own check-out –
+ *  whether the working copy has changes. `onData` gets the payload as soon as
+ *  the server answered (before the look at the working copy). */
+export function fetchRevision(number, code, onData) {
+  var base = "/items/" + enc(number);
   return Promise.all([
-    api("GET", base + "/revisions/" + enc(tab.code)),
+    api("GET", base + "/revisions/" + enc(code)),
     api("GET", base),
     // references, referrers, CAD file references and impacts (older servers: none)
-    api("GET", base + "/revisions/" + enc(tab.code) + "/references").catch(function () { return null; })
+    api("GET", base + "/revisions/" + enc(code) + "/references").catch(function () { return null; })
   ]).then(function (r) {
-    tab.data = {
+    var data = {
       rev: r[0].revision, files: r[0].files, bom: r[0].bom, changes: r[0].changes, item: r[1].item, revisions: r[1].revisions,
       requests: r[0].open_requests || [],
       watching: !!r[1].watching,
@@ -34,11 +39,26 @@ export function loadRevision(tab) {
       // my check-out: are there local changes? (decides the primary action)
       localChanges: null
     };
-    tab.title = tab.data.rev.item_number + "/" + tab.data.rev.code + " " + tab.data.rev.name;
-    renderTabs();
-    var data = tab.data;
+    if (onData) onData(data);
     if (data.rev.checked_out_by !== state.me.id) return data;
     return localChanges(data.rev).then(function (changed) { data.localChanges = changed; data.localChangesFresh = true; return data; });
+  });
+}
+
+/** The title of a revision tab once its data is there. */
+export function revisionTitle(data) {
+  return data.rev.item_number + "/" + data.rev.code + " " + data.rev.name;
+}
+
+export function loadRevision(tab) {
+  if (tab.data) return Promise.resolve(tab.data);
+  var number = tab.number, code = tab.code;
+  return fetchRevision(number, code, function (data) {
+    // the tab was pointed at another revision meanwhile (retargetTab)
+    if (tab.number !== number || tab.code !== code) return;
+    tab.data = data;
+    tab.title = revisionTitle(data);
+    renderTabs();
   });
 }
 
@@ -185,6 +205,7 @@ export function renderRevision(tab, body, toolbar) {
       { label: "Pack and Go…", icon: "package", run: function () { savePackage(rev, null); }, title: "Save this revision with all files of its structure as ZIP (bom.csv, manifest.json) – for sending, not for working" },
       { label: "Add files…", icon: "plus", run: function () { addFilesDialog(tab); }, disabled: !filesHint(d).ok, title: filesHint(d).text },
       { label: "Import BOM…", icon: "download", run: function () { importBomDialog(rev); }, disabled: !can.edit, title: can.edit ? "Add the lines of a BOM exported by the CAD program (CSV, Excel, STEP assembly)" : why.edit },
+      { label: "Quantities from CAD…", icon: "refresh", run: function () { bomFromCadDialog(rev); }, disabled: !can.edit, title: can.edit ? "Add missing BOM lines and correct quantities from the instances counted in the CAD files (SOLIDWORKS, NX, STEP)" : why.edit },
       { label: "Open in browser", icon: "web", run: function () { call("open_web", { path: "/revisions/" + rev.id }).catch(function (e) { toast(errorText(e), "error"); }); }, title: "Open this revision in the web UI" },
       { label: "Refresh", icon: "refresh", run: reloadActive, shortcut: "F5", title: "Load this revision again" },
       { label: "Mark obsolete…", icon: "obsolete", run: function () { doObsolete(tab); }, disabled: !can.obsolete, danger: true, separated: true, title: can.obsolete ? "Retire this released revision – cannot be undone" : why.obsolete }
@@ -231,22 +252,28 @@ export function renderRevision(tab, body, toolbar) {
       count: d.refs.outgoing.length + d.refs.incoming.length + d.refs.file_referrers.length +
         d.refs.files.reduce(function (n, f) { return n + f.references.length; }, 0)
     },
+    { id: "graph", label: "Graph" },
     { id: "changes", label: "Changes", count: d.changes.length },
     { id: "history", label: "History" },
     { id: "viewer", label: "3D viewer", count: files3d.length, hide: !files3d.length },
     { id: "workspace", label: "Workspace" }
   ];
   var content = h("div.subcontent");
-  body.appendChild(h("div.subtabs", { role: "tablist" }, subs.filter(function (s) { return !s.hide; }).map(function (s) {
+  var tabButtons = subs.filter(function (s) { return !s.hide; }).map(function (s) {
     return h("button.subtab" + (tab.sub === s.id ? ".active" : ""), {
       type: "button", role: "tab",
       on: { click: function () { tab.sub = s.id; renderActive(); } }
     }, [s.label, s.count !== undefined ? h("span.count", { text: " " + s.count }) : null]);
-  })));
+  });
+  // a single, fixed back control at the left of the sub-tab row: it returns to
+  // the graph (even from a part's overview opened out of a graph) or steps back
+  // up the graph's own navigation – always in the same place (see graph.js).
+  var back = graphBackControl(tab);
+  body.appendChild(h("div.subtabs" + (back ? ".has-back" : ""), { role: "tablist" }, [back].concat(tabButtons)));
   body.appendChild(content);
   var render = {
     overview: revOverview, files: revFiles, structure: revStructure, whereused: revWhereUsed, references: revReferences,
-    changes: revChanges, history: revHistory, viewer: revViewer, workspace: revWorkspace
+    graph: revGraph, changes: revChanges, history: revHistory, viewer: revViewer, workspace: revWorkspace
   }[tab.sub] || revOverview;
   Promise.resolve().then(function () { return render(tab, content); }).catch(function (err) {
     content.appendChild(h("p.notice.error", { text: errorText(err) }));
@@ -407,7 +434,8 @@ export function revFiles(tab, el) {
     el.appendChild(h("p.empty", { text: "No files attached." }));
     return;
   }
-  var rows = d.files.map(function (f) {
+  var groups = groupByFamily(d.files, state.me && state.me.preferred_cad);
+  var rowOf = function (f) {
     var fmt = previewFormat(f);
     return {
       cells: [
@@ -426,14 +454,47 @@ export function revFiles(tab, el) {
         ])
       ]
     };
-  });
+  };
+  var columns = ["File", "Version", "Size", "Uploaded", "SHA-256", ""];
+  var n = groups.other.length;
   el.appendChild(h("section.panel", null, [
     h("div.panel-head", null, [h("h2", { text: "Files (datasets)" }),
       h("div.row", null, [
         h("span.hint", { text: filesHint(d).text }),
         h("button.small", { type: "button", disabled: !filesHint(d).ok, title: filesHint(d).text, on: { click: function () { addFilesDialog(tab); } } }, "Add files…")])]),
-    table(["File", "Version", "Size", "Uploaded", "SHA-256", ""], rows, { numeric: [2] })
+    table(columns, groups.shown.map(rowOf), { numeric: [2] }),
+    n ? h("details.other-formats", null, [
+      h("summary", { text: n + " file" + (n === 1 ? "" : "s") + " in other CAD formats (" + groups.families.join(", ") + ")" }),
+      table(columns, groups.other.map(rowOf), { numeric: [2] })
+    ]) : null
   ]));
+}
+
+/**
+ * A revision's files split for the preferred CAD program (`preferred_cad`
+ * of GET /me, set on the account page of the web UI) – the same rule as the
+ * web UI (`cadformat::group_by_family`): only when a file of the preferred
+ * program is present, the native files of other CAD programs
+ * (`format_info.family`) go into a collapsed group; neutral files (STEP,
+ * JT, STL, PDF, …) always stay visible. Display only.
+ */
+export function groupByFamily(files, preferred) {
+  var family = function (f) { return (f.format_info && f.format_info.family) || null; };
+  if (!preferred || !files.some(function (f) { return family(f) === preferred; })) {
+    return { shown: files, other: [], families: [] };
+  }
+  var shown = [], other = [], families = [];
+  files.forEach(function (f) {
+    var fam = family(f);
+    if (fam && fam !== preferred) {
+      other.push(f);
+      var name = f.format_info.system_short || fam;
+      if (families.indexOf(name) < 0) families.push(name);
+    } else {
+      shown.push(f);
+    }
+  });
+  return { shown: shown, other: other, families: families };
 }
 
 export function showVersions(tab, f, canRestore) {
@@ -485,6 +546,12 @@ export function revStructure(tab, el) {
           : rev.checked_out_by ? "Checked out by " + rev.checked_out_by_name : "Check out first – the BOM is imported under your check-out",
         on: { click: function () { importBomDialog(rev); } }
       }, "Import BOM…") : null,
+      canEdit() ? h("button.small", {
+        type: "button", disabled: rev.checked_out_by !== state.me.id,
+        title: rev.checked_out_by === state.me.id ? "Add missing lines and correct quantities from the instances counted in the CAD files (SOLIDWORKS, NX, STEP)"
+          : rev.checked_out_by ? "Checked out by " + rev.checked_out_by_name : "Check out first – the BOM is changed under your check-out",
+        on: { click: function () { bomFromCadDialog(rev); } }
+      }, "Quantities from CAD…") : null,
       h("button.small", { type: "button", on: { click: function () { setExpandAll(tab, true); renderActive(); } } }, "Expand all"),
       h("button.small", { type: "button", on: { click: function () { setExpandAll(tab, false); renderActive(); } } }, "Collapse all")
     ])

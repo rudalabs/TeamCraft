@@ -5,11 +5,13 @@
 /** Lines of one level shown before "show all". */
 export var LEVEL_LIMIT = 50;
 
-/** Navigator modes: the flat list of all items, or the structure view. */
-export var MODES = ["all", "structure"];
+/** Modes of Home: the files of the group in their folders, the flat list of
+ *  all items, or the structure view. */
+export var MODES = ["files", "all", "structure"];
 
+/** A stored mode; without one (or with an unknown one) it is the files. */
 export function normalizeMode(value) {
-  return MODES.indexOf(value) !== -1 ? value : "all";
+  return MODES.indexOf(value) !== -1 ? value : "files";
 }
 
 /** The first LEVEL_LIMIT nodes of a level, the rest hidden until "show all":

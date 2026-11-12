@@ -79,9 +79,59 @@ deleting the group deletes its history (the audit log keeps the records). The ru
 is part of the actor's hidden groups (`access::hidden_of_user`), so every
 guard, the audit feed, change orders, notifications and the assistant honour
 it without a check of their own. This is step 1 of
-[#151](https://github.com/rudalabs/TeamCraft/issues/151); conditions on
-membership are not built yet (see `docs/OPEN_WORK.md`); steps 3 and 4 and
-step 5, the access review, follow below.
+[#151](https://github.com/rudalabs/TeamCraft/issues/151); the conditions on
+membership (step 2), the interface switches and the read log (steps 3 and 4)
+and the access review (step 5) follow below.
+
+### Conditions on membership (need to know, step 2)
+
+Membership can be made not enough: *Need to know: conditions on membership*
+on the group page (managers and administrators; `PUT
+/api/v1/projects/{code}/policy` with the fields below) adds conditions every
+reader must meet as well. A reader who does not meet them is treated as a
+non-member – the group, its items, files and changes answer "not found" –
+and that holds for **administrators too** (they still manage the group).
+Nothing is set by default.
+
+* **Required claims** (`"required_claims": [{"claim": "site", "values":
+  ["main-office", "partner-workshop"]}, {"claim": "nda", "values": ["true"]}]`;
+  on the page one per line, `site = main-office, partner-workshop`): every
+  condition must hold, each with one of its values, in the claims of the
+  user's **last single sign-on** (ID token and userinfo; compared without
+  case; a list claim such as `groups` needs one of its entries). A change at
+  the identity provider applies at the next sign-in. TeamCraft keeps only the
+  claims that some group's conditions name (`users.idp_claims`), so a user
+  signs in again after a new claim condition is set. Local accounts have no
+  claims and never meet a claim condition.
+* **Allowed networks** (`"allowed_networks": ["10.20.0.0/16",
+  "2001:db8::/32"]`): the client address must be in one of the ranges – the
+  same address as the sign-in throttle (the peer, or the entry the reverse
+  proxy added to `X-Forwarded-For`; see [Reverse proxy and TLS](docker.md#reverse-proxy-and-tls)). A
+  request whose address is unknown is outside.
+* **Maximum sign-in age** (`"max_signin_age_hours": 12`, `0` removes it): the
+  group is visible only for so many hours after signing in – the start of the
+  web session, and for tokens, the desktop app and notifications the user's
+  last sign-in. A person removed at the identity provider (or from the
+  group's IdP group) therefore loses the group at the latest then, even with
+  a session that is still running (F7 in the threat model).
+
+Claims and the sign-in age are part of the SQL that builds a user's hidden
+groups (`access::hidden_of_user`), so they apply to every channel, to change
+orders and to notification recipients; the network and the session's own age
+are checked per request by the sign-in extractors and again at every step of
+an assistant run. A member refused by a condition is audited once per session
+or token (`project.access_refused`, with the reason and the address). The
+access review shows the conditions and, per member, whether they met them at
+their last sign-in; the evidence CSV carries both.
+
+Setting conditions that would hide the group from yourself (your address
+outside the ranges, a claim your last sign-in did not have, a sign-in older
+than the age) is refused (409), so a manager does not lock the group away by
+mistake. Adding a condition, a narrower range, fewer accepted values or a
+shorter age is tightening, open to managers and administrators; anything else
+is loosening, for the managers while administrators are limited by the
+administrator policy. Every change is audited (`project.conditions`, old and
+new) and tells the other managers.
 
 ### Interface switches and the read log (need to know, steps 3 and 4)
 
@@ -115,22 +165,40 @@ are not affected by `notification_content`.
 
 **Read and download log.** With `read_log` on, the group writes `access_log`
 entries (separate from the audit log): who (user name kept as text), when,
-channel (`web` or `api`), kind (`view` of an item or revision page,
-`download` of a file or file version, `package` for Pack and Go, `export` for
-a BOM CSV or Excel file), the object (number or file name, kept as text) and
-the client address (with the same reverse-proxy rule as the sign-in
-throttle). Repeated reads of the same object by the same user through the
-same channel within five minutes are one entry, so a resumed or ranged
-download is logged once. A read that cannot be logged does not happen. Groups
-that do not log write nothing. A Pack and Go or BOM export writes one
-entry for every logging group inside the structure, not only for the root
-item's group; a refused one writes nothing. The managers and administrators
-read the log, but only while they may read the group (an administrator shut
-out by `admin_read` gets "not found"; the labels are item content). They read the
-newest entries on the group page, or `GET
-/api/v1/projects/{code}/access-log?user=&kind=&since=&until=&limit=`. Not
-logged yet: MCP and assistant tool reads, desktop Get, thumbnails and
-previews.
+the channel, the kind, the object (number or file name, kept as text), what
+read it (the tool, for tool reads) and the client address (with the same
+reverse-proxy rule as the sign-in throttle).
+
+| Channel     | Reads                                                                                                      |
+|-------------|------------------------------------------------------------------------------------------------------------|
+| `web`       | item and revision pages, file downloads, Pack and Go and BOM exports in the browser                        |
+| `api`       | the same over the REST API and the desktop app (personal access token)                                     |
+| `mcp`       | read tools of an MCP client that name an item (`get_item`, `get_revision`, `get_bom`, `read_file_text`, …) |
+| `assistant` | the same read tools called by the built-in assistant                                                       |
+| `desktop`   | the desktop app's Get (the working set; its file downloads follow as `api` downloads)                      |
+
+Kinds: `view` (an item or revision page, the same data over the API, or a
+read tool), `download` (a file or file version), `package` (Pack and Go),
+`export` (a BOM CSV or Excel file), `workset` (a desktop Get). A tool read is
+one `view` of the item the tool was asked for, with the tool name as its
+detail (`read_file_text: spec.txt` names the file); searches, lists, change
+orders, write tools and failed tools log nothing, and the assistant's own
+comparison calls (the taint check) are not logged. Repeated reads of the same
+object by the same user through the same channel within five minutes are one
+entry, so a resumed or ranged download is logged once. A read that cannot be
+logged does not happen (a tool answers with an error). Groups that do not log
+write nothing. A Pack and Go, BOM export or desktop Get writes one entry for
+every logging group inside the structure, not only for the root item's group;
+a refused one writes nothing. The managers and administrators read the log,
+but only while they may read the group (an administrator shut out by
+`admin_read` gets "not found"; the labels are item content). The group page
+shows the newest 50 entries; *The whole log, with filters*
+(`/projects/{id}/access-log`) filters by user, kind, channel, object (part of
+the number, file name or tool), and a date range, 100 entries a page. The
+REST API pages the same way: `GET /api/v1/projects/{code}/access-log?user=&kind=&channel=&object=&since=&until=&limit=`
+answers `{"entries": […], "next": id}`; pass `next` as `before=` for the
+following page (`null` on the last). Times are RFC 3339 or `YYYY-MM-DD` (a
+date `until` includes that day). Not logged: thumbnails and 3D previews.
 
 **Retention and purge.** `log_retention_days` (1 to 36500, empty = keep) is
 applied by `teamcraft access-log purge` (run it from cron or a timer):
@@ -157,6 +225,20 @@ or the same data as JSON (`GET /api/v1/projects/{code}/access-review`, with
 `?format=csv` for the CSV). The page is for restricted groups only; elevations
 are listed up to the newest 100 and reviews up to the newest 50 (the audit log
 keeps all).
+
+**Review schedule.** *Review the access every (days)* (under *Interfaces and
+read log*, `{"review_interval_days": 90}`, 1 to 3650, `0` removes it) makes
+the review periodic: the group is **review due** when no review was
+confirmed within the interval (a group never reviewed is due at once). The
+flag shows on the group list (for the group's managers and administrators),
+on the group page and on the review page, which also names the next due date;
+the report and the CSV carry the schedule. The hourly housekeeping reminds
+the group's managers (an `access_alert` notification, which cannot be muted;
+the active administrators when the group has no manager) once when the review
+becomes due and again after each further interval without one; every
+reminder is audited (`project.review_reminder`). A shorter interval is
+tightening, a longer one or none is loosening (managers only while
+administrators are limited by the policy).
 
 Moving an item out of a restricted group, or copying it with *Save As*
 into another group, needs a manager of the source group or an administrator
@@ -230,6 +312,26 @@ that moves both through review:
 
 Step 3 of [#152](https://github.com/rudalabs/TeamCraft/issues/152).
 
+### Requesters do not decide, concessions are confirmed
+
+Two more checkboxes of the same form, both off by default (`requester_cannot_decide` and
+`concessions_need_review` in `PUT /api/v1/projects/{code}/review-policy`; omitted: unchanged):
+
+* **Requesters do not decide their own change requests.** The person who raised a
+  change request on items of the group cannot accept, reject or defer it (403,
+  administrators included); another CAD editor of the group does. The request page
+  and `GET /api/v1/change-requests/{number}` show `can.decide = false` for them.
+* **A reviewer confirms each "use as is" deviation.** For an as-built revision of
+  the group in a change order, every deviation with the disposition *use as is* is
+  a concession that a reviewer of that change confirms on its own (*Confirm* in the
+  deviation table, `POST /api/v1/as-built-deviations/{id}/confirm`) before any
+  approval counts – approving earlier answers 409 and names the deviations. The
+  person who recorded the deviation cannot confirm it (four-eyes). Changing a
+  deviation clears its confirmation, and *Revise* copies deviations unconfirmed.
+  The audit log records `as_built.concession_confirm`.
+
+Step 9 of [#152](https://github.com/rudalabs/TeamCraft/issues/152).
+
 ## What outsiders see of links
 
 A visible item can point to a restricted one, and the other way round:
@@ -292,11 +394,11 @@ group, has no such manager.
   are not sent either. The groups of the items a notification names are
   stored with it (migration 0026), so it stays hidden from non-members
   after such an item is deleted.
-* With `TEAMCRAFT_MATTERMOST_DIRECT=false` (posts in a shared channel),
+* With the deprecated webhook mode (`TEAMCRAFT_MATTERMOST_DIRECT=false`, posts in a shared channel),
   notifications about restricted groups show only "new TeamCraft
   notification" and the link – decided when the post is sent, so a group
   restricted after the notification was queued counts. E-mail and
-  Mattermost direct messages go to one recipient and carry the full text.
+  Mattermost direct messages of the bot go to one recipient and carry the full text.
 * A webhook sees its own group and the internal groups; a webhook for all
   groups receives **no** events of restricted groups. Scope a webhook to
   the group to get them (see [Event webhooks](webhooks.md)). The
@@ -332,10 +434,19 @@ back with the access, check-outs stay (the removal message says how many).
 A manager of the group (or an admin) cancels them on the revision page or
 with `POST /api/v1/items/{number}/revisions/{code}/cancel-checkout`:
 managers may release the check-outs of users who are no longer members of
-the group or who are deactivated. *Release N check-outs* in the member list
+the group or who are deactivated. An **active** member's check-out a manager
+releases only with a **reason** (10 to 500 characters): *Release with reason*
+on the revision page, or `{"reason": "…"}` as the body of the request. The
+reason is stored in the audit log (`revision.checkout_forced_release`) and
+told to the holder in their notification; without one the release is refused
+(403). Other members cannot release it at all. *Release N check-outs* in the member list
 releases all of one person's check-outs in the group at once (each audited
 on its own); administrators release everything a user holds from the user
-page. See [When someone leaves](users.md#when-someone-leaves).
+page. *Season handover* (`/projects/{id}/season`) does the same for many
+members at once, with one reason for all of them, and also sets *member
+until*, removes and demotes – each step with the rules of the single action.
+See [When someone leaves](users.md#when-someone-leaves) and
+[The end of a season](users.md#the-end-of-a-season).
 
 Memberships synchronised from the identity provider change only at the
 user's next SSO login; a user removed from the IdP group keeps access until

@@ -2,7 +2,7 @@
 // TeamCraft Desktop – 3D viewer, workspace, check-out/in, edit, release, revise.
 // Part of the desktop UI (ES modules, no build step; js/main.js starts it).
 
-import { $, api, badge, call, clear, confirmDialog, dialog, enc, errorText, field, fmtDate, fmtSize, h, invoke, label, lockBadge, run, setStatus, state, toast, tool } from "./core.js";
+import { $, api, badge, call, clear, confirmDialog, dialog, enc, errorText, field, fmtDate, fmtSize, h, invoke, label, lockBadge, materialField, run, setStatus, state, toast, tool } from "./core.js";
 import { isCancelled, refreshWorklistCount, uploadLine } from "./shell.js";
 import { reloadActive, renderActive, table } from "./tabs.js";
 import { PROGRAM_LABEL, cadPrograms, dd, exportProgram, exportStep, openRevision, previewFormat, revisionAbilities } from "./revision.js";
@@ -475,7 +475,7 @@ export function checkinDialog(tab) {
 export function editDialog(tab) {
   var rev = tab.data.rev;
   var name = h("input", { type: "text", value: rev.name, maxlength: "200", required: true });
-  var material = h("input", { type: "text", value: rev.material, maxlength: "200" });
+  var materialF = materialField(rev.material), material = materialF.input;
   var mass = h("input", { type: "text", inputmode: "decimal", value: rev.mass_kg === null ? "" : String(rev.mass_kg) });
   var cost = h("input", { type: "text", inputmode: "decimal", value: rev.unit_cost === null ? "" : String(rev.unit_cost) });
   var desc = h("textarea", { maxlength: "10000" });
@@ -488,7 +488,7 @@ export function editDialog(tab) {
     return n;
   }
   dialog("Edit " + rev.item_number + "/" + rev.code, h("div.stack", null, [
-    field("Name", name), field("Material", material),
+    field("Name", name), materialF.el,
     h("div.grid-2", null, [field("Mass per unit (kg)", mass), field("Unit cost (€)", cost)]),
     field("Description", desc)
   ]), [

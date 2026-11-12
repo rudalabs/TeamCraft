@@ -5,8 +5,9 @@
 //! of every resolved revision in a folder `<item>_<revision>/`, plus
 //!
 //! * `bom.csv` – the indented BOM (the same as the BOM CSV export),
-//! * `manifest.json` – root, rule, every revision with its files and SHA-256,
-//!   and the BOM lines the rule could not resolve.
+//! * `manifest.json` – root, rule, every revision with its files and SHA-256
+//!   and the change order that released it with its approvers
+//!   (`released_by`), and the BOM lines the rule could not resolve.
 //!
 //! The archive is written to a temporary file in the vault (so it can be
 //! larger than memory) and streamed; the file is unlinked right after it is
@@ -29,7 +30,7 @@ use crate::{
     error::{AppError, AppResult},
     services::{
         access_log::{self, AccessCtx},
-        bom, files, project_policy, revisions,
+        bom, changes, files, project_policy, revisions,
     },
     vault::Vault,
 };
@@ -96,6 +97,8 @@ pub async fn build(
     // one read log entry per group of the structure that logs (the root's too)
     access_log::record_structure(pool, log, actor, access_log::Kind::Package, &ids).await?;
     let mut files_of = files::list_many_by_revision(pool, &ids).await?;
+    // who released what: the change order and its approvers per revision
+    let mut released_by = changes::releases_of(pool, actor, &ids).await?;
     let mut entries = Vec::new();
     let mut manifest_revisions = Vec::new();
     for (id, number, code, name, state) in &revs {
@@ -113,7 +116,8 @@ pub async fn build(
             });
         }
         manifest_revisions.push(json!({ "item": number, "revision": code, "name": name,
-                                         "state": state, "files": listed }));
+                                         "state": state, "files": listed,
+                                         "released_by": released_by.remove(id) }));
     }
     let manifest = json!({
         "generated_by": format!("TeamCraft {}", env!("CARGO_PKG_VERSION")),

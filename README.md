@@ -38,6 +38,7 @@
   <a href="https://rudalabs.github.io/TeamCraft/">Documentation</a> ·
   <a href="#download">Download</a> ·
   <a href="#quick-start">Quick start</a> ·
+  <a href="#features">Features</a> ·
   <a href="#enterprise-management">Enterprise management</a> ·
   <a href="https://rudalabs.github.io/TeamCraft/guide/tour.html">Feature tour</a> ·
   <a href="https://rudalabs.github.io/TeamCraft/reference/formats.html">File formats</a> ·
@@ -68,9 +69,8 @@
 
 TeamCraft is free of charge and open source (MPL-2.0): no licence fees, no
 seat counts, no vendor lock-in, and the data stays in your own PostgreSQL
-database and file vault. It is made for two kinds of teams that need to
-professionalise their PLM / PDM before they can afford, or justify, a
-commercial system:
+database and file vault. It is made for teams that need to professionalise
+their PLM / PDM before they can afford, or justify, a commercial system:
 
 - **Early-stage hardware startups** – the first customer, auditor or investor
   asks which revision was delivered, who approved it and what changed since.
@@ -87,127 +87,41 @@ overwriting each other's files, revisions and releases instead of
 `final_v3_really_final.step`, reviewed change orders, traceable BOMs, and
 onboarding where new members sign in with the accounts they already have.
 
-## What works
+## Quick start
 
-Everything below works end to end today and is covered by unit tests and
-end-to-end tests against a real PostgreSQL.
+**Install on Linux with Docker** – TeamCraft and PostgreSQL in containers,
+data in Docker volumes, nothing to build:
 
-**Files and versions**
+```sh
+curl -fsSL https://raw.githubusercontent.com/rudalabs/TeamCraft/main/deploy/install.sh | bash
+```
 
-- **Check-out / check-in** – exclusive locks per revision; a check-in based on an outdated version is refused instead of
-  overwriting it.
-- **Versions and rollback** – every upload is a new version; download or restore any of them, history is never
-  rewritten.
-- **Vault explorer** – project groups as folders with lock owners, files and one-click check-out / check-in.
-- **Large uploads** – chunked, resumable uploads in the web UI; identical files are stored once (SHA-256).
-- **160+ file formats** – native CAD, BIM and DCC files plus STEP, IGES, JT, IFC, glTF, USD, E57, LAS and more are
-  recognised.
+The script installs into `/opt/teamcraft` (`--user`: `~/teamcraft`), generates
+the database password, starts everything on <http://localhost:8080> and offers
+to create the first administrator. Run it again to upgrade; `--dry-run` shows
+every step first. Details, backups and TLS:
+[Install with Docker](https://rudalabs.github.io/TeamCraft/admin/docker.html).
 
-**Previews and search**
+**From source** (development, macOS, Windows):
 
-- **3D preview** – STEP, NX and SOLIDWORKS parts and assemblies (assemblies put together from their part files, hidden
-  components left out), STL, OBJ, PLY, 3MF, glTF, point clouds and more in the browser, converted on the server, no
-  plug-ins.
-- **CAD thumbnails** – the preview images stored in Inventor and Solid Edge files; NX and SOLIDWORKS parts and
-  assemblies get a sharper thumbnail rendered from their 3D preview.
-- **FEA/CFD results** – VTK, VTU/VTP and CalculiX results coloured by a result field, with legend.
-- **Search** – ranked full-text search over numbers, names, materials, file names and file contents.
-- **Similar parts** – on every revision with a STEP or mesh file, existing parts of similar 3D shape and size, with the
-  reason for each hit.
+```sh
+git clone https://github.com/rudalabs/TeamCraft.git && cd TeamCraft
+docker compose up -d db     # PostgreSQL on 127.0.0.1, no password needed
+cargo run --release         # applies the migrations, serves http://localhost:8080
+```
 
-**Structure**
+Open <http://localhost:8080> and create the administrator on the login page
+(offered once, while the server listens on localhost). Then *Projects → New
+project group*, *Items → New item* with a STEP file, and open it in 3D.
 
-- **Multi-level BOM** – mass and cost roll-up, revision rules, comparison of two revisions, CSV/Excel export.
-- **Where-used** – every assembly a part is used in, over all levels.
-- **Alternates and supersession** – alternate parts, superseded parts and *Replace in assemblies* with a preview.
-- **BOM import** – items and BOMs from CAD BOM tables (CSV, Excel, ODS) or a STEP assembly; preview first, one
-  transaction.
-- **Pack and Go** – a ZIP of a whole assembly with all its files.
-
-**Change and release**
-
-- **Lifecycle** – WIP → In Review → Released → Obsolete with revision letters after ASME Y14.35; released data never
-  changes.
-- **Change requests (ECR)** – anybody reports a problem with screenshots; editors accept, defer or reject.
-- **Change orders** – reviewers, four-eyes approval, impact analysis and an atomic release of all revisions.
-- **Change propagation** – references inside CAD files are tracked; a release flags every dependent for a check.
-- **Release readiness** – a check of a BOM for missing, unreleased or outdated parts before release.
-
-**Simulation**
-
-- **Simulation management** – FEA/CFD items linked to the exact revisions they analysed, flagged *out of date* when the
-  design changes.
-- **Result values** – key values with limits and pass/fail, CSV/Excel import and comparison between revisions.
-- **As-built records** – one item per physical unit: the design revision it was built to, serial number, as-built BOM
-  and deviations with a disposition (use as is, rework, repair, scrap).
-
-**Teams and administration**
-
-- **Roles and read permissions** – viewer, editor and admin roles; restricted project groups visible only to their
-  members.
-- **Single sign-on** – any OpenID Connect provider, with group synchronisation.
-- **Numbering schemes** – generated item numbers per project group from `{PROJECT}`, `{TYPE}`, `{YYYY}` and `{SEQ:n}`.
-- **Custom attributes** – vendor, supplier part number, RoHS … as text, number, yes/no or choice list per item type,
-  versioned with each revision; in-house, purchased and standard parts; search by attribute value.
-- **Notifications** – in-app, e-mail and Mattermost; watch items, changes and change requests.
-- **Event webhooks** – signed JSON for releases, changes and simulation results, retried with backoff.
-- **Audit log** – every modification and every sign-in (password, SSO, failed attempts) with user, time and details;
-  repeated failed sign-ins are slowed down.
-- **Branding** – replace the wide and the square logo and rename the header ("TeamCraft PLM" → your name and subtitle)
-  under *Admin → Branding*; the desktop app shows them too. The footer, About and licence notices stay TeamCraft.
-- **Monitoring** – `/healthz`, `/readyz` and Prometheus metrics at `/metrics` (requests, database pool, outbox backlogs,
-  preview queue), enabled with a token.
-- **Backup and restore** – one command for database and vault (see below).
-
-**Clients and integrations**
-
-- **Web UI** – light and dark design that follows the operating system, plus distribution skins.
-- **Desktop app** – Linux, macOS and Windows client with a local working folder, *Get* of whole assemblies, an import
-  wizard, an Agent view, and an update notice (never installs anything itself).
-- **REST API** – everything the UI does, with personal access tokens.
-- **MCP server** – AI assistants such as Claude Code search, explain BOMs and draft changes with your rights, never
-  approving anything.
-- **Ask TeamCraft (optional)** – a sidebar on every page (in the desktop app: the company AI of the Agent view) that
-  knows which page you are on, keeps your conversation and, with your own key for Anthropic, OpenAI, Azure OpenAI or any
-  OpenAI-compatible service, or a local model (Ollama, vLLM), drafts release notes and answers questions with your
-  rights, read-only by default.
-
-## Enterprise management
-
-The features an IT department or a team lead asks about before rolling a
-system out to an organisation. All of them are part of the free release –
-there is no separate enterprise edition.
-
-| Area                                | What TeamCraft offers                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
-|-------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| **Identity and access**             | Single sign-on with any OpenID Connect provider (Keycloak, Entra ID, Google, Authentik …), IdP groups mapped to roles and project groups; viewer / editor / admin roles; [restricted project groups](https://rudalabs.github.io/TeamCraft/admin/permissions.html) that stay invisible to outsiders, even inside BOMs, search, notifications and the AI assistant; per group, administrators can be limited to audited, time-limited access with a written reason, or to managing without reading; personal access tokens can be scoped (full, write without approving, read-only, MCP-only).                                     |
-| **Traceability**                    | An [audit log](https://rudalabs.github.io/TeamCraft/admin/operations.html) of every change and every sign-in, failed attempts included; four-eyes change orders where nobody who wrote, prepared or changed the data can approve it; released data that never changes; as-built records per serial number.                                                                                                                                                                                                                                                                                                                       |
-| **Company AI instead of shadow AI** | *Ask TeamCraft* runs on the AI service the organisation chooses – Anthropic, OpenAI, Azure OpenAI, any OpenAI-compatible endpoint or a local model (Ollama, vLLM). The key stays on the server and never reaches a browser or the desktop app; the assistant works with each user's rights, read-only by default, and every question is audited (without its content). In the desktop app it is the *Agent* view's company AI. Administrators can switch off local AI agents (`TEAMCRAFT_LOCAL_AGENTS=off`): the desktop app's Agent then runs on the company AI only – data-loss prevention, with Admin → AI showing the setup. |
-| **Operations**                      | [Docker install](https://rudalabs.github.io/TeamCraft/admin/docker.html) with one script, [backup and restore](https://rudalabs.github.io/TeamCraft/admin/operations.html#backups) of database and vault in one command, `/healthz` and `/readyz` probes, [Prometheus metrics](https://rudalabs.github.io/TeamCraft/admin/operations.html#metrics-for-prometheus), documented [upgrades](https://rudalabs.github.io/TeamCraft/admin/upgrade.html) and a [support policy](https://rudalabs.github.io/TeamCraft/admin/support-policy.html).                                                                                        |
-| **Integration**                     | REST API, an MCP server for AI tools, signed [event webhooks](https://rudalabs.github.io/TeamCraft/admin/webhooks.html), e-mail and Mattermost notifications.                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
-| **Your look**                       | Your own logos under *Admin → Branding*, shown in the web UI and the desktop app.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| **Configuration**                   | Everything through environment variables, each also as `*_FILE` for Docker or Kubernetes secrets – see the [configuration reference](https://rudalabs.github.io/TeamCraft/admin/configuration.html).                                                                                                                                                                                                                                                                                                                                                                                                                             |
-
-**Planned** – open issues, not done yet:
-
-- **Need-to-know projects** ([#151](https://github.com/rudalabs/TeamCraft/issues/151)) – membership conditions (IdP
-  claims, networks, session age) (administrator access with a reason, interface switches per group, a read and download
-  log and access reviews with an evidence report are built).
-- **Ownership and approval rules** ([#152](https://github.com/rudalabs/TeamCraft/issues/152)) – obsolete through change
-  orders, sign-off with re-authentication, substitutes, approvals in exports (review policies per group, review rounds,
-  item owners and admin handover are built).
-- **Offboarding for high-turnover teams** ([#173](https://github.com/rudalabs/TeamCraft/issues/173)) – a holdings report
-  per user, deactivation as one offboarding step, groups without an active manager, season handover (managers already
-  release a leaver's check-outs in bulk, demote managers and take over a deactivated author's change order;
-  see [When someone leaves](https://rudalabs.github.io/TeamCraft/admin/users.html#when-someone-leaves)).
-- **Scoped access tokens** – personal access tokens limited to read-only or MCP-only use.
-
-TeamCraft is a community project without commercial support or a service
-level agreement; see the warning above.
+No configuration is needed for a local test. Step-by-step guides, including
+native PostgreSQL and the desktop app:
+**[Linux](platforms/linux.md)** · **[macOS](platforms/macos.md)** · **[Windows](platforms/windows.md)**.
 
 ## Download
 
-Builds of every tagged version are on the **[Releases page](https://github.com/rudalabs/TeamCraft/releases)** – 0.x
+Builds of every tagged version are on the
+**[Releases page](https://github.com/rudalabs/TeamCraft/releases)** – 0.x
 versions are pre-releases (see the warning above):
 
 |                          | Linux x86_64                            | Linux ARM64                | macOS (Apple silicon) | Windows x64                                   | Windows ARM64                                     |
@@ -215,21 +129,209 @@ versions are pre-releases (see the warning above):
 | **Server** (`teamcraft`) | `.tar.gz`                               | `.tar.gz`                  | –                     | `.zip`                                        | –                                                 |
 | **Desktop app**          | `.AppImage`, `.deb`, `.rpm`, `.flatpak` | `.deb`, `.rpm`, `.flatpak` | `.dmg`, `.app.zip`    | `.msi`, `_x64-setup.exe`, `_x64_portable.zip` | `.msi`, `_arm64-setup.exe`, `_arm64_portable.zip` |
 
-The server runs on Linux in production (or as the
-[Docker image](docs/src/admin/docker.md) on any platform); on macOS build it
-from source ([platforms/macos.md](platforms/macos.md)). The Flatpak bundle
-installs with `flatpak install --user TeamCraft_*.flatpak` and takes the GNOME
-runtime from Flathub. The Windows `_portable.zip` holds `TeamCraft.exe` without
-an installer; it needs the WebView2 runtime, which Windows 10 and 11 include.
+- **Server:** runs on Linux in production, or as the
+  [Docker image](docs/src/admin/docker.md) on any platform. On macOS, build it
+  from source ([platforms/macos.md](platforms/macos.md)).
+- **Flatpak:** `flatpak install --user TeamCraft_*.flatpak`; the GNOME runtime
+  comes from Flathub. Packages for Arch (AUR) and snap:
+  [packaging/](packaging/README.md).
+- **Windows portable:** the `_portable.zip` holds `TeamCraft.exe` without an
+  installer; it needs the WebView2 runtime, which Windows 10 and 11 include.
+- **Checksums:** `sha256sum -c --ignore-missing SHA256SUMS.txt`.
+- **Not code-signed yet:** macOS asks to confirm the first start
+  (*right-click → Open*); Windows SmartScreen shows *More info → Run anyway*.
+- **Newest `main` build:** attached as artifacts to the latest run of the
+  [Release workflow](https://github.com/rudalabs/TeamCraft/actions/workflows/release.yml)
+  (kept 14 days, for signed-in GitHub users).
 
-Check a download against `SHA256SUMS.txt` (`sha256sum -c --ignore-missing
-SHA256SUMS.txt`). The installers are **not code-signed** yet: macOS asks to
-confirm the first start (*right-click → Open*), Windows SmartScreen shows *More info → Run anyway*. The newest build of
-`main` is attached as artifacts
-to the latest run of the
-[Release workflow](https://github.com/rudalabs/TeamCraft/actions/workflows/release.yml)
-(14 days, signed-in GitHub users). Linux packages for Arch (AUR), snap and
-Flatpak are described in [packaging/](packaging/README.md).
+## Features
+
+Everything below works end to end today and is covered by unit tests and
+end-to-end tests against a real PostgreSQL.
+
+**Files and versions**
+
+- **Check-out / check-in** – exclusive locks per revision; a check-in based on
+  an outdated version is refused instead of overwriting it.
+- **Versions and rollback** – every upload is a new version; download or
+  restore any of them, history is never rewritten.
+- **Vault explorer** – project groups as folders with lock owners, files and
+  one-click check-out / check-in.
+- **Large uploads** – chunked, resumable uploads in the web UI; identical files
+  are stored once (SHA-256).
+- **160+ file formats** – native CAD, BIM and DCC files plus STEP, IGES, JT,
+  IFC, glTF, USD, E57, LAS and more are recognised.
+
+**Previews and search**
+
+- **3D preview** – in the browser, converted on the server, no plug-ins:
+  STEP, NX, SOLIDWORKS and Inventor parts and assemblies (put together from
+  their part files, hidden components left out), Rhino models (`.3dm`, SubD included),
+  STL, OBJ, PLY, 3MF, glTF, point clouds and more.
+- **CAD thumbnails** – the preview images stored in Inventor drawings and Solid
+  Edge files; NX, SOLIDWORKS, Inventor and Rhino files get a sharper thumbnail
+  rendered from their 3D preview.
+- **FEA/CFD results** – VTK, VTU/VTP and CalculiX results coloured by a result
+  field, with legend.
+- **Search** – ranked full-text search over numbers, names, materials, file
+  names and file contents.
+- **Similar parts** – on every revision with a STEP or mesh file, existing
+  parts of similar 3D shape and size, with the reason for each hit.
+
+**Structure**
+
+- **Multi-level BOM** – mass and cost roll-up, revision rules, comparison of
+  two revisions, CSV/Excel export.
+- **Mass properties** – mass, centre of gravity and inertia tensor of a whole
+  assembly or vehicle from the exported meshes of its parts, a material
+  library of densities and measured masses of bought parts; CSV/JSON export.
+- **Where-used** – every assembly a part is used in, over all levels.
+- **Alternates and supersession** – alternate parts, superseded parts and
+  *Replace in assemblies* with a preview.
+- **BOM import** – items and BOMs from CAD BOM tables (CSV, Excel, ODS) or a
+  STEP assembly; preview first, one transaction.
+- **Pack and Go** – a ZIP of a whole assembly with all its files.
+
+**Change and release**
+
+- **Lifecycle** – WIP → In Review → Released → Obsolete with revision letters
+  after ASME Y14.35; released data never changes.
+- **Change requests (ECR)** – anybody reports a problem with screenshots;
+  editors accept, defer or reject.
+- **Change orders** – reviewers, four-eyes approval, impact analysis and an
+  atomic release of all revisions.
+- **Change propagation** – references inside CAD files are tracked; a release
+  flags every dependent for a check.
+- **Release readiness** – a check of a BOM for missing, unreleased or outdated
+  parts before release.
+
+**Simulation and manufacturing**
+
+- **Simulation management** – FEA/CFD items linked to the exact revisions they
+  analysed, flagged *out of date* when the design changes.
+- **Result values** – key values with limits and pass/fail, CSV/Excel import
+  and comparison between revisions.
+- **As-built records** – one item per physical unit: the design revision it
+  was built to, serial number, as-built BOM and deviations with a disposition
+  (use as is, rework, repair, scrap).
+
+**Teams and administration**
+
+- **Roles and read permissions** – viewer, editor and admin roles; restricted
+  project groups visible only to their members.
+- **Single sign-on** – any OpenID Connect provider, with group
+  synchronisation.
+- **Numbering schemes** – generated item numbers per project group from
+  `{PROJECT}`, `{TYPE}`, `{YYYY}` and `{SEQ:n}`.
+- **Custom attributes** – vendor, supplier part number, RoHS … as text,
+  number, yes/no or choice list per item type, versioned with each revision;
+  search by attribute value.
+- **Notifications** – in-app, e-mail and Mattermost; watch items, changes and
+  change requests.
+- **Event webhooks** – signed JSON for releases, changes and simulation
+  results, retried with backoff.
+- **Audit log** – every modification and every sign-in (password, SSO, failed
+  attempts) with user, time and details; repeated failed sign-ins are slowed
+  down.
+- **Branding** – your own wide and square logo and header name under
+  *Admin → Branding*, also in the desktop app; footer, About and licence
+  notices stay TeamCraft.
+- **Monitoring** – `/healthz`, `/readyz` and Prometheus metrics at `/metrics`
+  (requests, database pool, outbox backlogs, preview queue), enabled with a
+  token.
+- **Backup and restore** – one command for database and vault
+  ([below](#command-line-and-api)).
+
+**Clients and integrations**
+
+- **Web UI** – light and dark design that follows the operating system, plus
+  distribution skins; responsive down to phone width.
+- **Desktop app** – Linux, macOS and Windows client with a local working
+  folder, *Get* of whole assemblies, an import wizard, an Agent view and an
+  update notice (never installs anything itself).
+- **REST API** – everything the UI does, with personal access tokens.
+- **MCP server** – AI assistants such as Claude Code search, explain BOMs and
+  draft changes with your rights, never approving anything.
+- **Ask TeamCraft (optional)** – an AI sidebar on every page that knows which
+  page you are on and works with your rights, read-only by default. It runs on
+  your own key for Anthropic, OpenAI, Azure OpenAI or any OpenAI-compatible
+  service, or a local model (Ollama, vLLM). In the desktop app it is the
+  *Agent* view's company AI.
+- **SolidCraft and FieldCraft** – [SolidCraft](https://github.com/tangency-labs/solidcraft)
+  designs (`.sc`, checked by content) and
+  [FieldCraft](https://github.com/tangency-labs/fieldcraft) models
+  (`.fieldcraft`) are recognised and their STEP and 3MF exports previewed –
+  design, export and analysis in one revision
+  ([more](https://rudalabs.github.io/TeamCraft/reference/interop.html)).
+
+## Enterprise management
+
+The features an IT department or a team lead asks about before rolling a
+system out to an organisation. All of them are part of the free release –
+there is no separate enterprise edition.
+
+- **Identity and access**
+  - Single sign-on with any OpenID Connect provider (Keycloak, Entra ID,
+    Google, Authentik …); IdP groups mapped to roles and project groups.
+  - Viewer / editor / admin roles, and
+    [restricted project groups](https://rudalabs.github.io/TeamCraft/admin/permissions.html)
+    that stay invisible to outsiders – even inside BOMs, search,
+    notifications and the AI assistant.
+  - Per group, administrators can be limited to audited, time-limited access
+    with a written reason, or to managing without reading.
+  - Personal access tokens can be scoped: full, write without approving,
+    read-only or MCP-only.
+- **Traceability**
+  - An [audit log](https://rudalabs.github.io/TeamCraft/admin/operations.html)
+    of every change and every sign-in, failed attempts included.
+  - Four-eyes change orders: nobody who wrote, prepared or changed the data
+    can approve it.
+  - Released data never changes; as-built records per serial number.
+- **Company AI instead of shadow AI**
+  - *Ask TeamCraft* runs on the AI service the organisation chooses; the key
+    stays on the server and never reaches a browser or the desktop app.
+  - The assistant works with each user's rights, read-only by default, and
+    every question is audited (without its content).
+  - `TEAMCRAFT_LOCAL_AGENTS=off` switches off local AI agents: the desktop
+    app's Agent then runs on the company AI only. *Admin → AI* shows the
+    setup.
+- **Operations**
+  - [Docker install](https://rudalabs.github.io/TeamCraft/admin/docker.html)
+    with one script.
+  - [Backup and restore](https://rudalabs.github.io/TeamCraft/admin/operations.html#backups)
+    of database and vault in one command.
+  - `/healthz` and `/readyz` probes and
+    [Prometheus metrics](https://rudalabs.github.io/TeamCraft/admin/operations.html#metrics-for-prometheus).
+  - Documented [upgrades](https://rudalabs.github.io/TeamCraft/admin/upgrade.html)
+    and a [support policy](https://rudalabs.github.io/TeamCraft/admin/support-policy.html).
+- **Integration** – REST API, an MCP server for AI tools, signed
+  [event webhooks](https://rudalabs.github.io/TeamCraft/admin/webhooks.html),
+  e-mail and Mattermost notifications.
+- **Your look** – your own logos and header name under *Admin → Branding*, in
+  the web UI and the desktop app.
+- **Configuration** – everything through environment variables, each also as
+  `*_FILE` for Docker or Kubernetes secrets; see the
+  [configuration reference](https://rudalabs.github.io/TeamCraft/admin/configuration.html).
+
+**Planned** – open issues, partly built:
+
+- **Need-to-know projects** ([#151](https://github.com/rudalabs/TeamCraft/issues/151))
+  – still open: membership conditions (IdP claims, networks, session age).
+  Built: administrator access with a reason, interface switches per group, a
+  read and download log, and access reviews with an evidence report.
+- **Ownership and approval rules** ([#152](https://github.com/rudalabs/TeamCraft/issues/152))
+  – still open: obsolete through change orders, sign-off with
+  re-authentication, substitutes, approvals in exports. Built: review
+  policies per group, review rounds, item owners and admin handover.
+- **Offboarding for high-turnover teams** ([#173](https://github.com/rudalabs/TeamCraft/issues/173))
+  – still open: a holdings report per user, deactivation as one offboarding
+  step, groups without an active manager, season handover. Built: managers
+  release a leaver's check-outs in bulk, demote managers and take over a
+  deactivated author's change order
+  ([When someone leaves](https://rudalabs.github.io/TeamCraft/admin/users.html#when-someone-leaves)).
+
+TeamCraft is a community project without commercial support or a service
+level agreement.
 
 ## Screenshots
 
@@ -272,37 +374,6 @@ the web UI with headless Chrome, TeamCraft Desktop on a virtual X display.
   </tr>
 </table>
 
-## Quick start
-
-**Install on Linux with Docker** – TeamCraft and PostgreSQL in containers,
-data in Docker volumes, nothing to build:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/rudalabs/TeamCraft/main/deploy/install.sh | bash
-```
-
-The script installs into `/opt/teamcraft` (`--user`: `~/teamcraft`), generates
-the database password, starts everything on <http://localhost:8080> and offers
-to create the first administrator. Run it again to upgrade; `--dry-run` shows
-every step first. Details, backups and TLS:
-[Install with Docker](https://rudalabs.github.io/TeamCraft/admin/docker.html).
-
-**From source** (development, macOS, Windows):
-
-```sh
-git clone https://github.com/rudalabs/TeamCraft.git && cd TeamCraft
-docker compose up -d db     # PostgreSQL on 127.0.0.1, no password needed
-cargo run --release         # applies the migrations, serves http://localhost:8080
-```
-
-Open <http://localhost:8080> and create the administrator on the login page (offered once, while the server listens on
-localhost). Then *Projects → New
-project group*, *Items → New item* with a STEP file, and open it in 3D.
-
-No configuration is needed for a local test. Step-by-step guides, including
-native PostgreSQL and the desktop app:
-**[Linux](platforms/linux.md)** · **[macOS](platforms/macos.md)** · **[Windows](platforms/windows.md)**.
-
 ## How it fits together
 
 | Layer                |                                                                                                                    |
@@ -314,58 +385,58 @@ native PostgreSQL and the desktop app:
 | PostgreSQL 16+       | the only external service                                                                                          |
 
 Everything is built by `cargo` – no Node.js, no downloaded browser engines,
-no C++ CAD kernel. Details: [Architecture](https://rudalabs.github.io/TeamCraft/reference/architecture.html).
+no C++ CAD kernel. Details:
+[Architecture](https://rudalabs.github.io/TeamCraft/reference/architecture.html).
 
-## Automate it
+## Command line and API
+
+The REST API, with a token from *Account → API tokens*:
 
 ```sh
-API=http://localhost:8080/api/v1; H="Authorization: Bearer $TOKEN"   # token from Account → API tokens
+API=http://localhost:8080/api/v1; H="Authorization: Bearer $TOKEN"
 curl -s -X POST -H "$H" $API/items/PRT-000001/revisions/A/checkout
 curl -s -X POST -H "$H" -F file=@hub.step -F comment="wall 2 → 2.5 mm" \
      $API/items/PRT-000001/revisions/A/checkin
 curl -s -H "$H" "$API/items?q=hub&system=solidworks"
 ```
 
-## Backup and restore
+Backup and restore of database and vault:
 
 ```sh
 teamcraft backup /srv/backups/2026-11-04     # db.dump + vault/objects + manifest.json
 teamcraft restore /srv/backups/2026-11-04    # verifies every hash, then restores
 ```
 
-Both commands need the PostgreSQL client tools (`pg_dump`, `pg_restore`).
-The backup directory must not exist or be empty. A restore refuses a
-database that already contains tables unless you pass `--force`, and the
-server should be stopped while it runs. Configuration and secrets are not
-part of a backup; see
-[Operations](https://rudalabs.github.io/TeamCraft/admin/operations.html).
-
-## Works with SolidCraft and FieldCraft
-
-TeamCraft recognises [SolidCraft](https://github.com/tangency-labs/solidcraft)
-designs (`.sc`, checked by content) and
-[FieldCraft](https://github.com/tangency-labs/fieldcraft) models (`.fieldcraft`), and previews their STEP and 3MF
-exports – keep design,
-export and analysis together in one revision.
-[More](https://rudalabs.github.io/TeamCraft/reference/interop.html).
+Both commands need the PostgreSQL client tools (`pg_dump`, `pg_restore`). The
+backup directory must not exist or must be empty. A restore refuses a database
+that already contains tables unless you pass `--force`, and the server should
+be stopped while it runs. Configuration and secrets are not part of a backup;
+see [Operations](https://rudalabs.github.io/TeamCraft/admin/operations.html).
 
 ## Documentation
 
-The documentation is published at **<https://rudalabs.github.io/TeamCraft/>**
-(built from [`docs/src`](docs/src/SUMMARY.md) with mdBook, plus the
-[rustdoc API reference](https://rudalabs.github.io/TeamCraft/api/teamcraft/index.html)):
-user guide, administration (configuration, SSO, operations) and reference (file formats, REST API, architecture). A
-running server lists its API at
-`GET /api/v1` and its formats at `/formats`.
+Published at **<https://rudalabs.github.io/TeamCraft/>**, built from
+[`docs/src`](docs/src/SUMMARY.md) with mdBook, plus the
+[rustdoc API reference](https://rudalabs.github.io/TeamCraft/api/teamcraft/index.html):
+
+- **User guide** – a [feature tour](https://rudalabs.github.io/TeamCraft/guide/tour.html)
+  and every workflow.
+- **Administration** – configuration, SSO, permissions, operations.
+- **Reference** – [file formats](https://rudalabs.github.io/TeamCraft/reference/formats.html),
+  [REST API](https://rudalabs.github.io/TeamCraft/reference/api.html),
+  architecture.
+
+A running server lists its API at `GET /api/v1` and its formats at `/formats`.
 
 ## Contributing
 
 Contributions are welcome: bug reports, tests with real files from your CAD
-programs, documentation and code. Please read **[CONTRIBUTING.md](CONTRIBUTING.md)** first. It covers the development
-setup,
-the checks CI runs, the code conventions and the licence of contributions.
-Report security problems privately, as described in [SECURITY.md](SECURITY.md).
-Open work and known gaps are listed in [docs/OPEN_WORK.md](docs/OPEN_WORK.md).
+programs, documentation and code. Please read
+**[CONTRIBUTING.md](CONTRIBUTING.md)** first – it covers the development
+setup, the checks CI runs, the code conventions and the licence of
+contributions. Report security problems privately, as described in
+[SECURITY.md](SECURITY.md). Open work and known gaps are listed in
+[docs/OPEN_WORK.md](docs/OPEN_WORK.md).
 
 ## Licence
 
@@ -409,9 +480,9 @@ owners; TeamCraft is not affiliated with them.
 
 [badge-download]: https://img.shields.io/badge/Download-Releases-16a34a?style=for-the-badge&logo=github&logoColor=white
 [download]: https://github.com/rudalabs/TeamCraft/releases
-[badge-linux]: https://img.shields.io/badge/Linux-Build_from_source-E95420?style=for-the-badge&logo=linux&logoColor=white
-[badge-macos]: https://img.shields.io/badge/macOS-Build_from_source-333333?style=for-the-badge&logo=apple&logoColor=white
-[badge-windows]: https://img.shields.io/badge/Windows-Build_from_source-0078D6?style=for-the-badge
+[badge-linux]: https://img.shields.io/badge/Linux-Guide-E95420?style=for-the-badge&logo=linux&logoColor=white
+[badge-macos]: https://img.shields.io/badge/macOS-Guide-333333?style=for-the-badge&logo=apple&logoColor=white
+[badge-windows]: https://img.shields.io/badge/Windows-Guide-0078D6?style=for-the-badge
 [badge-docs]: https://img.shields.io/badge/Docs-Read-4b5563?style=for-the-badge&logo=mdbook&logoColor=white
 [linux]: platforms/linux.md
 [macos]: platforms/macos.md

@@ -104,6 +104,22 @@ pub(super) fn schema_bom() -> Value {
     )
 }
 
+pub(super) fn schema_mass_properties() -> Value {
+    object(
+        json!({
+            "item": p_item(),
+            "revision": p_revision(),
+            "rule": p_rule(),
+            "reference": {
+                "type": "string",
+                "description": "Point the second inertia tensor is taken about: `x,y,z` in metres in the \
+                    frame of the geometry files (default the origin), e.g. the nose tip",
+            },
+        }),
+        &["item"],
+    )
+}
+
 pub(super) fn schema_replace_preview() -> Value {
     object(
         json!({
@@ -179,6 +195,19 @@ pub(super) fn schema_similar() -> Value {
             "limit": p_limit(10, 50),
         }),
         &["item"],
+    )
+}
+
+pub(super) fn schema_open_preview() -> Value {
+    object(
+        json!({
+            "item": { "type": "string", "description": "Item number, e.g. PRT-000012 (or PRT-000012/B); wins over `q`" },
+            "q": { "type": "string", "description": "Search text when the number is not known: a key word of the name, number, material or file name, e.g. bracket" },
+            "project": { "type": "string", "description": "Project group code that narrows `q`, e.g. ROVER" },
+            "revision": p_revision(),
+            "file": { "type": "string", "description": "File name to show (default: the best 3D file of the revision)" },
+        }),
+        &[],
     )
 }
 

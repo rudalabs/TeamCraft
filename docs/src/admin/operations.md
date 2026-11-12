@@ -81,8 +81,8 @@ present. Start the server afterwards; it applies newer migrations.
 
 `teamcraft backup <dir> --encrypt` encrypts the dump and every vault object
 with a key derived from a passphrase (`TEAMCRAFT_BACKUP_PASSPHRASE` or
-`_FILE`, otherwise prompted for twice; at least 12 characters): Argon2id
-(64 MiB, 3 passes) for the key, XChaCha20-Poly1305 in 64 KiB authenticated
+`_FILE`, otherwise prompted for twice; at least 12 characters): Argon2id (64 MiB, 3 passes) for the key,
+XChaCha20-Poly1305 in 64 KiB authenticated
 chunks for the files. Object names and the manifest stay plain (the names are
 the SHA-256 of the plain content); the manifest records the salt, the cost
 and a key check. The plain dump exists only between `pg_dump` and its
@@ -189,9 +189,36 @@ requests – and uploads the report as the artifact `scale-report`:
 sequential scans on big tables), `plans.md` (every plan) and `results.json`.
 How to run it locally is described in `CONTRIBUTING.md`.
 
+## Exporting and protecting the audit log
+
+Administrators export the audit log with the filters of *Admin → Audit log*
+(*Export CSV* / *Export JSON*, or `GET /api/v1/audit?entity_type=&username=&action=&format=json|csv`).
+One export holds at most 100 000 entries, newest first (`x-truncated: true`
+when more matched – narrow the filter); entries about items an
+administrator's need-to-know policy hides are left out or redacted, as on
+the page. Every export is itself recorded (`audit.export`).
+
+TeamCraft only ever inserts into `audit_log` (the optional retention below
+deletes old entries and records that it did). To make sure nobody can
+rewrite it through the database either, run the server with a database role
+that may not change existing rows, and keep the table owner for migrations:
+
+```sql
+-- as the owner of the database, after the migrations ran
+REVOKE UPDATE, DELETE, TRUNCATE ON audit_log FROM teamcraft_app;
+```
+
+With this grant `TEAMCRAFT_AUDIT_RETENTION_DAYS` must stay unset (the
+purge needs `DELETE`). Together with regular backups that keep older
+copies, this protects the record; a hash chain over the entries is not
+part of TeamCraft.
+
 ## Data retention
 
-The server's hourly housekeeping removes what is no longer needed. Nothing
+The server's hourly housekeeping also reminds the managers of due access
+reviews and tells the administrators once about each project group that has
+lost its last active manager (see [users](users.md#when-someone-leaves)).
+It removes what is no longer needed. Nothing
 the database still refers to is ever removed. Removals of product data (old
 file versions) and of audit entries are recorded in the audit log; caches,
 expired sessions, staged uploads and unreferenced blobs (also `vault gc
