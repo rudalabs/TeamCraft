@@ -42,6 +42,8 @@ async fn render_account(
             "tokens": tokens,
             "new_token": new_token,
             "api_base": format!("{}/api/v1", st.config.public_url),
+            // idle limit of single sign-on users' tokens (0 = none)
+            "sso_token_idle_days": st.config.oidc_token_idle_days,
             "skins": domain::SKINS,
             "cad_families": crate::cadformat::families()
                 .iter()

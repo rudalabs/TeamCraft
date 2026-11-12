@@ -1433,4 +1433,20 @@ mod tests {
         );
         assert!(clean_email(Some("not-an-email")).is_err());
     }
+
+    #[test]
+    fn the_sso_idle_limit_caps_token_lifetimes() {
+        use TokenLifetime::*;
+        // off: everything as asked
+        assert_eq!(Unlimited.capped(0), Unlimited);
+        assert_eq!(Days(400).capped(0), Days(400));
+        // no expiry or a longer one becomes the idle limit
+        assert_eq!(Unlimited.capped(30), IdleDays(30));
+        assert_eq!(Days(31).capped(30), IdleDays(30));
+        assert_eq!(IdleDays(90).capped(30), IdleDays(30));
+        // a shorter or equal lifetime stays
+        assert_eq!(Days(30).capped(30), Days(30));
+        assert_eq!(Days(7).capped(30), Days(7));
+        assert_eq!(IdleDays(14).capped(30), IdleDays(14));
+    }
 }
