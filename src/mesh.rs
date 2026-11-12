@@ -29,6 +29,7 @@ mod gltf;
 mod helpers;
 mod inventor;
 mod jt;
+mod jt10;
 mod model;
 mod obj;
 mod off;
@@ -67,7 +68,7 @@ pub fn read(format: &str, data: &[u8]) -> Result<Mesh> {
         "las" => points::read_las(data)?,
         "step" => step::read(data)?,
         "nx-part" => jt::read_nx(data)?,
-        "jt" => jt::read_file(data)?,
+        "jt" => jt10::read(data)?,
         "solidworks-part" => sw::read_part(data)?,
         "solidworks-assembly" => bail!(
             "A SOLIDWORKS assembly is shown with the previews of its parts (found by file name)."
