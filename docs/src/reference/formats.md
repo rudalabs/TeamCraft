@@ -175,8 +175,19 @@ in both faces' parameter spaces (`brep.rs`), interpolating bicubic splines,
 rolling-ball fillets and ruled surfaces (`freeform.rs`), ear clipping of
 every face region in the parameter plane with every edge evaluated once on
 its most exact face, welding and PN refinement along the analytic normals
-(`tess.rs`). Lengths stay in the model's unit, and Creo assemblies and
-drawings keep their stored JPEG (see [Research: 3D preview of Creo parts](../research/creo-brep-preview.md)).
+(`tess.rs`). Lengths are converted to millimetres with the unit of the
+`UnitSystemDef` section (`mm`, `in`, …). Turned parts without a plane in
+the identity frame get their face parametrisations from a seeded face (see
+[Research: 3D preview of Creo parts](../research/creo-brep-preview.md)).
+
+Creo assemblies (`.asm.N`, `src/mesh/creo/asm.rs`) are put together from
+their parts like NX, SOLIDWORKS, Inventor and CATIA assemblies: the section
+`NeuAsmSld` lists the direct components – model name, part or
+sub-assembly, the images of the component's axes and its origin in the
+assembly's unit – and each is found as `<name>.prt` / `<name>.asm` (the
+iteration suffix is not part of the stored name). Family-table instances
+show their generic; drawings keep their stored JPEG (see
+[Research: 3D preview of Creo assemblies](../research/creo-assembly-preview.md)).
 
 SOLIDWORKS files from 2015 on are no OLE files any more but a sequence of
 Deflate-compressed sections (`src/swpart.rs`; verified with SOLIDWORKS 2018

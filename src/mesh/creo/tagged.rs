@@ -876,9 +876,201 @@ pub mod double {
     }
 }
 
+/// Writes sections in the tagged format, reduced to what the readers use:
+/// every transition is spelled out (`f0`–`f4` closes, then `f7 NN` or a
+/// field definition), integers in four bytes, doubles in eight. For tests
+/// and synthetic files (`asm::sample`); Creo itself writes far more
+/// compactly.
+#[doc(hidden)]
+pub struct Writer {
+    out: Vec<u8>,
+    fields: Vec<(u8, String)>,
+    /// Levels to close before the next value.
+    pending: usize,
+}
+
+/// Field types of the writer.
+const TY_STRUCT: u8 = 0x00;
+const TY_INT: u8 = 0x01;
+const TY_DOUBLE: u8 = 0x02;
+const TY_STRING: u8 = 0x03;
+
+impl Writer {
+    /// A section whose root struct is `root`.
+    pub fn new(root: &str) -> Writer {
+        let mut w = Writer {
+            out: Vec::new(),
+            fields: vec![(TY_STRUCT, root.to_string())],
+            pending: 0,
+        };
+        w.out.extend([0xe0, TY_STRUCT]);
+        w.out.extend(root.as_bytes());
+        w.out.extend([0x00, 0xe2]);
+        w
+    }
+
+    fn int_bytes(&mut self, v: i64) {
+        if v < 0 {
+            self.out.push(0xf5);
+        }
+        let a = v.unsigned_abs();
+        if a < 0x80 {
+            self.out.push(a as u8);
+        } else {
+            self.out.push(0xeb);
+            self.out
+                .extend((a.min(i32::MAX as u64) as u32).to_be_bytes());
+        }
+    }
+
+    /// Closes, then names the field (defining it on first use).
+    fn key(&mut self, name: &str, ty: u8) {
+        match self.pending {
+            0 => self.out.push(0xf0),
+            n @ 1..=3 => self.out.push(0xf0 + n as u8),
+            n => {
+                self.out.push(0xf4);
+                self.int_bytes(n as i64);
+            }
+        }
+        self.pending = 0;
+        match self.fields.iter().position(|(t, n)| *t == ty && n == name) {
+            Some(i) => {
+                self.out.push(0xf7);
+                self.int_bytes(i as i64 + 1);
+            }
+            None => {
+                self.fields.push((ty, name.to_string()));
+                self.out.extend([0xe0, ty]);
+                self.out.extend(name.as_bytes());
+                self.out.push(0x00);
+            }
+        }
+    }
+
+    fn dbl_bytes(&mut self, v: f64) {
+        self.out.push(0xed);
+        self.out.extend(v.to_be_bytes());
+    }
+
+    pub fn int(&mut self, name: &str, v: i64) -> &mut Writer {
+        self.key(name, TY_INT);
+        self.int_bytes(v);
+        self
+    }
+
+    pub fn dbl(&mut self, name: &str, v: f64) -> &mut Writer {
+        self.key(name, TY_DOUBLE);
+        self.dbl_bytes(v);
+        self
+    }
+
+    pub fn string(&mut self, name: &str, s: &str) -> &mut Writer {
+        self.key(name, TY_STRING);
+        self.out.extend(s.as_bytes());
+        self.out.push(0x00);
+        self
+    }
+
+    pub fn dbls(&mut self, name: &str, v: &[f64]) -> &mut Writer {
+        self.key(name, TY_DOUBLE);
+        self.out.push(0xf8);
+        self.int_bytes(v.len() as i64);
+        for &x in v {
+            self.dbl_bytes(x);
+        }
+        self
+    }
+
+    pub fn strings(&mut self, name: &str, v: &[&str]) -> &mut Writer {
+        self.key(name, TY_STRING);
+        self.out.push(0xf8);
+        self.int_bytes(v.len() as i64);
+        for s in v {
+            self.out.extend(s.as_bytes());
+            self.out.push(0x00);
+        }
+        self
+    }
+
+    /// Opens a struct; [`Writer::end`] closes it.
+    pub fn begin(&mut self, name: &str) -> &mut Writer {
+        self.key(name, TY_STRUCT);
+        self.out.push(0xe2);
+        self
+    }
+
+    /// Opens an array of `n` structs; each element is opened with
+    /// [`Writer::element`] and closed with [`Writer::end`], the array itself
+    /// with a last [`Writer::end`] (none for `n` = 0).
+    pub fn begin_array(&mut self, name: &str, n: usize) -> &mut Writer {
+        self.key(name, TY_STRUCT);
+        self.out.push(0xf8);
+        self.int_bytes(n as i64);
+        self
+    }
+
+    pub fn element(&mut self, array: &str) -> &mut Writer {
+        self.key(array, TY_STRUCT);
+        self.out.extend([0xfb, 0xe2]);
+        self
+    }
+
+    pub fn end(&mut self) -> &mut Writer {
+        self.pending += 1;
+        self
+    }
+
+    pub fn finish(&self) -> Vec<u8> {
+        self.out.clone()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_writer_round_trips_through_the_reader() {
+        let mut w = Writer::new("top");
+        w.int("count", 2)
+            .int("neg", -300)
+            .dbl("pi", std::f64::consts::PI)
+            .string("name", "MS_TIP")
+            .dbls("axis", &[1.0, -0.5, 2.0])
+            .begin_array("items", 2);
+        for k in 0..2 {
+            w.element("items")
+                .int("id", k)
+                .dbls("o", &[k as f64; 3])
+                .end();
+        }
+        w.end()
+            .begin("tail")
+            .strings("words", &["a", "Offset", "in"])
+            .end();
+        let t = parse(&w.finish()).unwrap();
+        let r = t.root();
+        assert_eq!(t.int_at(r, "count"), Some(2));
+        assert_eq!(t.int_at(r, "neg"), Some(-300));
+        assert_eq!(t.dbl_at(r, "pi"), Some(std::f64::consts::PI));
+        assert_eq!(t.str_at(r, "name"), Some("MS_TIP"));
+        assert_eq!(t.dbls(t.child(r, "axis").unwrap()), vec![1.0, -0.5, 2.0]);
+        let items = t.list(t.child(r, "items").unwrap());
+        assert_eq!(items.len(), 2);
+        assert_eq!(t.int_at(items[1], "id"), Some(1));
+        assert_eq!(t.dbls(t.child(items[1], "o").unwrap()), vec![1.0; 3]);
+        let tail = t.child(r, "tail").unwrap();
+        let words: Vec<_> = t
+            .list(t.child(tail, "words").unwrap())
+            .iter()
+            .map(|&i| match t.node(i) {
+                Node::Str(s) => s.clone(),
+                _ => String::new(),
+            })
+            .collect();
+        assert_eq!(words, ["a", "Offset", "in"]);
+    }
 
     fn visib_geom() -> Vec<u8> {
         let data = std::fs::read(concat!(

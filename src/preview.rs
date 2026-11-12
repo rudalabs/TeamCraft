@@ -34,8 +34,9 @@ use crate::{
 /// Bump to invalidate every cached preview (reader fixes, new format).
 /// Bump `shape::VERSION` with it: the shape signatures stored in the
 /// database are computed from these meshes. 3: Inventor files with
-/// Zstandard segments (#271), cached as failed before.
-pub const CACHE_VERSION: u32 = 3;
+/// Zstandard segments (#271), cached as failed before. 4: Creo parts in
+/// millimetres (inch parts were 25.4 times too small), turned Creo parts.
+pub const CACHE_VERSION: u32 = 4;
 
 /// Conversions that run at the same time.
 pub const MAX_PARALLEL: usize = 2;
@@ -190,6 +191,8 @@ pub enum PreviewFormat {
     SketchUp,
     /// PTC Creo parts: tessellated from the B-rep they store.
     CreoPart,
+    /// PTC Creo assemblies: put together from the previews of their parts.
+    CreoAssembly,
     /// Autodesk Fusion designs: the display scene they store.
     FusionDesign,
     Pts,
@@ -203,7 +206,7 @@ pub enum PreviewFormat {
 }
 
 impl PreviewFormat {
-    pub const ALL: [PreviewFormat; 29] = [
+    pub const ALL: [PreviewFormat; 30] = [
         PreviewFormat::Stl,
         PreviewFormat::Obj,
         PreviewFormat::Ply,
@@ -225,6 +228,7 @@ impl PreviewFormat {
         PreviewFormat::CatiaProduct,
         PreviewFormat::SketchUp,
         PreviewFormat::CreoPart,
+        PreviewFormat::CreoAssembly,
         PreviewFormat::FusionDesign,
         PreviewFormat::Pts,
         PreviewFormat::Xyz,
@@ -269,6 +273,7 @@ impl PreviewFormat {
             PreviewFormat::CatiaProduct => "catia-product",
             PreviewFormat::SketchUp => "sketchup",
             PreviewFormat::CreoPart => "creo-part",
+            PreviewFormat::CreoAssembly => "creo-assembly",
             PreviewFormat::FusionDesign => "fusion-design",
             PreviewFormat::Pts => "pts",
             PreviewFormat::Xyz => "xyz",
@@ -296,7 +301,7 @@ impl PreviewFormat {
     /// Assemblies whose preview is put together from their parts' previews
     /// (`services::assemblies`): NX files without a lightweight
     /// representation of their own, SOLIDWORKS and Inventor assemblies,
-    /// CATIA products.
+    /// CATIA products, Creo assemblies.
     pub fn may_be_assembly(self) -> bool {
         matches!(
             self,
@@ -304,6 +309,7 @@ impl PreviewFormat {
                 | PreviewFormat::SwAssembly
                 | PreviewFormat::InvAssembly
                 | PreviewFormat::CatiaProduct
+                | PreviewFormat::CreoAssembly
         )
     }
 
@@ -1255,6 +1261,11 @@ mod tests {
             Some(PreviewFormat::CatiaProduct)
         );
         assert!(PreviewFormat::CatiaProduct.may_be_assembly());
+        assert_eq!(
+            PreviewFormat::of("Frame.asm.12"),
+            Some(PreviewFormat::CreoAssembly)
+        );
+        assert!(PreviewFormat::CreoAssembly.may_be_assembly());
         assert_eq!(PreviewFormat::of("Bracket.par"), None, "native CAD");
         assert_eq!(
             PreviewFormat::of("plate.iges"),

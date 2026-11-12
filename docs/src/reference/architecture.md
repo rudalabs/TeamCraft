@@ -45,8 +45,9 @@
   their scene graph (`mesh/jt10.rs`), Rhino models with their stored meshes
   and SubD (`mesh/rhino.rs`), SketchUp models are triangulated with earcut
   (`mesh/sketchup.rs`, `mesh/earcut.rs`; SketchUp 3–2020 through the vendored
-  `vendor/openskp`); NX, SOLIDWORKS and Inventor assemblies and CATIA
-  products (`catprod.rs`) are put together from their parts' previews
+  `vendor/openskp`); NX, SOLIDWORKS, Inventor and Creo assemblies
+  (`mesh/creo/asm.rs`) and CATIA products (`catprod.rs`) are put together
+  from their parts' previews
   (`services/assemblies.rs`);
   `preview.rs` caches the
   result and runs each conversion in a `teamcraft preview-mesh` child

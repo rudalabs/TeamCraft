@@ -1,4 +1,5 @@
-//! 3D previews of NX, SOLIDWORKS and Inventor assemblies and CATIA products.
+//! 3D previews of NX, SOLIDWORKS, Inventor and Creo assemblies and CATIA
+//! products.
 //!
 //! An assembly's preview is put together from the previews of its
 //! component files, with the placements the assembly stores: NX in its
@@ -7,10 +8,14 @@
 //! in `UFRxDoc` and `AmRxSegment` (`invplace`, sub-assemblies are files of
 //! their own; a parent may re-pose children of a flexible
 //! sub-assembly, `invplace::Override`), CATIA in the object stream of the
-//! product (`catprod`, sub-products are files of their own).
+//! product (`catprod`, sub-products are files of their own), Creo in the
+//! assembly's `NeuAsmSld` section (`mesh::creo::asm`, sub-assemblies are
+//! files of their own).
 //!
 //! 1. The components are found **by file name** (`NAME.prt` for NX, the
-//!    file name of the stored path for SOLIDWORKS and Inventor), the way file
+//!    file name of the stored path for SOLIDWORKS and Inventor, `name.prt`
+//!    or `name.asm` for Creo, whose files are stored without their
+//!    iteration suffix), the way file
 //!    references are matched (`references::files_of_revision`): a file of
 //!    the assembly's own revision first, otherwise the latest revision of
 //!    another item the viewer may see. A CATIA product names no files: a
@@ -83,6 +88,7 @@ enum Family {
     SolidWorks,
     Inventor,
     Catia,
+    Creo,
 }
 
 impl Family {
@@ -92,6 +98,7 @@ impl Family {
             "solidworks-assembly" => Some(Family::SolidWorks),
             "inventor-assembly" => Some(Family::Inventor),
             "catia-product" => Some(Family::Catia),
+            "creo-assembly" => Some(Family::Creo),
             _ => None,
         }
     }
@@ -102,7 +109,7 @@ impl Family {
         let name = &component.name;
         match self {
             Family::Nx => format!("{}.prt", name.to_lowercase()),
-            Family::SolidWorks | Family::Inventor => name.to_lowercase(),
+            Family::SolidWorks | Family::Inventor | Family::Creo => name.to_lowercase(),
             Family::Catia => component
                 .document
                 .clone()
@@ -116,6 +123,7 @@ impl Family {
             Family::SolidWorks => matches!(format, "solidworks-part" | "solidworks-assembly"),
             Family::Inventor => matches!(format, "inventor-part" | "inventor-assembly"),
             Family::Catia => matches!(format, "catia-part" | "catia-product"),
+            Family::Creo => matches!(format, "creo-part" | "creo-assembly"),
         }
     }
 
@@ -126,6 +134,7 @@ impl Family {
             Family::SolidWorks => PreviewFormat::SwPart,
             Family::Inventor => PreviewFormat::InvPart,
             Family::Catia => PreviewFormat::CatiaPart,
+            Family::Creo => PreviewFormat::CreoPart,
         }
     }
 }
@@ -266,6 +275,8 @@ async fn kind(st: &AppState, sha256: &str, format: &str) -> AppResult<Kind> {
         "inventor-assembly" => crate::invplace::kind_of(&path).unwrap_or(Kind::Other),
         "catia-part" => Kind::Part(Vec::new()),
         "catia-product" => crate::catprod::kind_of(&path).unwrap_or(Kind::Other),
+        "creo-part" => Kind::Part(Vec::new()),
+        "creo-assembly" => crate::mesh::creo::asm::kind_of(&path).unwrap_or(Kind::Other),
         _ => nxasm::kind_of(&path).unwrap_or(Kind::Other),
     })
     .await

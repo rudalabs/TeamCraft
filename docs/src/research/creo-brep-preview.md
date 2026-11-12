@@ -178,9 +178,9 @@ Sld_VisGeom / active_geom
   as facets between their edge samples until interior sample points are
   added. The twist layout of `end_uv_deriv` is plausible but only affects
   the interior and could not be checked against edges.
-* Model units: the file says mm or inch in `UnitSystemDef`; the mesh keeps
-  the model units for now. All NIST parts are stored in mm, so an inch
-  part would show 25.4 times too small until the unit is read.
+* Model units: read from `UnitSystemDef` since 2026-11-12 and converted
+  to millimetres ([3D preview of Creo assemblies](creo-assembly-preview.md));
+  the NIST part `ctc-05` is stored in inches, `ctc-01` in mm.
 * Open edges: the prototype leaves a few open edges on some parts (4–8 on
   `ctc-03`, `ftc-07`, `ftc-09`) and about 1 200 on `ctc-02`, where planes
   are split into twin halves; faces whose stored record is wrong or missing
