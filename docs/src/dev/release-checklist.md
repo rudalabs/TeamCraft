@@ -38,6 +38,8 @@ mismatch.
 - [ ] `Cargo.toml` (`version`)
 - [ ] `desktop/Cargo.toml` (`version`)
 - [ ] `desktop/tauri.conf.json` (`version`)
+- [ ] Also `docs/theme/doxygen.js` (`version`, shown in the title and footer
+  of the book); the release workflow does not check this one.
 - [ ] Run `cargo check` and `cargo check --manifest-path desktop/Cargo.toml`
   so that both `Cargo.lock` files follow, then commit the bump on `main`
   through a pull request.
