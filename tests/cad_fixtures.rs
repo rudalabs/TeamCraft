@@ -50,7 +50,7 @@ fn manifest() -> Vec<Entry> {
 #[tokio::test]
 async fn files_are_unchanged_and_recognised() {
     let entries = manifest();
-    assert_eq!(entries.len(), 35 + 39, "every fixture is listed");
+    assert_eq!(entries.len(), 36 + 39, "every fixture is listed");
     for e in &entries {
         let shown = e.path.display();
         let data = std::fs::read(&e.path).unwrap_or_else(|err| panic!("{shown}: {err}"));
@@ -358,6 +358,61 @@ fn creo_parts_get_a_3d_preview() {
         assert!((b[i] - min[i]).abs() < 0.05, "{rel}: {b:?}");
         assert!((b[i + 3] - max[i]).abs() < 0.05, "{rel}: {b:?}");
     }
+}
+
+/// A Creo part stored in inches is shown in millimetres: the unit comes
+/// from its `UnitSystemDef` section (ftc-09 spans 11 × 0.12 × 7.5 inches
+/// in its STEP export).
+#[test]
+fn creo_parts_in_inches_are_converted_to_millimetres() {
+    let rel = "ftc-09/creo-10/nist_ftc_09_asme1_rd_cr10030.prt.8";
+    let data = std::fs::read(fixture(rel)).unwrap();
+    let toc = mesh::creo::container::toc(&data).unwrap();
+    assert_eq!(mesh::creo::unit_mm(&data, &toc), 25.4);
+    let mesh = preview::convert(preview::PreviewFormat::CreoPart, &fixture(rel))
+        .unwrap_or_else(|e| panic!("{rel}: {e}"));
+    mesh.check().unwrap();
+    let b = mesh.bounds();
+    let (min, max) = ([-139.7, 0.0, -95.25], [139.7, 3.048, 95.25]);
+    for i in 0..3 {
+        assert!((b[i] - min[i]).abs() < 0.05, "{rel}: {b:?}");
+        assert!((b[i + 3] - max[i]).abs() < 0.05, "{rel}: {b:?}");
+    }
+    // ctc-01 is stored in millimetres
+    let ctc = std::fs::read(fixture("ctc-01/creo-10/nist_ctc_01_asme1_rd_cr10030.prt.5")).unwrap();
+    let toc = mesh::creo::container::toc(&ctc).unwrap();
+    assert_eq!(mesh::creo::unit_mm(&ctc, &toc), 1.0);
+}
+
+/// Creo assemblies are put together from their parts: the components and
+/// their placements (here a synthetic assembly in inches) are read from
+/// the assembly file.
+#[test]
+fn creo_assemblies_list_their_components() {
+    assert_eq!(
+        preview::PreviewFormat::of("frame.asm.3"),
+        Some(preview::PreviewFormat::CreoAssembly)
+    );
+    let quarter = [[0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]];
+    let data = mesh::creo::asm::sample(
+        &[
+            (
+                "NIST_CTC_01_ASME1_RD_CR10030",
+                false,
+                quarter,
+                [10.0, 0.0, 0.0],
+            ),
+            ("HOLDER", true, quarter, [0.0, 0.0, 1.0]),
+        ],
+        "in",
+    );
+    let c = mesh::creo::asm::components(&data).unwrap();
+    assert_eq!(c[0].name, "NIST_CTC_01_ASME1_RD_CR10030.prt");
+    assert_eq!(c[0].translation, [254.0, 0.0, 0.0]);
+    assert_eq!(c[1].name, "HOLDER.asm");
+    // an assembly is no part: its preview comes from its parts
+    assert!(mesh::read("creo-assembly", &data).is_err());
+    assert!(mesh::read("creo-part", &data).is_err());
 }
 
 /// A damaged Creo file is an error, never a panic: the file is cut short

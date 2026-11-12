@@ -44,8 +44,10 @@ use std::{
 /// from their 3D preview; 5: Rhino models; 6: Inventor parts and assemblies
 /// rendered from their 3D preview; 7: Inventor files with Zstandard
 /// segments, which kept their stored image before, #271; 8: Creo parts
-/// rendered from their 3D preview – both branches had used 7).
-pub const CACHE_VERSION: u32 = 8;
+/// rendered from their 3D preview – both branches had used 7; 9: Creo
+/// assemblies rendered from their parts, turned Creo parts without a plane
+/// in the identity frame).
+pub const CACHE_VERSION: u32 = 9;
 
 const OLE_MAGIC: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
 const PNG_MAGIC: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
@@ -72,6 +74,7 @@ pub fn supports(format_id: &str) -> bool {
                 | "jt"
                 | "sketchup"
                 | "creo-part"
+                | "creo-assembly"
                 | "fusion-design"
         )
 }
@@ -509,6 +512,7 @@ pub fn rendered(format_id: &str) -> bool {
             | "catia-product"
             | "sketchup"
             | "creo-part"
+            | "creo-assembly"
             | "fusion-design"
     )
 }

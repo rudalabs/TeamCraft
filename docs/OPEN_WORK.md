@@ -481,6 +481,10 @@ real files and belong to section 3 once such files are at hand.
   yet; candidate: `e57` crate). JT 9 and 10 are read with their scene graph (`src/mesh/jt10.rs`); open there: JT 8, shattered
   JT files (parts in other `.jt` files), a real JT 9.5 assembly as a test file (the tests build synthetic ones) – no
   openly licensed test files yet
+- [x] Creo assemblies from their parts (`src/mesh/creo/asm.rs`, section `NeuAsmSld`, components by `<name>.prt` /
+  `<name>.asm`; units read, parts in mm). Open: an openly licensed Creo assembly as a test file (the tests build
+  synthetic ones; the decoding samples have no licence), family-table instances (shown as their generic), suppressed
+  components and simplified representations, faces older Creo files store as stubs
 - [x] CATIA V5 products from their parts (`src/catprod.rs`, components by document UUID or part number). Open: hidden
   components (`VPGlobal`?), components without a document of their own, V5-6R20xx products and an openly licensed
   product as a test file (the tests build synthetic ones)

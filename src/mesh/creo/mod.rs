@@ -1,7 +1,9 @@
 //! PTC Creo parts (`.prt.N`): a preview mesh tessellated from the exact
 //! B-rep the file stores – Creo keeps no display tessellation of the body.
-//! See `docs/src/research/creo-brep-preview.md`.
+//! See `docs/src/research/creo-brep-preview.md`. Assemblies (`.asm.N`) are
+//! put together from their parts (`asm`, `services::assemblies`).
 //!
+//! * `asm`: the components of an assembly and their placements;
 //! * `container`: the text table of contents and the LZW-compressed sections;
 //! * `tagged`: the self-describing binary format of a section and its
 //!   compact numbers;
@@ -11,6 +13,7 @@
 //! * `tess`: regions per face, ear clipping in the parameter plane, welding,
 //!   PN refinement along the analytic normals.
 
+pub mod asm;
 pub mod brep;
 pub mod container;
 pub mod freeform;
@@ -20,12 +23,69 @@ pub mod tess;
 use anyhow::{anyhow, bail, Result};
 
 use crate::mesh::Mesh;
+use tagged::Node;
 
 /// The section with the visible B-rep.
 pub const VISIBLE_GEOMETRY: &str = "VisibGeom";
+/// The section with the unit system (parts and assemblies).
+pub const UNIT_SYSTEM: &str = "ND:0:UnitSystemDef_L03:1";
 
-/// The preview mesh of a Creo part (bytes of the whole file), in the model's
-/// own length unit (the NIST parts are millimetres or inches).
+/// Millimetres per length unit of the file (1 when the file names none or
+/// one not known): the unit's name follows `Offset` in the names
+/// (`string_xar`) of the `UnitSystemDef` section – `mm`, `in`, …; other
+/// systems give the metres per unit in `double_xar[0]`.
+pub fn unit_mm(data: &[u8], toc: &[container::Entry]) -> f64 {
+    let prefix = UNIT_SYSTEM.split('_').next().unwrap_or(UNIT_SYSTEM);
+    let Some(entry) = toc.iter().find(|e| e.name.starts_with(prefix)) else {
+        return 1.0;
+    };
+    let Ok(Some(section)) = container::section(data, toc, &entry.name) else {
+        return 1.0;
+    };
+    let Ok(tree) = tagged::parse(&section) else {
+        return 1.0;
+    };
+    let root = tree.root();
+    let names: Vec<&str> = tree
+        .child(root, "string_xar")
+        .map(|l| {
+            tree.list(l)
+                .iter()
+                .filter_map(|&i| match tree.node(i) {
+                    Node::Str(s) => Some(s.as_str()),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    let by_name = names
+        .iter()
+        .position(|&s| s == "Offset")
+        .and_then(|i| names.get(i + 1))
+        .and_then(|u| mm_per_unit(u));
+    let by_scale = tree
+        .child(root, "double_xar")
+        .and_then(|l| tree.dbls(l).first().copied())
+        .filter(|m| m.is_finite() && *m > 1e-9 && *m < 1e6)
+        .map(|m| m * 1000.0);
+    by_name.or(by_scale).unwrap_or(1.0)
+}
+
+/// Millimetres per unit of a Creo length unit name.
+fn mm_per_unit(name: &str) -> Option<f64> {
+    Some(match name.to_ascii_lowercase().as_str() {
+        "mm" => 1.0,
+        "cm" => 10.0,
+        "m" => 1000.0,
+        "in" | "inch" => 25.4,
+        "ft" | "foot" => 304.8,
+        "um" | "micron" => 0.001,
+        _ => return None,
+    })
+}
+
+/// The preview mesh of a Creo part (bytes of the whole file), in millimetres
+/// (the NIST parts are stored in millimetres or inches).
 pub(crate) fn read_part(data: &[u8]) -> Result<Mesh> {
     if !container::is_creo(data) {
         bail!("not a Creo file (the file does not start with '#UGC:')");
@@ -54,7 +114,14 @@ pub(crate) fn read_part(data: &[u8]) -> Result<Mesh> {
         fixed = brep::resolve(&brep);
     }
     let coarse = tess::tessellate(&brep, &fixed)?;
-    tess::build(&coarse)
+    let mut mesh = tess::build(&coarse)?;
+    let mm = unit_mm(data, &toc);
+    if mm != 1.0 {
+        for p in &mut mesh.positions {
+            *p = (f64::from(*p) * mm) as f32;
+        }
+    }
+    Ok(mesh)
 }
 
 #[cfg(test)]

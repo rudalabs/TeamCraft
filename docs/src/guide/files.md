@@ -85,7 +85,7 @@ has the same notes under `/api/v1/file-versions/{id}/annotations`.
 | Native CAD          | CATIA V5 parts (`.CATPart`) – the visualisation data stored in the file; products (`.CATProduct`) from the parts            |
 | Native CAD          | Rhino models (`.3dm`) – the meshes stored in the file, SubD objects refined from their control net                            |
 | Native CAD          | SketchUp models (`.skp`, SketchUp 3 to today) – their faces, components and groups in place                                   |
-| Native CAD          | Creo parts (`.prt.N`) – tessellated from the exact faces stored in the file                                                   |
+| Native CAD          | Creo parts (`.prt.N`) – tessellated from the exact faces stored in the file; assemblies (`.asm.N`) from the parts            |
 |                     | Fusion designs (`.f3d`) – the display mesh Fusion stores                                                                      |
 | Visualisation       | JT (`.jt`): JT 10 parts and whole assemblies, placed; JT 9 as NX writes it                                                    |
 | Meshes              | STL, OBJ, PLY, OFF, 3MF (incl. components), AMF, glTF / GLB, 3DS                                                              |
@@ -123,7 +123,9 @@ segment, and CATIA as the visualisation data it draws on screen (see
 Creo stores no tessellation, but its exact faces with every edge already
 sampled; TeamCraft triangulates those faces itself – planes, cylinders,
 cones, tori, spline, fillet and ruled faces (see
-[Research: 3D preview of Creo parts](../research/creo-brep-preview.md)).
+[Research: 3D preview of Creo parts](../research/creo-brep-preview.md)),
+and puts Creo assemblies together from their parts (see
+[Research: 3D preview of Creo assemblies](../research/creo-assembly-preview.md)).
 
 TeamCraft shows that tessellation in the 3D viewer, refined along the
 exact surface normals stored with it, so round faces stay round.
@@ -182,7 +184,7 @@ For the rest TeamCraft shows what other PLM systems show:
   is rendered from it (see
   [Research: 3D preview of stand-alone JT files](../research/jt10-preview.md)).
 * **A picture of the 3D preview** for NX, SOLIDWORKS and Inventor parts and
-  assemblies, CATIA parts and products, Creo parts, Rhino and SketchUp models and Fusion
+  assemblies, CATIA parts and products, Creo parts and assemblies, Rhino and SketchUp models and Fusion
   designs. It replaces the image stored in the file and is a 512 × 512 PNG
   with a transparent background, drawn once and cached. An assembly's
   picture is drawn again when one of its parts changes. Drawings, and

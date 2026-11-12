@@ -527,12 +527,23 @@ pub fn eval(s: &Surface, c: &Conv, u: f64, v: f64) -> P3 {
     p
 }
 
+/// Faces next to each face: (curve index, side of the face on the curve).
+type Adjacency = HashMap<i64, Vec<(usize, usize)>>;
+
+/// Seeded walks tried at most for a part without a starting face (each
+/// tries every convention of one face).
+const MAX_SEEDS: usize = 16;
+
 /// Resolves the convention of every face by walking from planes with the
-/// identity frame across shared edges. Faces that stay unresolved get the
-/// first candidate.
+/// identity frame (and freeform faces, which have nothing to choose) across
+/// shared edges. A part without any such face – turned parts whose planes
+/// all lie across an off-axis axis – is seeded instead: one face is tried
+/// with each of its conventions, and the walk that makes the most edge
+/// samples coincide is kept. Faces that stay unresolved get the first
+/// candidate.
 pub fn resolve(brep: &Brep) -> HashMap<i64, Conv> {
     let by_id: HashMap<i64, &Surface> = brep.surfaces.iter().map(|s| (s.id, s)).collect();
-    let mut adj: HashMap<i64, Vec<(usize, usize)>> = HashMap::new();
+    let mut adj: Adjacency = HashMap::new();
     for (ci, c) in brep.curves.iter().enumerate() {
         if by_id.contains_key(&c.faces[0]) && by_id.contains_key(&c.faces[1]) {
             adj.entry(c.faces[0]).or_default().push((ci, 0));
@@ -555,10 +566,33 @@ pub fn resolve(brep: &Brep) -> HashMap<i64, Conv> {
             }
         }
     }
-    // model size from the fixed planes' edge points
+    if fixed.is_empty() {
+        // seeding faces a walk cannot reach in parts that do have a start
+        // made two NIST parts worse: only parts without any start are seeded
+        fixed = seeded(brep, &by_id, &adj);
+    } else {
+        let tol = tolerance(brep, &by_id, &adj, &fixed);
+        propagate(brep, &by_id, &adj, &mut fixed, tol);
+    }
+    for s in &brep.surfaces {
+        if let Some(c) = candidates(s.kind).first() {
+            fixed.entry(s.id).or_insert(*c);
+        }
+    }
+    fixed
+}
+
+/// The distance under which two evaluations of an edge sample coincide,
+/// from the model size seen through the resolved faces' edges.
+fn tolerance(
+    brep: &Brep,
+    by_id: &HashMap<i64, &Surface>,
+    adj: &Adjacency,
+    fixed: &HashMap<i64, Conv>,
+) -> f64 {
     let mut lo = [f64::INFINITY; 3];
     let mut hi = [f64::NEG_INFINITY; 3];
-    for (&id, conv) in &fixed {
+    for (&id, conv) in fixed {
         let Some(s) = by_id.get(&id) else { continue };
         for &(ci, side) in adj
             .get(&id)
@@ -588,7 +622,19 @@ pub fn resolve(brep: &Brep) -> HashMap<i64, Conv> {
     } else {
         1.0
     };
-    let tol = (1e-6 * size).max(1e-6) * 10.0;
+    (1e-6 * size).max(1e-6) * 10.0
+}
+
+/// Walks from the resolved faces across shared edges: a face takes the
+/// convention under which most of its edge samples meet its resolved
+/// neighbours' (at least 60 %).
+fn propagate(
+    brep: &Brep,
+    by_id: &HashMap<i64, &Surface>,
+    adj: &Adjacency,
+    fixed: &mut HashMap<i64, Conv>,
+    tol: f64,
+) {
     for _round in 0..60 {
         let mut changed = false;
         for s in &brep.surfaces {
@@ -638,13 +684,7 @@ pub fn resolve(brep: &Brep) -> HashMap<i64, Conv> {
             }
             // on a tie the first candidate wins (symmetric edges, e.g. all
             // samples at u = 0, cannot tell the signs apart)
-            let Some((best, &best_score)) = score.iter().enumerate().fold(
-                None,
-                |acc: Option<(usize, &usize)>, (k, v)| match acc {
-                    Some((_, b)) if b >= v => acc,
-                    _ => Some((k, v)),
-                },
-            ) else {
+            let Some((best, best_score)) = first_max(&score) else {
                 continue;
             };
             if best_score > 0 && best_score * 10 >= rows * 6 {
@@ -658,9 +698,92 @@ pub fn resolve(brep: &Brep) -> HashMap<i64, Conv> {
             break;
         }
     }
-    for s in &brep.surfaces {
-        if let Some(c) = candidates(s.kind).first() {
-            fixed.entry(s.id).or_insert(*c);
+}
+
+/// The index and value of the first largest score.
+fn first_max(scores: &[usize]) -> Option<(usize, usize)> {
+    scores
+        .iter()
+        .enumerate()
+        .fold(None, |acc: Option<(usize, usize)>, (k, &v)| match acc {
+            Some((_, b)) if b >= v => acc,
+            _ => Some((k, v)),
+        })
+}
+
+/// Edge samples whose two faces are resolved and evaluate to the same point.
+fn agreement(
+    brep: &Brep,
+    by_id: &HashMap<i64, &Surface>,
+    fixed: &HashMap<i64, Conv>,
+    tol: f64,
+) -> usize {
+    let mut n = 0;
+    for c in &brep.curves {
+        let (Some(a), Some(b)) = (by_id.get(&c.face(0)), by_id.get(&c.face(1))) else {
+            continue;
+        };
+        let (Some(ca), Some(cb)) = (fixed.get(&a.id), fixed.get(&b.id)) else {
+            continue;
+        };
+        for r in &c.pts {
+            let p = eval(a, ca, r[0], r[1]);
+            let q = eval(b, cb, r[2], r[3]);
+            if norm(sub(p, q)) < tol {
+                n += 1;
+            }
+        }
+    }
+    n
+}
+
+/// Conventions of a part without a starting face: the analytic face first
+/// in line (planes, cylinders, cones, tori; lowest id) is tried with every
+/// convention, each walked across the edges; the walk with the most
+/// coinciding edge samples is kept (on a tie the first, default convention).
+/// Repeated for faces the walks did not reach.
+fn seeded(brep: &Brep, by_id: &HashMap<i64, &Surface>, adj: &Adjacency) -> HashMap<i64, Conv> {
+    let rank = |k: Kind| match k {
+        Kind::Plane => 0,
+        Kind::Cylinder => 1,
+        Kind::Cone => 2,
+        Kind::Torus => 3,
+        _ => 4,
+    };
+    let mut fixed: HashMap<i64, Conv> = HashMap::new();
+    let mut skip: HashSet<i64> = HashSet::new();
+    for _ in 0..MAX_SEEDS {
+        let Some(seed) = brep
+            .surfaces
+            .iter()
+            .filter(|s| {
+                rank(s.kind) < 4
+                    && !fixed.contains_key(&s.id)
+                    && !skip.contains(&s.id)
+                    && adj.get(&s.id).is_some_and(|v| !v.is_empty())
+            })
+            .min_by_key(|s| (rank(s.kind), s.id))
+        else {
+            break;
+        };
+        let mut tried: Vec<(usize, HashMap<i64, Conv>)> = Vec::new();
+        for c in candidates(seed.kind) {
+            let mut f = fixed.clone();
+            f.insert(seed.id, c);
+            let tol = tolerance(brep, by_id, adj, &f);
+            propagate(brep, by_id, adj, &mut f, tol);
+            tried.push((agreement(brep, by_id, &f, tol), f));
+        }
+        let scores: Vec<usize> = tried.iter().map(|(s, _)| *s).collect();
+        match first_max(&scores) {
+            Some((k, score)) if score > 0 => {
+                if let Some((_, f)) = tried.into_iter().nth(k) {
+                    fixed = f;
+                }
+            }
+            _ => {
+                skip.insert(seed.id);
+            }
         }
     }
     fixed
@@ -712,10 +835,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn conventions_make_both_sides_of_every_edge_coincide() {
-        let b = brep_of_ctc01();
-        let fixed = resolve(&b);
+    /// Edge samples whose two evaluations meet / miss.
+    fn edge_check(b: &Brep, fixed: &HashMap<i64, Conv>) -> (usize, usize) {
         let by_id: HashMap<i64, &Surface> = b.surfaces.iter().map(|s| (s.id, s)).collect();
         let (mut good, mut bad) = (0, 0);
         for c in &b.curves {
@@ -732,7 +853,43 @@ mod tests {
                 }
             }
         }
+        (good, bad)
+    }
+
+    #[test]
+    fn conventions_make_both_sides_of_every_edge_coincide() {
+        let b = brep_of_ctc01();
         // the prototype gets every one of the 1437 samples
-        assert_eq!((good, bad), (1437, 0));
+        assert_eq!(edge_check(&b, &resolve(&b)), (1437, 0));
+    }
+
+    /// Turned parts often have no plane in the identity frame: the walk is
+    /// then seeded. ctc-01 turned as a whole (30° about z) keeps every edge
+    /// sample.
+    #[test]
+    fn a_part_without_a_plane_in_the_identity_frame_is_seeded() {
+        let mut b = brep_of_ctc01();
+        let (sin, cos) = 30f64.to_radians().sin_cos();
+        let turn = |p: P3| [cos * p[0] - sin * p[1], sin * p[0] + cos * p[1], p[2]];
+        for s in &mut b.surfaces {
+            let f = &s.frame;
+            s.frame = Frame {
+                x: turn(f.x),
+                y: turn(f.y),
+                z: turn(f.z),
+                o: turn(f.o),
+            };
+        }
+        let identity = b
+            .surfaces
+            .iter()
+            .filter(|s| {
+                s.kind == Kind::Plane
+                    && s.frame.x == [1.0, 0.0, 0.0]
+                    && s.frame.y == [0.0, 1.0, 0.0]
+            })
+            .count();
+        assert_eq!(identity, 0);
+        assert_eq!(edge_check(&b, &resolve(&b)), (1437, 0));
     }
 }

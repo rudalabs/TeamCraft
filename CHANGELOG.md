@@ -15,6 +15,16 @@ see the notices in the README.
 
 ### Added
 
+- 3D preview of PTC Creo assemblies (`.asm.N`), put together from the
+  previews of their parts and sub-assemblies like NX, SOLIDWORKS, Inventor
+  and CATIA assemblies. The direct components – model name, part or
+  sub-assembly, axes and origin – are read from the section `NeuAsmSld`
+  (`src/mesh/creo/asm.rs`) and found as `<name>.prt` / `<name>.asm`. The
+  assembly's thumbnail is rendered from it. Decoded on public samples
+  without a licence (kept out of the repository); the tests build
+  synthetic assemblies around the NIST part ctc-01
+  (`docs/src/research/creo-assembly-preview.md`).
+
 - 3D preview of CATIA V5 products (`.CATProduct`), put together from the
   previews of their parts and sub-products like NX, SOLIDWORKS and Inventor
   assemblies. A product stores no file names: its instances, part numbers
@@ -33,8 +43,8 @@ see the notices in the README.
   faces' parameter spaces, ear clipping per face region, welding and PN
   refinement along the analytic normals (`src/mesh/creo/`). The thumbnail is
   rendered from the preview (thumbnail cache version 8: every cached
-  thumbnail is made again once). New fuzz target `creopart`. Model units and
-  assemblies are not covered yet (`docs/src/research/creo-brep-preview.md`).
+  thumbnail is made again once). New fuzz target `creopart`
+  (`docs/src/research/creo-brep-preview.md`).
 - 3D preview of Autodesk Fusion designs (`.f3d`) from the display mesh
   Fusion stores in the file, refined along its exact normals like NX parts;
   the thumbnail is rendered from it (the PNG Fusion stored is the fallback).
@@ -226,6 +236,13 @@ see the notices in the README.
 
 ### Fixed
 
+- Creo parts stored in inches (9 of the 16 NIST Creo parts, e.g. ftc-09)
+  are shown in millimetres: the length unit is read from the section
+  `UnitSystemDef` (they were 25.4 times too small). Turned Creo parts without
+  a plane in the identity frame no longer fall apart: their face
+  parametrisations are resolved from a seeded face (rocket body closed, nose
+  from 102 to 9 open edges). Preview cache version 4, thumbnail cache
+  version 9, shape signatures version 4.
 - Documentation site: the search box in the tab bar searched for ever
   ("searching" never ended). mdBook 0.5 loads its search index only when its
   own search toggle opens the search, and the Doxygen theme hides that

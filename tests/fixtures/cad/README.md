@@ -52,6 +52,7 @@ is in [`rhino3dm/LICENSE`](rhino3dm/LICENSE) and must stay with the files:
 |---|---|---|
 | `nist/ctc-01/` | Inventor 2021, Siemens NX 1980, SolidWorks MBD 2018, Creo 10 (iteration `.prt.5`), CATIA V5-6R2019, STEP AP203 and AP242 | the combined test case CTC 01 in every format |
 | `nist/ftc-11/` | Inventor 2021, SolidWorks MBD 2018, STEP AP203 (7.6 kB) | small files for fast tests |
+| `nist/ftc-09/` | Creo 10 (iteration `.prt.8`) | a Creo part stored in **inches** (the preview is converted to mm) |
 | `nist/mtc-assembly/solidworks/` | SolidWorks (and an ACIS `.SAT`) | the box assembly: `.SLDASM` with its eight parts |
 | `nist/mtc-assembly/nx/` | Siemens NX (and a JT) | the same box assembly: assembly `.prt` with its eight parts |
 | `openskp/` | SketchUp 3 to 2026 (`.skp`, 31 classic files of SketchUp 3–2020, 8 of 2021+) | test files of OpenSKP (see below): nested and scaled components, curves, layers, hidden geometry, the same models saved in several versions |
@@ -78,6 +79,7 @@ Fusion, FreeCAD or KiCad projects.
 * the NX assembly references all eight part files;
 * every STEP file (AP203 and AP242) gets a complete 3D preview; the PMI of the AP242 file is not shown as geometry.
 * every Rhino model gets a closed 3D preview in millimetres (mesh, B-rep render mesh, subdivided SubD).
+* the Creo parts get a 3D preview in millimetres: ctc-01 closed with the box of its STEP export, ftc-09 converted from inches; a synthetic Creo assembly lists its components with their placements; damaged Creo files never panic.
 * every SketchUp file with faces (SketchUp 3 to 2026) gets a 3D preview with the triangle counts and boxes of the prototype, the same model saved by different versions gives the same triangles, files without faces say so; damaged SketchUp files never panic.
 
 Gaps found with these files are ignored tests in the same file – run them
