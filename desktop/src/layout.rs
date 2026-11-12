@@ -728,16 +728,9 @@ pub struct LocalChanges {
     /// Revisions without local changes: a plain lock release loses nothing.
     pub clean: Vec<CheckoutRef>,
     /// Revisions whose working folder could not be compared, with the error:
-    /// treated as changed by the callers (nothing is released blindly).
+    /// treated as at risk by the callers (`atRisk` in `ui/js/shell.js`:
+    /// nothing is released blindly).
     pub unreadable: Vec<(CheckoutRef, String)>,
-}
-
-impl LocalChanges {
-    /// How many revisions hold work that exists only on this computer (or
-    /// might: the unreadable ones).
-    pub fn at_risk(&self) -> usize {
-        self.changed.len() + self.unreadable.len()
-    }
 }
 
 /// Sorts check-outs by the states of their local files (`(name, state)` per
@@ -1362,9 +1355,7 @@ mod tests {
             report.unreadable,
             vec![(checkout("PRT-3"), "server not reachable".to_string())]
         );
-        assert_eq!(report.at_risk(), 3, "unreadable counts as at risk");
         assert_eq!(local_changes(Vec::new()), LocalChanges::default());
-        assert_eq!(LocalChanges::default().at_risk(), 0);
     }
 
     #[test]

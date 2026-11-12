@@ -156,7 +156,7 @@ export function releasedNotice(released, localChanges) {
   var text = localChanges ? released.message : "Your check-out was released by " + released.by_name + ".";
   return h("p.notice" + (localChanges ? ".error" : ""), { role: "status" }, [
     h("strong", { text: text }),
-    " " + fmtDate(released.at) + (released.reason ? " – reason: " + released.reason : "") +
+    " " + fmtDate(released.at) + (released.reason ? " – reason: " + released.reason.replace(/[.!?]?$/, ".") : ".") +
       (localChanges ? " Check the revision out again, then check in or park your changes." : "")
   ]);
 }
