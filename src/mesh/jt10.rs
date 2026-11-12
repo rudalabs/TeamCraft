@@ -155,21 +155,15 @@ pub(crate) fn read(data: &[u8]) -> Result<Mesh> {
             parts: 1,
             ..Mesh::default()
         };
-        let m = &o.matrix;
         for p in points {
-            let q = [0, 1, 2].map(|j| {
-                (p[0] * m[0][j] + p[1] * m[1][j] + p[2] * m[2][j] + m[3][j]) * scale
-            });
+            let q = apply(&o.matrix, p).map(|c| c * scale);
             ensure!(q.iter().all(|c| c.is_finite()), damaged());
             part.vertex(q);
         }
-        let mirrored = determinant(m) < 0.0;
-        for t in triangles {
-            part.indices.extend(if mirrored {
-                [t[0], t[2], t[1]]
-            } else {
-                *t
-            });
+        let mirrored = determinant(&o.matrix) < 0.0;
+        for &[a, b, c] in triangles {
+            part.indices
+                .extend(if mirrored { [a, c, b] } else { [a, b, c] });
         }
         mesh.append(part);
     }
@@ -182,10 +176,21 @@ pub(crate) fn read(data: &[u8]) -> Result<Mesh> {
     Ok(mesh)
 }
 
+/// `p · M` for a row vector `p` (translation in the last row).
+fn apply(m: &[[f64; 4]; 4], p: &[f64; 3]) -> [f64; 3] {
+    let [x, y, z] = *p;
+    let [r0, r1, r2, r3] = m;
+    let mut q = [0.0; 3];
+    for ((((out, a), b), c), d) in q.iter_mut().zip(r0).zip(r1).zip(r2).zip(r3) {
+        *out = x * a + y * b + z * c + d;
+    }
+    q
+}
+
+/// Determinant of the 3 × 3 rotation-and-scale part (negative: mirrored).
 fn determinant(m: &[[f64; 4]; 4]) -> f64 {
-    m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
-        - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
-        + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
+    let [[a, b, c, _], [d, e, f, _], [g, h, i, _], _] = *m;
+    a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
 }
 
 // ---------------------------------------------------------------------------
@@ -359,9 +364,13 @@ const IDENTITY: [[f64; 4]; 4] = [
 
 fn multiply(a: &[[f64; 4]; 4], b: &[[f64; 4]; 4]) -> [[f64; 4]; 4] {
     let mut m = [[0.0; 4]; 4];
-    for (i, row) in m.iter_mut().enumerate() {
+    for (row, a_row) in m.iter_mut().zip(a) {
         for (j, cell) in row.iter_mut().enumerate() {
-            *cell = (0..4).map(|k| a[i][k] * b[k][j]).sum();
+            *cell = a_row
+                .iter()
+                .zip(b)
+                .map(|(x, b_row)| x * b_row.get(j).copied().unwrap_or(0.0))
+                .sum();
         }
     }
     m
@@ -420,7 +429,8 @@ impl Graph {
                 let units: Vec<u16> = r
                     .take(n * 2)?
                     .chunks_exact(2)
-                    .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                    .filter_map(|c| <[u8; 2]>::try_from(c).ok())
+                    .map(u16::from_le_bytes)
                     .collect();
                 Atom::Text(String::from_utf16_lossy(&units))
             } else if e.kind == INTEGER_ATOM {
@@ -611,7 +621,9 @@ fn transform(body: &[u8]) -> Result<[[f64; 4]; 4]> {
         if mask & (1 << (15 - i)) != 0 {
             let v = super::f64_le(body, at)?;
             ensure!(v.is_finite(), damaged());
-            m[i / 4][i % 4] = v;
+            if let Some(cell) = m.get_mut(i / 4).and_then(|row| row.get_mut(i % 4)) {
+                *cell = v;
+            }
             at += 8;
         }
     }
@@ -763,14 +775,18 @@ fn read_normals(r: &mut Reader<'_>) -> Result<Vec<[f64; 3]>> {
             .collect::<Result<Vec<_>>>()?
     } else {
         ensure!(components == 3, damaged());
-        let mut axes = Vec::with_capacity(3);
-        for _ in 0..3 {
+        let mut axis = || -> Result<Vec<f64>> {
             let v = read_packet(r, 0)?;
             ensure!(v.len() == count, damaged());
-            axes.push(v);
-        }
-        (0..count)
-            .map(|i| [0, 1, 2].map(|a| f64::from(f32::from_bits(axes[a][i] as u32))))
+            Ok(v.iter()
+                .map(|&c| f64::from(f32::from_bits(c as u32)))
+                .collect())
+        };
+        let (x, y, z) = (axis()?, axis()?, axis()?);
+        x.into_iter()
+            .zip(y)
+            .zip(z)
+            .map(|((x, y), z)| [x, y, z])
             .collect()
     };
     r.u32()?; // hash
@@ -976,9 +992,11 @@ fn hash32(words: &[i32], seed: u32) -> u32 {
     let (mut a, mut b, mut c) = (0x9e37_79b9u32, 0x9e37_79b9u32, seed);
     let mut chunks = words.chunks_exact(3);
     for k in &mut chunks {
-        a = a.wrapping_add(k[0] as u32);
-        b = b.wrapping_add(k[1] as u32);
-        c = c.wrapping_add(k[2] as u32);
+        if let &[x, y, z] = k {
+            a = a.wrapping_add(x as u32);
+            b = b.wrapping_add(y as u32);
+            c = c.wrapping_add(z as u32);
+        }
         mix(&mut a, &mut b, &mut c);
     }
     c = c.wrapping_add(words.len() as u32);
@@ -999,9 +1017,11 @@ fn hash16(values: &[i32], seed: u32) -> u32 {
     let (mut a, mut b, mut c) = (0x9e37_79b9u32, 0x9e37_79b9u32, seed);
     let mut chunks = k.chunks_exact(6);
     for w in &mut chunks {
-        a = a.wrapping_add(w[0] + (w[1] << 16));
-        b = b.wrapping_add(w[2] + (w[3] << 16));
-        c = c.wrapping_add(w[4] + (w[5] << 16));
+        if let &[a0, a1, b0, b1, c0, c1] = w {
+            a = a.wrapping_add(a0 + (a1 << 16));
+            b = b.wrapping_add(b0 + (b1 << 16));
+            c = c.wrapping_add(c0 + (c1 << 16));
+        }
         mix(&mut a, &mut b, &mut c);
     }
     c = c.wrapping_add(k.len() as u32);
