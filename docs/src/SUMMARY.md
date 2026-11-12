@@ -66,6 +66,7 @@
     - [3D preview of Fusion designs](research/fusion-ogs-preview.md)
     - [3D preview of Inventor files](research/inventor-display-preview.md)
     - [3D preview of Creo parts](research/creo-brep-preview.md)
+    - [3D preview of Creo assemblies](research/creo-assembly-preview.md)
     - [3D preview of SOLIDWORKS files](research/solidworks-display-preview.md)
     - [Mutation testing with cargo-mutants](research/mutation-testing.md)
     - [3D preview of NX parts](research/nx-jt-preview.md)
