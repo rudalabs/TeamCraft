@@ -461,6 +461,38 @@ fn jt_assemblies_get_a_placed_3d_preview() {
     assert!(thumbnail::rendered("jt") && thumbnail::supports("jt"));
 }
 
+/// The JT assembly as the geometry file of *Mass settings*: one closed mesh
+/// of the whole assembly in its frame, whose volume is the sum of the NIST
+/// NX part files times their instance counts (both in mm, within the
+/// difference of their tessellations).
+#[test]
+fn jt_assembly_mass_matches_its_parts() {
+    let jt = preview::convert(
+        preview::PreviewFormat::Jt,
+        &fixture("mtc-assembly/nx/NIST mtc crada assembly.jt"),
+    )
+    .unwrap();
+    let g = teamcraft::massprops::compute(&jt).unwrap();
+    assert!(g.closed && g.checked, "{g:?}");
+    assert!(!g.inverted_fixed, "every part is oriented outwards");
+    let mut parts = 0.0;
+    for (rel, count) in [
+        ("mtc-assembly/nx/NIST mtc crada box.prt", 1.0),
+        ("mtc-assembly/nx/NIST mtc crada cover.prt", 1.0),
+        ("mtc-assembly/nx/NIST mtc crada plate.prt", 1.0),
+        ("mtc-assembly/nx/NIST mtc crada polycarb.prt", 1.0),
+        ("mtc-assembly/nx/90591A141 HEX NUT.prt", 10.0),
+        ("mtc-assembly/nx/91274A118 SHCS.prt", 14.0),
+        ("mtc-assembly/nx/91274A141 SHCS.prt", 4.0),
+        ("mtc-assembly/nx/91304A112 FHSCS.prt", 4.0),
+    ] {
+        let part = preview::convert(preview::PreviewFormat::NxPart, &fixture(rel)).unwrap();
+        parts += count * teamcraft::massprops::compute(&part).unwrap().volume;
+    }
+    let ratio = g.volume / parts;
+    assert!((ratio - 1.0).abs() < 0.01, "{} vs {parts} mm³", g.volume);
+}
+
 /// A damaged JT file is an error, never a panic: bytes all over the file
 /// (scene graph, shape segments, TOC) are flipped in turn, and the file is
 /// cut short.
