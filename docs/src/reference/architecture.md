@@ -35,8 +35,9 @@
   Part 21 reader in `mesh/p21.rs` filters what the kernel gets, AP242
   tessellated geometry is read by `mesh/tessellated.rs`), reads the JT 9
   tessellation inside NX parts (`mesh/jt.rs`) and the display tessellation
-  inside SOLIDWORKS parts (`mesh/sw.rs`) and refines both along their
-  stored normals (`mesh/pn.rs`); NX and SOLIDWORKS assemblies are put
+  inside SOLIDWORKS parts (`mesh/sw.rs`) and Inventor parts
+  (`mesh/inventor.rs`) and refines them along their stored normals
+  (`mesh/pn.rs`); NX, SOLIDWORKS and Inventor assemblies are put
   together from their parts' previews (`services/assemblies.rs`);
   `preview.rs` caches the
   result and runs each conversion in a `teamcraft preview-mesh` child
@@ -69,6 +70,7 @@
 | `src/pagecontext.rs`                 | the page context the assistant sidebar sends (kind, identifiers, view, rule, query, rows shown): parsing and caps; the services resolve it with the user's rights |
 | `src/cadformat.rs`, `src/cadrefs.rs` | format registry, references inside CAD files                                                                                                                      |
 | `src/nxpart.rs`, `src/swpart.rs`     | NX part stream container, SOLIDWORKS 2015+ section container (references, preview images, assembly placements)                                                    |
+| `src/invpart.rs`, `src/invplace.rs` | Inventor segments below `RSeStorage`; assembly components and placements for the 3D preview (`UFRxDoc`, `AmRxSegment`) |
 | `src/massprops.rs`                   | mass properties of closed meshes (volume, CG, inertia; Eberly), edge check, parallel axis roll-up                                                                 |
 | `src/mesh.rs`, `src/preview.rs`      | 3D readers and the preview cache; `src/simmesh.rs` + `src/simmesh/`: VTK/VTU/VTP/FRD results with fields                                                          |
 | `src/shape.rs`                       | shape signatures (extents, area, volume, D2 distribution) for the similar part search                                                                             |
@@ -121,6 +123,27 @@ PostgreSQL.
 * **Scale check**: `tests/scale.rs` (ignored) seeds ~100k items and ~1M BOM
   lines and times these paths with their query plans – see
   [Operations → Scale check](../admin/operations.md#scale-check).
+* **API requests**: the bearer token of a request is resolved in one query
+  (`services::users::actor_for_api_token`) – the user with the memberships,
+  the groups that switched personal access tokens off and whether the use of
+  the token has to be recorded come from the same statement. The write
+  (`last_used_at`, the sliding expiry) follows at most once a minute per
+  token.
+* **Assembly previews** (`services::assemblies`): the distinct parts are
+  converted as many at a time as the preview queue runs
+  (`preview::MAX_PARALLEL`), each instance is placed straight into the
+  assembly mesh (`Mesh::append_placed`, no copy of the part per instance) and
+  a part's mesh is given up after its last placement.
+* **Thumbnails and compositions** (`Previews::render`): an image in the cache
+  is answered at once; a missing thumbnail is drawn and an assembly preview
+  composed at most `preview::MAX_RENDERS` at a time and once per cache entry –
+  requests that arrive together (the viewer and a folder of thumbnails) wait
+  for the one that works and read its result.
+* **Notification delivery** (`delivery.rs`): a run serves
+  `delivery::PARALLEL_RECIPIENTS` recipients at the same time, each
+  recipient's notifications in the order they were queued, e-mail and chat of
+  a notification side by side. A slow mail server (20 s timeout) holds up the
+  recipient it serves, not the run.
 * **Pages** run their independent queries concurrently (`tokio::try_join!`)
   and load per-row data with `= ANY($1)` instead of one query per row (vault explorer, BOM health, Pack and Go file
   lists).

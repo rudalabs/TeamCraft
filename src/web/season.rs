@@ -165,6 +165,9 @@ mod tests {
         assert!(plan.demote.is_empty());
         assert!(plan_from(vec![("remove".into(), "x".into())]).is_err());
         assert!(plan_from(vec![("until".into(), "31.07.2027".into())]).is_err());
-        assert_eq!(plan_from(vec![("until".into(), " ".into())]).unwrap().until, None);
+        assert_eq!(
+            plan_from(vec![("until".into(), " ".into())]).unwrap().until,
+            None
+        );
     }
 }

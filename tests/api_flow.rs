@@ -2735,6 +2735,137 @@ async fn delivery_retries_and_gives_up() {
     app.teardown().await;
 }
 
+/// A mail server and a chat that take their time and note what they were
+/// given, and how many e-mails were on their way at the same time.
+#[derive(Default)]
+struct SlowChannels {
+    sending: std::sync::atomic::AtomicUsize,
+    peak: std::sync::atomic::AtomicUsize,
+    /// The `[TeamCraft] …` subjects in the order the e-mails went out.
+    mails: std::sync::Mutex<Vec<String>>,
+    /// The texts of the chat messages in the order they went out.
+    posts: std::sync::Mutex<Vec<String>>,
+}
+
+impl teamcraft::delivery::MailSender for SlowChannels {
+    fn send(
+        &self,
+        message: lettre::Message,
+    ) -> teamcraft::delivery::BoxFuture<'_, anyhow::Result<()>> {
+        use std::sync::atomic::Ordering;
+        let text = String::from_utf8_lossy(&message.formatted()).to_string();
+        let subject = text
+            .lines()
+            .find_map(|l| l.strip_prefix("Subject: [TeamCraft] "))
+            .unwrap_or_default()
+            .to_string();
+        Box::pin(async move {
+            let now = self.sending.fetch_add(1, Ordering::SeqCst) + 1;
+            self.peak.fetch_max(now, Ordering::SeqCst);
+            tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+            self.mails.lock().unwrap().push(subject);
+            self.sending.fetch_sub(1, Ordering::SeqCst);
+            Ok(())
+        })
+    }
+}
+
+impl teamcraft::delivery::ChatSender for SlowChannels {
+    fn post(
+        &self,
+        payload: serde_json::Value,
+    ) -> teamcraft::delivery::BoxFuture<'_, anyhow::Result<()>> {
+        Box::pin(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            let text = payload["text"].as_str().unwrap_or_default().to_string();
+            self.posts.lock().unwrap().push(text);
+            Ok(())
+        })
+    }
+}
+
+/// A run serves several recipients at the same time – a slow mail server
+/// holds up one of them, not the run – but never more than
+/// `PARALLEL_RECIPIENTS`, and every recipient gets their notifications in
+/// the order they were queued.
+#[tokio::test]
+async fn delivery_serves_recipients_side_by_side_and_each_in_order() {
+    use std::sync::atomic::Ordering;
+    let app = app_or_skip!();
+    const USERS: usize = 7;
+    const EACH: usize = 3;
+    let mut users = Vec::new();
+    for u in 1..=USERS {
+        let (actor, _) = app.user(&format!("user{u}"), Role::Editor).await;
+        users.push((u, actor.id));
+    }
+    sqlx::query("UPDATE users SET email = username || '@example.test'")
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    // queued interleaved: note 1 for everybody, then note 2, then note 3
+    for n in 1..=EACH {
+        for (u, id) in &users {
+            sqlx::query(
+                "INSERT INTO notifications (id, user_id, kind, title, email_state, chat_state, created_at)
+                 VALUES (gen_random_uuid(), $1, 'test', $2, 'pending', 'pending',
+                         now() + make_interval(secs => $3))",
+            )
+            .bind(id)
+            .bind(format!("user{u} note {n}"))
+            .bind((n * 100 + u) as f64)
+            .execute(&app.pool)
+            .await
+            .unwrap();
+        }
+    }
+    let channels = std::sync::Arc::new(SlowChannels::default());
+    let delivery = teamcraft::delivery::Delivery::with_senders(
+        "https://plm.example.test",
+        "TeamCraft",
+        Some((channels.clone(), "TeamCraft <teamcraft@example.test>")),
+        Some((channels.clone(), true)),
+    )
+    .unwrap();
+    let report = delivery.run_once(&app.pool).await.unwrap();
+    assert_eq!(
+        (report.emails, report.chats, report.failures),
+        ((USERS * EACH) as u64, (USERS * EACH) as u64, 0),
+        "{report:?}"
+    );
+    let peak = channels.peak.load(Ordering::SeqCst);
+    assert!(
+        (2..=teamcraft::delivery::PARALLEL_RECIPIENTS).contains(&peak),
+        "{peak} e-mails at the same time"
+    );
+    let mails = channels.mails.lock().unwrap().clone();
+    let posts = channels.posts.lock().unwrap().clone();
+    assert_eq!((mails.len(), posts.len()), (USERS * EACH, USERS * EACH));
+    for u in 1..=USERS {
+        let expected: Vec<String> = (1..=EACH).map(|n| format!("user{u} note {n}")).collect();
+        let of_user = |sent: &[String]| -> Vec<String> {
+            sent.iter()
+                .filter_map(|s| expected.iter().find(|e| s.contains(e.as_str())).cloned())
+                .collect()
+        };
+        assert_eq!(of_user(&mails), expected, "e-mails of user{u}: {mails:?}");
+        assert_eq!(of_user(&posts), expected, "chat of user{u}: {posts:?}");
+    }
+    let open: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM notifications WHERE email_state <> 'sent' OR chat_state <> 'sent'",
+    )
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(open, 0, "every outcome is recorded");
+    assert_eq!(
+        delivery.run_once(&app.pool).await.unwrap(),
+        Default::default(),
+        "sent once"
+    );
+    app.teardown().await;
+}
+
 #[tokio::test]
 async fn bom_excel_export_reads_back() {
     let app = app_or_skip!();
@@ -3737,14 +3868,35 @@ async fn nx_assemblies_are_put_together_from_their_parts() {
             asm_id = files.json()[0]["id"].as_str().unwrap().to_string();
         }
     }
-    let r = app
-        .api(
-            Method::GET,
-            &format!("/api/v1/files/{asm_id}/mesh"),
-            &eng,
-            None,
-        )
-        .await;
+    // Nothing is converted yet, and the viewer and the thumbnails of a folder
+    // ask at the same time: the parts are converted once each, the assembly
+    // is composed once and its image drawn once – everybody gets the same.
+    let mesh_uri = format!("/api/v1/files/{asm_id}/mesh");
+    let thumb_uri = format!("/api/v1/files/{asm_id}/thumbnail");
+    let (r, m2, m3, t1, t2) = tokio::join!(
+        app.api(Method::GET, &mesh_uri, &eng, None),
+        app.api(Method::GET, &mesh_uri, &eng, None),
+        app.api(Method::GET, &mesh_uri, &eng, None),
+        app.api(Method::GET, &thumb_uri, &eng, None),
+        app.api(Method::GET, &thumb_uri, &eng, None)
+    );
+    for other in [&m2, &m3, &t1, &t2] {
+        assert_eq!(other.status, StatusCode::OK, "{}", other.text());
+    }
+    assert!(m2.body == r.body && m3.body == r.body, "one composition");
+    assert_eq!(t1.header("content-type").as_deref(), Some("image/png"));
+    assert!(t1.body == t2.body, "one image");
+    let composed = std::fs::read_dir(app.vault_dir.join("previews"))
+        .unwrap()
+        .flat_map(|dir| std::fs::read_dir(dir.unwrap().path()).unwrap())
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+        .filter(|name| name.contains(".asm-"))
+        .collect::<Vec<_>>();
+    assert_eq!(composed.len(), 2, "the mesh and its image: {composed:?}");
+    assert!(
+        composed.iter().all(|name| !name.contains(".tmp")),
+        "{composed:?}"
+    );
     assert_eq!(r.status, StatusCode::OK, "{}", r.text());
     let mesh = teamcraft::mesh::Mesh::decode(&r.body).unwrap();
     assert_eq!(mesh.parts, 36, "every instance placed");
@@ -3893,6 +4045,259 @@ async fn solidworks_assemblies_are_put_together_from_their_parts() {
     let rendered = (side, side);
     assert_eq!(thumb(asm_id).await, rendered);
     assert_eq!(thumb(part_id).await, rendered);
+    app.teardown().await;
+}
+
+/// An Inventor assembly as Inventor stores it, reduced to what the preview
+/// reads: the placement segment and `UFRxDoc` (see `src/invplace.rs`).
+/// `occurrences`: (index into `files`, "shown" / "hidden" / "suppressed",
+/// translation in cm); occurrence k has the id k + 1 and the key k + 101.
+/// `overrides`: (path of occurrence ids, key of the re-posed child,
+/// translation in cm) for flexible sub-assemblies.
+fn inventor_assembly(
+    files: &[&str],
+    occurrences: &[(usize, &str, [f64; 3])],
+    overrides: &[(&[u32], u32, [f64; 3])],
+) -> Vec<u8> {
+    use std::io::Write;
+    let zlib = |data: &[u8]| {
+        let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+        z.write_all(data).unwrap();
+        z.finish().unwrap()
+    };
+    let text16 = |s: &str| {
+        let units: Vec<u16> = s.encode_utf16().collect();
+        let mut out = (units.len() as u32).to_le_bytes().to_vec();
+        out.extend(units.iter().flat_map(|u| u.to_le_bytes()));
+        out
+    };
+    let shift = |t: &[f64; 3]| {
+        let ones: u32 = 1 | 1 << 5 | 1 << 10 | 1 << 15;
+        let zeros: u32 = [1, 2, 4, 6, 8, 9, 12, 13, 14]
+            .iter()
+            .map(|b| 1u32 << b)
+            .sum();
+        let mut p = (ones | zeros << 16).to_le_bytes().to_vec();
+        for v in t {
+            p.extend(v.to_le_bytes());
+        }
+        p
+    };
+    let u32s = |v: &[u32]| {
+        let mut p = 0x3000_0002u32.to_le_bytes().to_vec();
+        p.extend((v.len() as u32).to_le_bytes());
+        if !v.is_empty() {
+            p.extend((v.len() as u32).to_le_bytes());
+            p.extend(0u32.to_le_bytes());
+            p.extend(v.iter().flat_map(|w| w.to_le_bytes()));
+        }
+        p
+    };
+    // AmRxSegment: one placement (class 0) per occurrence, then per override
+    // a pose (class 1) and a set with its path (class 2)
+    let mut sections: Vec<(u8, Vec<u8>)> = Vec::new();
+    for (k, (_, _, t)) in occurrences.iter().enumerate() {
+        let mut p = vec![0u8; 10];
+        if k == 0 {
+            p.extend(0x203u32.to_le_bytes());
+        }
+        p.extend(shift(t));
+        let mut tail = vec![0u8; 124];
+        tail[112..116].copy_from_slice(&(k as u32 + 1).to_le_bytes());
+        tail[120..124].copy_from_slice(&(k as u32 + 101).to_le_bytes());
+        p.extend(tail);
+        sections.push((0, p));
+    }
+    for (k, (path, key, t)) in overrides.iter().enumerate() {
+        let mut p = vec![0u8; 6];
+        p.extend(key.to_le_bytes());
+        p.extend(2u32.to_le_bytes());
+        if k == 0 {
+            p.extend(0x203u32.to_le_bytes());
+        }
+        p.extend(shift(t));
+        p.extend([0u8; 120]);
+        let pose = sections.len() as u32;
+        sections.push((1, p));
+        let mut set = vec![0u8; 6];
+        set.extend(u32s(path));
+        set.extend(u32s(&[(pose + 1) | 0x8000_0000]));
+        sections.push((2, set));
+    }
+    let mut meta = b"\x19\x00\x00\x00RSe Meta Stream Version 8\x08\x00".to_vec();
+    meta.extend([0; 16]);
+    meta.extend(text16("AmRxSegment"));
+    meta.extend([0; 28]);
+    for _ in 0..2 {
+        meta.extend(19u32.to_le_bytes());
+        meta.extend(b"01/01/2026 00:00:00");
+    }
+    meta.push(1);
+    let mut body = vec![0u8; 14];
+    body.extend((sections.len() as u32).to_le_bytes());
+    for (_, s) in &sections {
+        body.extend((0x8000_0000 | s.len() as u32).to_le_bytes());
+    }
+    // list size; no revision entries, no third list (each with its size)
+    body.extend([0, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0, 0, 0, 0, 0, 4, 0, 0, 0]);
+    // the class table: placement, override, override set
+    body.extend(3u32.to_le_bytes());
+    for class in [0x2327_92BCu32, 0x2238_DCC5, 0xF17A_4562] {
+        body.extend(class.to_le_bytes());
+        body.extend([0; 24]);
+    }
+    meta.extend(zlib(&body));
+    let mut data = Vec::new();
+    for (class, s) in &sections {
+        data.extend([*class, 1, 0, 0]);
+        data.extend(s);
+        data.extend((s.len() as u32).to_le_bytes());
+        data.push(0);
+    }
+    let mut stream = vec![0u8; 18];
+    stream.extend(zlib(&data));
+    // UFRxDoc: header, file table, occurrence records
+    let mut doc = vec![0x55; 0x50];
+    doc.extend((files.len() as u32).to_le_bytes());
+    doc.extend(text16(""));
+    doc.extend(0u32.to_le_bytes());
+    for (k, f) in files.iter().enumerate() {
+        doc.extend(text16(&format!(r"C:\Users\someone\Design\{f}")));
+        doc.extend(113u32.to_le_bytes());
+        doc.extend(text16("Workspace"));
+        doc.extend([0, 0]);
+        doc.extend(text16(""));
+        doc.extend([0; 8]);
+        doc.extend([0x11; 32]);
+        for v in [k as u32 + 1, 1, 0x23, 1] {
+            doc.extend(v.to_le_bytes());
+        }
+    }
+    doc.extend([0; 6]);
+    doc.extend((occurrences.len() as u32).to_le_bytes());
+    for (k, (file, state, _)) in occurrences.iter().enumerate() {
+        doc.extend([0; 4]);
+        for v in [*file as u32 + 1, k as u32 + 1, k as u32 + 1, 1] {
+            doc.extend(v.to_le_bytes());
+        }
+        doc.extend(text16(&format!("{}:{}", files[*file], k + 1)));
+        let hidden = *state == "hidden";
+        doc.extend([0, 0, 0, 0, 0, 0, 0x80, if hidden { 0x60 } else { 0x20 }]);
+        // property block: name record, identifier, suppression record
+        doc.extend([0xEE; 40]);
+        doc.extend([1, 5, 1, 0, 0, 0, 5]);
+        doc.extend(text16(files[*file]));
+        doc.extend([0; 4]);
+        doc.extend([1, 2, 1, 0, 0, 0, 2]);
+        doc.extend([0x33; 20]);
+        doc.extend([1, 7, 1, 0, 0, 0, 7]);
+        doc.push(u8::from(*state == "suppressed"));
+        doc.extend([0xEE; 12]);
+    }
+    doc.extend([0; 29]);
+    let mut ole = cfb::CompoundFile::create(std::io::Cursor::new(Vec::new())).unwrap();
+    ole.create_storage("/RSeStorage").unwrap();
+    for (name, bytes) in [
+        ("/RSeStorage/Mrx", &meta),
+        ("/RSeStorage/Brx", &stream),
+        ("/UFRxDoc", &doc),
+    ] {
+        ole.create_stream(name).unwrap().write_all(bytes).unwrap();
+    }
+    ole.flush().unwrap();
+    ole.into_inner().into_inner()
+}
+
+/// Inventor parts get a thumbnail rendered from their 3D preview; an
+/// assembly is put together from its parts and sub-assemblies, without
+/// the components it hides or suppresses, and re-poses a child of a
+/// flexible sub-assembly.
+#[tokio::test]
+async fn inventor_assemblies_are_put_together_from_their_parts() {
+    let Some(app) = common::setup_with(&[("TEAMCRAFT_MAX_UPLOAD_MB", "8")]).await else {
+        return;
+    };
+    let (_, eng) = app.user_in("eng", Role::Editor, &["GEARBOX"]).await;
+    app.api(
+        Method::POST,
+        "/api/v1/items",
+        &eng,
+        Some(json!({ "item_type": "assembly", "name": "Station", "project": "GEARBOX" })),
+    )
+    .await;
+    let nist = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cad/nist");
+    let ctc =
+        std::fs::read(nist.join("ctc-01/inventor-2021/INV_nist_ctc_01_asme1_2021.ipt")).unwrap();
+    let ftc =
+        std::fs::read(nist.join("ftc-11/inventor-2021/INV_nist_ftc_11_asme1_2021.ipt")).unwrap();
+    // Station: ctc-01 at the origin, the sub-assembly 1 m along x, a
+    // hidden ftc-11 1 m along -x, a suppressed ctc-01 5 m down; it re-poses
+    // Holder's ftc-11 (key 101) 0.5 m along y. Holder: ftc-11 at its origin
+    let station = inventor_assembly(
+        &["ctc.ipt", "Holder.iam", "ftc.ipt"],
+        &[
+            (0, "shown", [0.0; 3]),
+            (1, "shown", [100.0, 0.0, 0.0]),
+            (2, "hidden", [-100.0, 0.0, 0.0]),
+            (0, "suppressed", [0.0, 0.0, -500.0]),
+        ],
+        &[(&[2], 101, [0.0, 50.0, 0.0])],
+    );
+    let holder = inventor_assembly(&["FTC.IPT"], &[(0, "shown", [0.0; 3])], &[]);
+    let mut ids = Vec::new();
+    for (name, data) in [
+        ("Station.iam", &station),
+        ("Holder.iam", &holder),
+        ("ctc.ipt", &ctc),
+        ("ftc.ipt", &ftc),
+    ] {
+        let files = app
+            .api_multipart(
+                "/api/v1/items/ASM-000001/revisions/A/files",
+                &eng,
+                &[(name, data.as_slice())],
+                &[],
+            )
+            .await;
+        assert_eq!(
+            files.status,
+            StatusCode::CREATED,
+            "{name}: {}",
+            files.text()
+        );
+        ids.push(files.json()[0]["id"].as_str().unwrap().to_string());
+    }
+    let r = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/files/{}/mesh", ids[0]),
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let mesh = teamcraft::mesh::Mesh::decode(&r.body).unwrap();
+    assert_eq!(mesh.parts, 2, "ctc-01 and the sub-assembly's ftc-11");
+    let b = mesh.bounds();
+    // ctc-01 spans x 0..800 mm, ftc-11 ends 1 000 + 31.5 mm out
+    assert!(b[0].abs() < 0.1 && (b[3] - 1031.5).abs() < 0.1, "{b:?}");
+    // the re-posed ftc-11 reaches y 500 + 31.5 mm; nothing is 5 m down
+    assert!((b[4] - 531.5).abs() < 0.1, "{b:?}");
+    assert!((b[2] + 100.0).abs() < 0.1, "{b:?}");
+    for id in [&ids[0], &ids[2]] {
+        let r = app
+            .api(
+                Method::GET,
+                &format!("/api/v1/files/{id}/thumbnail"),
+                &eng,
+                None,
+            )
+            .await;
+        assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+        assert_eq!(r.header("content-type").as_deref(), Some("image/png"));
+        let side = teamcraft::thumbnail::RENDERED_SIZE;
+        assert_eq!(png_size(&r.body), (side, side));
+    }
     app.teardown().await;
 }
 

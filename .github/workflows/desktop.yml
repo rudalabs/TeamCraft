@@ -11,6 +11,7 @@ on:
       - "desktop/**"
       - "scripts/check-desktop-modules.mjs"
       - "scripts/desktop-tab-order.test.mjs"
+      - "scripts/desktop-files-view.test.mjs"
       - "static/**"
       - "shared/**"
       - "media/logos/**"
@@ -23,6 +24,7 @@ on:
       - "desktop/**"
       - "scripts/check-desktop-modules.mjs"
       - "scripts/desktop-tab-order.test.mjs"
+      - "scripts/desktop-files-view.test.mjs"
       - "static/**"
       - "shared/**"
       - "media/logos/**"
@@ -71,6 +73,9 @@ jobs:
       # the pure rules of the tab order (moving, switching, closing)
       - name: Test the tab order rules
         run: node scripts/desktop-tab-order.test.mjs
+      # the pure rules of the Files view of Home (orders, labels, pages)
+      - name: Test the rules of the Files view
+        run: node scripts/desktop-files-view.test.mjs
 
   test:
     name: desktop (${{ matrix.os }})

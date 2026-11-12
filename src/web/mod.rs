@@ -425,10 +425,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
             "/projects/{id}/members/{user_id}/release-checkouts",
             post(admin::release_member_checkouts),
         )
-        .route(
-            "/projects/{id}/season",
-            get(season::page).post(season::run),
-        )
+        .route("/projects/{id}/season", get(season::page).post(season::run))
         .route("/admin/users", get(admin::users).post(admin::create_user))
         .route(
             "/admin/users/{id}",
