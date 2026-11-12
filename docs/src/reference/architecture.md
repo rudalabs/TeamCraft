@@ -34,9 +34,10 @@
   clouds and tessellates STEP with the truck kernel (`mesh/step.rs`; an own
   Part 21 reader in `mesh/p21.rs` filters what the kernel gets, AP242
   tessellated geometry is read by `mesh/tessellated.rs`), reads the JT 9
-  tessellation inside NX parts (`mesh/jt.rs`) and the display tessellation
+  tessellation inside NX parts (`mesh/jt.rs`), the display tessellation
   inside SOLIDWORKS parts (`mesh/sw.rs`) and Inventor parts
-  (`mesh/inventor.rs`) and refines them along their stored normals
+  (`mesh/inventor.rs`) and the CGR visualisation data inside CATIA V5 parts
+  (`mesh/catia.rs`) and refines them along their stored normals
   (`mesh/pn.rs`); NX, SOLIDWORKS and Inventor assemblies are put
   together from their parts' previews (`services/assemblies.rs`);
   `preview.rs` caches the

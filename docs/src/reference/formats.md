@@ -87,6 +87,21 @@ virtual components are left out, and components are found by the file
 name of their stored path. Files saved before 2015 (OLE compound files) and
 drawings have no 3D preview.
 
+CATIA V5 parts (`.CATPart`, container `V5_CFV2`) are previewed from the
+visualisation data CATIA saves with them (`src/mesh/catia.rs`). That data is
+the container `CATCGRCont`, a `V5_CFV2` document nested in the file; its
+scene graph holds one uncompressed mesh per body. The reader takes:
+
+* the vertices in millimetres, stored with prefix sharing;
+* the exact surface normals of the curved faces;
+* the triangle lists, strips and fans of each B-rep face.
+
+The mesh is refined along the stored normals like an NX part. A part saved
+without visualisation data has no 3D preview. Products (`.CATProduct`) and
+drawings have none yet: a product references its parts by container id, not
+by file name. Details are in
+[Research: 3D preview of CATIA V5 parts](../research/catia-cgr-preview.md).
+
 Rhino models (`.3dm`, versions 1 to 8) are read as openNURBS archives (`src/mesh/rhino.rs`): nested chunks, the object,
 layer, block-definition
 and settings tables. The 3D preview shows what Rhino stored for display –
