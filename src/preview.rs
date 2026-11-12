@@ -33,8 +33,9 @@ use crate::{
 
 /// Bump to invalidate every cached preview (reader fixes, new format).
 /// Bump `shape::VERSION` with it: the shape signatures stored in the
-/// database are computed from these meshes.
-pub const CACHE_VERSION: u32 = 2;
+/// database are computed from these meshes. 3: Inventor files with
+/// Zstandard segments (#271), cached as failed before.
+pub const CACHE_VERSION: u32 = 3;
 
 /// Conversions that run at the same time.
 pub const MAX_PARALLEL: usize = 2;
@@ -168,7 +169,8 @@ pub enum PreviewFormat {
     Step,
     /// Siemens NX parts: the lightweight (JT) representation they store.
     NxPart,
-    /// Standalone JT visualisation files (JT 9).
+    /// Standalone JT visualisation files: JT 10 with its scene graph (parts
+    /// and assemblies), JT 9 as NX writes it.
     Jt,
     /// SOLIDWORKS parts: the display tessellation they store.
     SwPart,

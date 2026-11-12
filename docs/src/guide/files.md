@@ -85,6 +85,7 @@ has the same notes under `/api/v1/file-versions/{id}/annotations`.
 | Native CAD          | CATIA V5 parts (`.CATPart`) – the visualisation data stored in the file                                                       |
 | Native CAD          | Rhino models (`.3dm`) – the meshes stored in the file, SubD objects refined from their control net                            |
 | Native CAD          | SketchUp models (`.skp`, SketchUp 3 to today) – their faces, components and groups in place                                   |
+| Visualisation       | JT (`.jt`): JT 10 parts and whole assemblies, placed; JT 9 as NX writes it                                                    |
 | Meshes              | STL, OBJ, PLY, OFF, 3MF (incl. components), AMF, glTF / GLB, 3DS                                                              |
 | Point clouds        | PTS, XYZ, LAS (uncompressed), PLY and OBJ without faces                                                                       |
 | Simulation results  | VTK (`.vtk`), VTU, VTP, CalculiX FRD – coloured by result fields                                                              |
@@ -155,6 +156,10 @@ with only edges and no faces keeps its stored picture (see
 
 For the rest TeamCraft shows what other PLM systems show:
 
+* **JT files** (`.jt`, version 10) carry parts and assembly in one file:
+  the 3D preview shows every instance in its place, and the file's picture
+  is rendered from it (see
+  [Research: 3D preview of stand-alone JT files](../research/jt10-preview.md)).
 * **A picture of the 3D preview** for NX, SOLIDWORKS and Inventor parts and
   assemblies, CATIA parts and Rhino and SketchUp models. It replaces the
   image stored in the file and is a 512 × 512 PNG with a transparent

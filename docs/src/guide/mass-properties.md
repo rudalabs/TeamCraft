@@ -86,6 +86,10 @@ position).
   a one-click *Use `NIST mtc crada assembly.jt`* (the revision must be
   checked out); the choice is stored like a manual one. It is a suggestion
   only – nothing is used without the click.
+* A **JT 10 file of the assembly** is often the best choice: it is the one
+  file with every part placed in the assembly frame (the NX assembly `.prt`
+  has no geometry of its own). For the NIST box assembly its volume matches
+  the sum of the 36 placed part files to within 1 %.
 * The file selector lists the candidates **grouped by model**, the likely
   assembly first, and marks the file in use as *automatic* or *chosen*; *Automatic* restores the automatic pick.
 * The better fix is usually to model the assembly as an assembly: one item

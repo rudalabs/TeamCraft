@@ -55,10 +55,19 @@ the assembly's layer settings hide (read from `/Root/UG_PART/UG_PART`), as
 in NX. Drawings have no 3D preview.
 
 Stand-alone `.jt` files (Teamcenter visualisation, exports of NX, CATIA,
-Creo) are previewed with the same reader when they are JT 9 with
-topologically compressed triangle LODs, as NX writes them; files of other JT
-versions (JT 10 with its other compression) report their version instead of a
-preview.
+Creo):
+
+- **JT 10** (`src/mesh/jt10.rs`) carries parts and assembly in one file. The
+  scene graph (an LZMA-compressed segment) gives every shape occurrence with
+  its transform, the units of the model and the nodes NX marks hidden
+  (section and trace-line geometry). Each shape's finest level of detail is
+  decoded with the JT 9 topology coder plus the newer integer codecs, its
+  hash checked, refined along the stored normals within the same budget as
+  NX parts and placed per instance.
+- **JT 9** with topologically compressed triangle LODs, as NX writes them,
+  goes through the reader of NX parts (no placements).
+- Other versions report their version. Not read: files that keep their parts
+  in other `.jt` files ("shattered"), colours, PMI and the B-rep segments.
 
 SOLIDWORKS files from 2015 on are read through their section container (`src/swpart.rs`). The 3D preview of a part is
 the display tessellation
@@ -110,7 +119,8 @@ linked blocks and colours are not shown; such a model keeps the preview
 bitmap Rhino stored as its thumbnail.
 
 Inventor parts and assemblies are OLE compound files whose data lives in
-zlib-compressed segments below `RSeStorage` (`src/invpart.rs`). The 3D
+zlib- or Zstandard-compressed segments below `RSeStorage` (`src/invpart.rs`;
+Zstandard in newer files, told apart by the magic bytes). The 3D
 preview of a part is the display tessellation in `PmGraphicsSegment`
 (`src/mesh/inventor.rs`):
 - each B-rep face is an indexed triangle list (centimetres) with a unit
@@ -193,7 +203,7 @@ Edge's OLE container); `.sc` must be a SolidCraft ZIP or JSON design.
 | IGES                     | `.iges` `.igs`                                |
 | Parasolid                | `.x_t` `.xmt_txt` `.x_b` `.xmt_bin`           |
 | ACIS                     | `.sat` `.sab`                                 |
-| JT (ISO 14306), PLM XML  | `.jt` (refs), `.plmxml`                       |
+| JT (ISO 14306), PLM XML  | `.jt` (3D, refs), `.plmxml`                   |
 | OpenCascade BREP, VDA-FS | `.brep` `.brp`, `.vda`                        |
 | 3D PDF (U3D / PRC)       | `.pdf` – recognised by its embedded 3D stream |
 

@@ -32,6 +32,7 @@ pub const MESH_FORMATS: &[&str] = &[
     "rhino",
     "pts",
     "las",
+    "jt",
     "vtk-legacy",
     "vtk-unstructured",
     "calculix-frd",
