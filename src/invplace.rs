@@ -509,7 +509,8 @@ fn suppressed(d: &[u8], from: usize, to: usize) -> bool {
     else {
         return false;
     };
-    block.get(record..record + 7) == Some(&SUPPRESSION_RECORD[..]) && block.get(record + 7) == Some(&1)
+    block.get(record..record + 7) == Some(&SUPPRESSION_RECORD[..])
+        && block.get(record + 7) == Some(&1)
 }
 
 fn occurrence_at(
@@ -577,7 +578,14 @@ mod tests {
         r
     }
 
-    fn occ_rec(file: u32, id: u32, number: u32, title: &str, visible: bool, suppressed: bool) -> Vec<u8> {
+    fn occ_rec(
+        file: u32,
+        id: u32,
+        number: u32,
+        title: &str,
+        visible: bool,
+        suppressed: bool,
+    ) -> Vec<u8> {
         let mut r = vec![0; 4];
         for v in [file, id, number, 1] {
             r.extend(v.to_le_bytes());
@@ -603,7 +611,11 @@ mod tests {
     }
 
     /// `UFRxDoc` whose occurrences `suppressed` are suppressed.
-    fn doc_with(files: &[(u32, &str)], occs: &[(u32, u32, &str, bool)], suppressed: &[u32]) -> Vec<u8> {
+    fn doc_with(
+        files: &[(u32, &str)],
+        occs: &[(u32, u32, &str, bool)],
+        suppressed: &[u32],
+    ) -> Vec<u8> {
         let mut d = vec![0x55; 0x50];
         d.extend((files.len() as u32).to_le_bytes());
         d.extend(text16(""));
@@ -614,7 +626,14 @@ mod tests {
         d.extend([0, 0, 0, 0, 0, 0]);
         d.extend((occs.len() as u32).to_le_bytes());
         for (k, (file, id, title, visible)) in occs.iter().enumerate() {
-            d.extend(occ_rec(*file, *id, k as u32 + 1, title, *visible, suppressed.contains(id)));
+            d.extend(occ_rec(
+                *file,
+                *id,
+                k as u32 + 1,
+                title,
+                *visible,
+                suppressed.contains(id),
+            ));
         }
         d.extend([0; 29]);
         d
@@ -653,7 +672,10 @@ mod tests {
     /// A translation only (cm) as a packed matrix.
     fn shift(t: [f64; 3]) -> Vec<u8> {
         let one: u32 = 1 | 1 << 5 | 1 << 10 | 1 << 15;
-        let zero: u32 = [1, 2, 4, 6, 8, 9, 12, 13, 14].iter().map(|b| 1u32 << b).sum();
+        let zero: u32 = [1, 2, 4, 6, 8, 9, 12, 13, 14]
+            .iter()
+            .map(|b| 1u32 << b)
+            .sum();
         let mut p = (one | zero << 16).to_le_bytes().to_vec();
         for v in t {
             p.extend(v.to_le_bytes());
@@ -710,7 +732,11 @@ mod tests {
             ],
             doc_with(
                 &[(1, r"C:ASub.iam"), (2, r"C:ABolt.ipt")],
-                &[(1, 1, "Sub:1", true), (2, 2, "Bolt:1", true), (2, 3, "Bolt:2", true)],
+                &[
+                    (1, 1, "Sub:1", true),
+                    (2, 2, "Bolt:1", true),
+                    (2, 3, "Bolt:2", true),
+                ],
                 &[3],
             ),
         );
@@ -725,15 +751,34 @@ mod tests {
         assert!(c[1].occurrence.as_ref().unwrap().overrides.is_empty());
 
         // a child of Sub with key 777 takes the pose Sub's parent gives it
-        let mut child = component("Pin.ipt", &[[1., 0., 0., 3.], [0., 1., 0., 0.], [0., 0., 1., 0.], [0., 0., 0., 1.]]);
-        child.occurrence = Some(Occurrence { id: 5, key: 777, overrides: Vec::new() });
+        let mut child = component(
+            "Pin.ipt",
+            &[
+                [1., 0., 0., 3.],
+                [0., 1., 0., 0.],
+                [0., 0., 1., 0.],
+                [0., 0., 0., 1.],
+            ],
+        );
+        child.occurrence = Some(Occurrence {
+            id: 5,
+            key: 777,
+            overrides: Vec::new(),
+        });
         let below = Override::passed_down(&[], sub);
         assert_eq!(Override::pose(&below, &child).translation, [0.0, 0.0, 90.0]);
         // other children keep their own placement
-        child.occurrence = Some(Occurrence { id: 6, key: 9, overrides: Vec::new() });
+        child.occurrence = Some(Occurrence {
+            id: 6,
+            key: 9,
+            overrides: Vec::new(),
+        });
         assert_eq!(Override::pose(&below, &child).translation, [30.0, 0.0, 0.0]);
         // an override two levels down passes through Sub when the path leads there
-        let deep = vec![Override { path: vec![1, 5], ..occurrence.overrides[0].clone() }];
+        let deep = vec![Override {
+            path: vec![1, 5],
+            ..occurrence.overrides[0].clone()
+        }];
         let through = Override::passed_down(&deep, sub);
         assert_eq!(through[0].path, vec![5]);
         assert!(Override::passed_down(&deep, &c[1]).is_empty());
