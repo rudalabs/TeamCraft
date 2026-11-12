@@ -62,14 +62,10 @@ pub(super) async fn create_token(
             "A write token cannot create a token that may approve (scope full).".into(),
         ));
     }
-    let (record, token) = users::create_token(
-        &st.db,
-        &me,
-        &body.name,
-        TokenLifetime::fixed(body.expires_in_days),
-        scope,
-    )
-    .await?;
+    let asked = TokenLifetime::fixed(body.expires_in_days);
+    let idle = st.config.oidc_token_idle_days;
+    let lifetime = users::token_lifetime_for(&st.db, me.id, asked, idle).await?;
+    let (record, token) = users::create_token(&st.db, &me, &body.name, lifetime, scope).await?;
     let mut answer = json!(record);
     answer["token"] = json!(token);
     Ok((StatusCode::CREATED, Json(answer)))

@@ -37,6 +37,7 @@ pub const MESH_FORMATS: &[&str] = &[
     "vtk-unstructured",
     "calculix-frd",
     "fusion-design",
+    "catia-part",
     "sketchup",
 ];
 

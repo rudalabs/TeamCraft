@@ -42,7 +42,48 @@ struct Discovery {
     token_endpoint: String,
     #[serde(default)]
     userinfo_endpoint: Option<String>,
+    /// The provider's signing keys, for back-channel logout tokens.
+    #[serde(default)]
+    jwks_uri: Option<String>,
 }
+
+/// One public key of the provider (RFC 7517), as far as RS256 and ES256 need.
+#[derive(Clone, Debug, Default, Deserialize)]
+pub(crate) struct Jwk {
+    #[serde(default)]
+    pub kty: String,
+    #[serde(default)]
+    pub kid: Option<String>,
+    #[serde(default)]
+    pub alg: Option<String>,
+    #[serde(default)]
+    pub n: Option<String>,
+    #[serde(default)]
+    pub e: Option<String>,
+    #[serde(default)]
+    pub crv: Option<String>,
+    #[serde(default)]
+    pub x: Option<String>,
+    #[serde(default)]
+    pub y: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct JwkSet {
+    keys: Vec<Jwk>,
+}
+
+/// The event a back-channel logout token carries (OpenID Connect
+/// Back-Channel Logout 1.0, section 2.4).
+pub const BACKCHANNEL_LOGOUT_EVENT: &str = "http://schemas.openid.net/event/backchannel-logout";
+
+/// How old (`iat`) a logout token may be.
+const LOGOUT_TOKEN_MAX_AGE_SECS: i64 = 300;
+
+/// How long fetched signing keys are used before they are fetched again; an
+/// unknown key id fetches them again after [`JWKS_REFRESH`].
+const JWKS_TTL: Duration = Duration::from_secs(3600);
+const JWKS_REFRESH: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Deserialize)]
 struct TokenResponse {
@@ -55,6 +96,7 @@ pub struct OidcClient {
     redirect_uri: String,
     http: reqwest::Client,
     discovery: RwLock<Option<(Instant, Discovery)>>,
+    jwks: RwLock<Option<(Instant, Vec<Jwk>)>>,
 }
 
 impl OidcClient {
@@ -68,7 +110,56 @@ impl OidcClient {
             config,
             http,
             discovery: RwLock::new(None),
+            jwks: RwLock::new(None),
         })
+    }
+
+    /// The provider's signing keys, cached for [`JWKS_TTL`]; `refresh`
+    /// fetches them again (key rotation) unless they are younger than
+    /// [`JWKS_REFRESH`].
+    async fn signing_keys(&self, refresh: bool) -> AppResult<Vec<Jwk>> {
+        if let Some((fetched, keys)) = self.jwks.read().await.as_ref() {
+            let max = if refresh { JWKS_REFRESH } else { JWKS_TTL };
+            if fetched.elapsed() < max {
+                return Ok(keys.clone());
+            }
+        }
+        let discovery = self.discovery().await?;
+        let Some(uri) = discovery.jwks_uri else {
+            return Err(AppError::Other(anyhow::anyhow!(
+                "the identity provider publishes no jwks_uri; back-channel logout needs it"
+            )));
+        };
+        let set: JwkSet = self
+            .http
+            .get(&uri)
+            .send()
+            .await
+            .and_then(|r| r.error_for_status())
+            .map_err(|e| idp_error("fetching the signing keys", e))?
+            .json()
+            .await
+            .map_err(|e| idp_error("parsing the signing keys", e))?;
+        *self.jwks.write().await = Some((Instant::now(), set.keys.clone()));
+        Ok(set.keys)
+    }
+
+    /// Checks a back-channel logout token (signature with the provider's
+    /// keys, issuer, audience, age, logout event) and returns its subject.
+    /// A token that does not pass is a bad request (400, as the
+    /// specification asks).
+    pub async fn verify_logout_token(&self, token: &str) -> AppResult<String> {
+        let discovery = self.discovery().await?;
+        let now = chrono::Utc::now().timestamp();
+        let check = |keys: &[Jwk]| {
+            verify_logout_token(token, keys, &discovery.issuer, &self.config.client_id, now)
+        };
+        let result = match check(&self.signing_keys(false).await?) {
+            // a key the cache does not know yet: the provider may have rotated
+            Err(LogoutTokenError::UnknownKey) => check(&self.signing_keys(true).await?),
+            other => other,
+        };
+        result.map_err(|e| AppError::BadRequest(format!("Invalid logout token: {e}.")))
     }
 
     pub fn display_name(&self) -> &str {
@@ -325,6 +416,151 @@ fn decode_jwt_claims(jwt: &str) -> AppResult<Value> {
         .map_err(|e| AppError::Other(anyhow::anyhow!("id_token is not base64url: {e}")))?;
     serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Other(anyhow::anyhow!("id_token payload is not JSON: {e}")))
+}
+
+/// Why a back-channel logout token was refused.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum LogoutTokenError {
+    Malformed,
+    /// No key of the provider has the token's key id.
+    UnknownKey,
+    BadSignature,
+    Claim(&'static str),
+}
+
+impl std::fmt::Display for LogoutTokenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LogoutTokenError::Malformed => f.write_str("malformed token"),
+            LogoutTokenError::UnknownKey => f.write_str("unknown signing key"),
+            LogoutTokenError::BadSignature => f.write_str("bad signature"),
+            LogoutTokenError::Claim(what) => f.write_str(what),
+        }
+    }
+}
+
+fn b64_json(part: &str) -> Result<Value, LogoutTokenError> {
+    let bytes = URL_SAFE_NO_PAD
+        .decode(part.trim_end_matches('='))
+        .map_err(|_| LogoutTokenError::Malformed)?;
+    serde_json::from_slice(&bytes).map_err(|_| LogoutTokenError::Malformed)
+}
+
+fn b64_bytes(part: Option<&str>) -> Option<Vec<u8>> {
+    URL_SAFE_NO_PAD.decode(part?.trim_end_matches('=')).ok()
+}
+
+/// Whether `signature` over `message` is valid with `key` for `alg` – only
+/// RS256 and ES256 (P-256); anything else (`none` included) is refused.
+fn signature_ok(key: &Jwk, alg: &str, message: &[u8], sig: &[u8]) -> bool {
+    use ring::signature as rs;
+    if key.alg.as_deref().is_some_and(|a| a != alg) {
+        return false;
+    }
+    match (alg, key.kty.as_str()) {
+        ("RS256", "RSA") => {
+            let n = b64_bytes(key.n.as_deref());
+            let e = b64_bytes(key.e.as_deref());
+            let (Some(n), Some(e)) = (n, e) else {
+                return false;
+            };
+            rs::RsaPublicKeyComponents { n, e }
+                .verify(&rs::RSA_PKCS1_2048_8192_SHA256, message, sig)
+                .is_ok()
+        }
+        ("ES256", "EC") if key.crv.as_deref() == Some("P-256") => {
+            let x = b64_bytes(key.x.as_deref());
+            let y = b64_bytes(key.y.as_deref());
+            let (Some(x), Some(y)) = (x, y) else {
+                return false;
+            };
+            if x.len() != 32 || y.len() != 32 {
+                return false;
+            }
+            // SEC 1 uncompressed point: 0x04 ‖ x ‖ y
+            let mut point = vec![4u8];
+            point.extend_from_slice(&x);
+            point.extend_from_slice(&y);
+            rs::UnparsedPublicKey::new(&rs::ECDSA_P256_SHA256_FIXED, point)
+                .verify(message, sig)
+                .is_ok()
+        }
+        _ => false,
+    }
+}
+
+/// Checks a back-channel logout token (OpenID Connect Back-Channel Logout
+/// 1.0, 2.6): a JWS signed with one of `keys` (RS256 or ES256), issued by
+/// `issuer` for `client_id`, at most [`LOGOUT_TOKEN_MAX_AGE_SECS`] old, with
+/// the logout event, a subject and no nonce. Returns the subject.
+pub(crate) fn verify_logout_token(
+    token: &str,
+    keys: &[Jwk],
+    issuer: &str,
+    client_id: &str,
+    now: i64,
+) -> Result<String, LogoutTokenError> {
+    let parts: Vec<&str> = token.trim().split('.').collect();
+    let [header, payload, signature] = parts.as_slice() else {
+        return Err(LogoutTokenError::Malformed);
+    };
+    let header = b64_json(header)?;
+    let alg = header.get("alg").and_then(Value::as_str).unwrap_or("");
+    let kid = header.get("kid").and_then(Value::as_str);
+    let sig = b64_bytes(Some(*signature)).ok_or(LogoutTokenError::Malformed)?;
+    let message = format!("{}.{}", parts[0], parts[1]);
+    let candidates: Vec<&Jwk> = keys
+        .iter()
+        .filter(|k| kid.is_none() || k.kid.as_deref() == kid)
+        .collect();
+    if candidates.is_empty() {
+        return Err(LogoutTokenError::UnknownKey);
+    }
+    let signed = candidates
+        .iter()
+        .any(|k| signature_ok(k, alg, message.as_bytes(), &sig));
+    if !signed {
+        return Err(LogoutTokenError::BadSignature);
+    }
+    let claims = b64_json(payload)?;
+    let iss = claims.get("iss").and_then(Value::as_str).unwrap_or("");
+    if normalize_issuer(iss) != normalize_issuer(issuer) {
+        return Err(LogoutTokenError::Claim("unexpected issuer"));
+    }
+    let aud_ok = match claims.get("aud") {
+        Some(Value::String(a)) => a == client_id,
+        Some(Value::Array(list)) => list.iter().any(|a| a.as_str() == Some(client_id)),
+        _ => false,
+    };
+    if !aud_ok {
+        return Err(LogoutTokenError::Claim("issued for another application"));
+    }
+    let iat = claims.get("iat").and_then(Value::as_i64);
+    match iat {
+        Some(at) if at <= now + CLOCK_SKEW_SECS && now - at <= LOGOUT_TOKEN_MAX_AGE_SECS => {}
+        _ => return Err(LogoutTokenError::Claim("too old or from the future")),
+    }
+    if let Some(exp) = claims.get("exp").and_then(Value::as_i64) {
+        if exp + CLOCK_SKEW_SECS < now {
+            return Err(LogoutTokenError::Claim("expired"));
+        }
+    }
+    let event = claims
+        .get("events")
+        .and_then(Value::as_object)
+        .is_some_and(|e| e.contains_key(BACKCHANNEL_LOGOUT_EVENT));
+    if !event {
+        return Err(LogoutTokenError::Claim("no logout event"));
+    }
+    if claims.get("nonce").is_some() {
+        return Err(LogoutTokenError::Claim("a logout token carries no nonce"));
+    }
+    match claims.get("sub").and_then(Value::as_str).map(str::trim) {
+        Some(sub) if !sub.is_empty() => Ok(sub.to_string()),
+        _ => Err(LogoutTokenError::Claim(
+            "no subject (only sid is not supported)",
+        )),
+    }
 }
 
 /// For a fresh sign-in (`max_age=0`): the provider must report when the user

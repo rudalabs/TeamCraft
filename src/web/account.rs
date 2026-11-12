@@ -42,6 +42,8 @@ async fn render_account(
             "tokens": tokens,
             "new_token": new_token,
             "api_base": format!("{}/api/v1", st.config.public_url),
+            // idle limit of single sign-on users' tokens (0 = none)
+            "sso_token_idle_days": st.config.oidc_token_idle_days,
             "skins": domain::SKINS,
             "cad_families": crate::cadformat::families()
                 .iter()
@@ -203,14 +205,10 @@ pub async fn create_token(
             s => domain::TokenScope::parse(s),
         }
         .ok_or_else(|| AppError::BadRequest("Choose what the token may do.".into()))?;
-        users::create_token(
-            &st.db,
-            &ctx.me,
-            &form.name,
-            users::TokenLifetime::fixed(days),
-            scope,
-        )
-        .await
+        let asked = users::TokenLifetime::fixed(days);
+        let idle = st.config.oidc_token_idle_days;
+        let lifetime = users::token_lifetime_for(&st.db, ctx.me.id, asked, idle).await?;
+        users::create_token(&st.db, &ctx.me, &form.name, lifetime, scope).await
     }
     .await;
     match result {

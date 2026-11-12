@@ -370,7 +370,9 @@ pub async fn cancel_checkout(
         } else {
             format!("Cancelled the check-out of {}", label(&rev))
         },
-        json!({ "item_id": rev.item_id, "reason": reason }),
+        // `holder`: whose check-out it was – the former holder's working
+        // folder reads it back as "released by …" (`checkouts::released_from`)
+        json!({ "item_id": rev.item_id, "reason": reason, "holder": owner }),
     )
     .await?;
     if forced {

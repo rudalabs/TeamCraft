@@ -221,6 +221,8 @@ fn main() {
             commands::workspace_migrate,
             commands::workspace_status,
             commands::workspace_checkin,
+            commands::workspace_park,
+            commands::workspace_local_changes,
             commands::pick_files,
             commands::workspace_add_plan,
             commands::workspace_add_files,

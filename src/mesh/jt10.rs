@@ -31,7 +31,13 @@
 //! bindings a length and a 16-byte id, before the first packet five bytes);
 //! they are recognised by that length.
 //!
-//! Algorithms after the published *JT File Format Reference* 10.0 and 10.5
+//! **JT 9** files have the same scene graph with other field widths
+//! ([`Layout::Jt9`]: i16 versions, f32 transforms, no *field final flags*),
+//! a TOC with 32-bit offsets and zlib segments; their shapes are read by
+//! `jt`. A JT 9 assembly goes through the scene graph, a single part through
+//! `jt::read_file` exactly as before.
+//!
+//! Algorithms after the published *JT File Format Reference* 9.5, 10.0 and 10.5
 //! (Siemens); the JT data format is © Siemens. Everything is read
 //! defensively: sizes are capped, every index is checked, a damaged file is
 //! an error, never a panic or an endless loop.
@@ -104,29 +110,65 @@ fn damaged() -> anyhow::Error {
     anyhow!("The JT file is damaged.")
 }
 
-/// The 3D preview of a stand-alone JT file. JT 10: every visible tri-strip
-/// shape at its place, in millimetres, one part per occurrence; JT 9 (as NX
-/// writes it) goes to the reader of the JT inside NX parts.
+/// The 3D preview of a stand-alone JT file: every visible tri-strip shape at
+/// its place, in millimetres, one part per occurrence. JT 10 shapes use the
+/// JT 10 codecs; JT 9 shapes the reader of the JT inside NX parts.
 pub(crate) fn read(data: &[u8]) -> Result<Mesh> {
     if data.starts_with(b"Version 9.") {
-        return super::jt::read_file(data);
+        return read_jt9(data);
     }
     let file = JtFile::open(data)?;
-    let graph = Graph::read(&file.segment(file.lsg)?.ok_or_else(damaged)?)?;
-    let (occurrences, scale) = graph.occurrences()?;
+    let graph = Graph::read(&file.segment(file.lsg)?.ok_or_else(damaged)?, Layout::Jt10)?;
+    let (occurrences, units) = graph.occurrences()?;
+    place(&occurrences, units.unwrap_or(1.0), |id| {
+        match file.segment(id)? {
+            Some(bytes) => read_shape(&bytes),
+            None => Ok(None),
+        }
+    })
+}
 
-    // decode every shape once; refine with the budget of all occurrences
+/// A stand-alone JT 9 file. An assembly (several shapes or a placed one) is
+/// put together through its scene graph like JT 10; a single part, and any
+/// file whose scene graph cannot be read, goes to the reader of the JT
+/// inside NX parts exactly as before. JT 9 lengths are metres unless the
+/// scene graph names the units.
+fn read_jt9(data: &[u8]) -> Result<Mesh> {
+    let assembly = || -> Result<Option<Mesh>> {
+        let file = JtFile::open(data)?;
+        let graph = Graph::read(&file.segment(file.lsg)?.ok_or_else(damaged)?, Layout::Jt9)?;
+        let (occurrences, units) = graph.occurrences()?;
+        let single = occurrences.len() <= 1 && occurrences.iter().all(|o| o.matrix == IDENTITY);
+        if single {
+            return Ok(None);
+        }
+        place(&occurrences, units.unwrap_or(1000.0), |id| {
+            match file.raw(id)? {
+                Some(segment) => super::jt::read_lod_segment(segment),
+                None => Ok(None),
+            }
+        })
+        .map(Some)
+    };
+    match assembly() {
+        Ok(Some(mesh)) => Ok(mesh),
+        _ => super::jt::read_file(data),
+    }
+}
+
+/// Decodes every shape once, refines it within the budget of all
+/// occurrences and places a copy per occurrence (`scale`: to millimetres).
+fn place(
+    occurrences: &[Occurrence],
+    scale: f64,
+    mut shape: impl FnMut([u8; 16]) -> Result<Option<Lod>>,
+) -> Result<Mesh> {
     let mut lods: HashMap<[u8; 16], Option<Lod>> = HashMap::new();
     let mut total = 0usize;
-    for o in &occurrences {
+    for o in occurrences {
         let lod = match lods.entry(o.segment) {
             std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
-            std::collections::hash_map::Entry::Vacant(e) => {
-                e.insert(match file.segment(o.segment)? {
-                    Some(bytes) => read_shape(&bytes)?,
-                    None => None,
-                })
-            }
+            std::collections::hash_map::Entry::Vacant(e) => e.insert(shape(o.segment)?),
         };
         if let Some(lod) = lod {
             total = total.saturating_add(lod.triangles.len());
@@ -152,7 +194,7 @@ pub(crate) fn read(data: &[u8]) -> Result<Mesh> {
     }
 
     let mut mesh = Mesh::default();
-    for o in &occurrences {
+    for o in occurrences {
         let Some((points, triangles)) = refined.get(&o.segment) else {
             continue;
         };
@@ -209,6 +251,26 @@ struct TocEntry {
     length: usize,
 }
 
+/// Field widths that differ between the scene graphs of JT 9 and JT 10.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Layout {
+    /// I16 version numbers, F32 transform elements, Base Attribute Data
+    /// without the field final flags.
+    Jt9,
+    /// U8 version numbers, F64 transform elements.
+    Jt10,
+}
+
+impl Layout {
+    /// Bytes of a version number.
+    fn version(self) -> usize {
+        match self {
+            Layout::Jt9 => 2,
+            Layout::Jt10 => 1,
+        }
+    }
+}
+
 struct JtFile<'a> {
     data: &'a [u8],
     lsg: [u8; 16],
@@ -231,21 +293,36 @@ impl<'a> JtFile<'a> {
             .next()
             .and_then(|m| m.parse().ok())
             .unwrap_or(0);
-        if major != 10 {
+        if major != 9 && major != 10 {
             bail!("The JT file has version {number} – the 3D preview reads JT 9 and 10.");
         }
         ensure!(
             super::bytes_at::<1>(data, 80)? == [0],
             "Big-endian JT data is not supported."
         );
-        let toc_at = usize::try_from(super::u64_le(data, 85)?).map_err(|_| damaged())?;
-        let lsg: [u8; 16] = super::bytes_at(data, 93)?;
+        // JT 9: i32 TOC offset and 28-byte entries; JT 10: 64-bit offsets
+        let wide = major == 10;
+        let (toc_at, lsg_at) = if wide {
+            (super::u64_le(data, 85)?, 93)
+        } else {
+            (
+                u64::try_from(super::i32_le(data, 85)?).map_err(|_| damaged())?,
+                89,
+            )
+        };
+        let toc_at = usize::try_from(toc_at).map_err(|_| damaged())?;
+        let lsg: [u8; 16] = super::bytes_at(data, lsg_at)?;
         let mut r = Reader::at(data, toc_at);
-        let count = r.count(32)?;
+        let count = r.count(if wide { 32 } else { 28 })?;
         let mut toc = Vec::with_capacity(count);
         for _ in 0..count {
             let id: [u8; 16] = r.array()?;
-            let offset = usize::try_from(u64::from_le_bytes(r.array()?)).map_err(|_| damaged())?;
+            let offset = if wide {
+                u64::from_le_bytes(r.array()?)
+            } else {
+                u64::try_from(r.i32()?).map_err(|_| damaged())?
+            };
+            let offset = usize::try_from(offset).map_err(|_| damaged())?;
             let length = usize::try_from(r.u32()?).map_err(|_| damaged())?;
             r.u32()?; // attributes (segment type in the high byte)
             toc.push(TocEntry { id, offset, length });
@@ -253,13 +330,20 @@ impl<'a> JtFile<'a> {
         Ok(JtFile { data, lsg, toc })
     }
 
-    /// The data of a segment, decompressed; `None` when the TOC lacks it.
-    fn segment(&self, id: [u8; 16]) -> Result<Option<Vec<u8>>> {
+    /// A whole segment (header included), as stored.
+    fn raw(&self, id: [u8; 16]) -> Result<Option<&'a [u8]>> {
         let Some(e) = self.toc.iter().find(|e| e.id == id) else {
             return Ok(None);
         };
         let end = e.offset.checked_add(e.length).ok_or_else(damaged)?;
-        let segment = super::range(self.data, e.offset, end)?;
+        super::range(self.data, e.offset, end).map(Some)
+    }
+
+    /// The data of a segment, decompressed; `None` when the TOC lacks it.
+    fn segment(&self, id: [u8; 16]) -> Result<Option<Vec<u8>>> {
+        let Some(segment) = self.raw(id)? else {
+            return Ok(None);
+        };
         ensure!(segment.len() >= 24, damaged());
         let kind = super::i32_le(segment, 16)?;
         let body = segment.get(24..).unwrap_or_default();
@@ -412,7 +496,7 @@ fn elements(d: &[u8], mut at: usize) -> Result<(Vec<Element<'_>>, usize)> {
 }
 
 impl Graph {
-    fn read(d: &[u8]) -> Result<Graph> {
+    fn read(d: &[u8], layout: Layout) -> Result<Graph> {
         let (nodes, at) = elements(d, 0)?;
         let (atoms, at) = elements(d, at)?;
         let mut g = Graph::default();
@@ -421,16 +505,18 @@ impl Graph {
                 g.root = Some(e.id);
             }
             if e.kind == TRANSFORM_ATTRIBUTE {
-                g.transforms.insert(e.id, transform(e.body)?);
-            } else if let Some(node) = node(&e)? {
+                g.transforms.insert(e.id, transform(e.body, layout)?);
+            } else if let Some(node) = node(&e, layout)? {
                 g.nodes.insert(e.id, node);
             }
         }
+        let version = layout.version();
         for e in atoms {
-            // base property atom data: u8 version, u32 state flags
-            let mut r = Reader::at(e.body, 5);
+            // base property atom data: version, u32 state flags; then the
+            // atom's own version
+            let mut r = Reader::at(e.body, version + 4);
             let atom = if e.kind == STRING_ATOM {
-                r.u8()?;
+                r.take(version)?;
                 let n = r.count(2)?;
                 let units: Vec<u16> = r
                     .take(n * 2)?
@@ -440,10 +526,10 @@ impl Graph {
                     .collect();
                 Atom::Text(String::from_utf16_lossy(&units))
             } else if e.kind == INTEGER_ATOM {
-                r.u8()?;
+                r.take(version)?;
                 Atom::Integer(r.i32()?)
             } else if e.kind == LATE_LOADED_ATOM {
-                r.u8()?;
+                r.take(version)?;
                 Atom::LateLoaded(r.array()?)
             } else {
                 continue;
@@ -478,14 +564,14 @@ impl Graph {
     }
 
     /// Every visible tri-strip shape with its world matrix, and the factor
-    /// to millimetres (from the outermost part's units).
-    fn occurrences(&self) -> Result<(Vec<Occurrence>, f64)> {
+    /// to millimetres when the outermost part names its units.
+    fn occurrences(&self) -> Result<(Vec<Occurrence>, Option<f64>)> {
         let root = self.root.ok_or_else(damaged)?;
         let mut out = Vec::new();
         let mut scale = None;
         let mut visits = 0usize;
         self.walk(root, IDENTITY, 0, &mut visits, &mut scale, &mut out)?;
-        Ok((out, scale.unwrap_or(1.0)))
+        Ok((out, scale))
     }
 
     fn walk(
@@ -568,7 +654,7 @@ fn to_mm(units: &str) -> f64 {
 }
 
 /// A scene graph node (`None` for element types that are not nodes).
-fn node(e: &Element<'_>) -> Result<Option<Node>> {
+fn node(e: &Element<'_>, layout: Layout) -> Result<Option<Node>> {
     let kind = match e.kind {
         k if k == PARTITION_NODE || k == GROUP_NODE || k == PART_NODE || k == META_DATA_NODE => {
             Kind::Group
@@ -582,9 +668,10 @@ fn node(e: &Element<'_>) -> Result<Option<Node>> {
     if kind == Kind::Other {
         return Ok(None);
     }
-    // base node data: u8 version, u32 flags, i32 attribute count, ids
+    // base node data: version, u32 flags, i32 attribute count, ids
+    let version = layout.version();
     let mut r = Reader::at(e.body, 0);
-    r.u8()?;
+    r.take(version)?;
     let flags = r.u32()?;
     let n = r.count(4)?;
     let attributes = (0..n).map(|_| r.i32()).collect::<Result<Vec<_>>>()?;
@@ -597,16 +684,16 @@ fn node(e: &Element<'_>) -> Result<Option<Node>> {
     };
     match kind {
         Kind::Instance => {
-            r.u8()?;
+            r.take(version)?;
             node.children.push(r.i32()?);
         }
         Kind::Group | Kind::Lod | Kind::Switch(_) => {
-            // group node data: u8 version, i32 child count, ids
-            r.u8()?;
+            // group node data: version, i32 child count, ids
+            r.take(version)?;
             let n = r.count(4)?;
             node.children = (0..n).map(|_| r.i32()).collect::<Result<Vec<_>>>()?;
             if let Kind::Switch(_) = kind {
-                r.u8()?;
+                r.take(version)?;
                 node.kind = Kind::Switch(r.i32()?);
             }
         }
@@ -615,21 +702,30 @@ fn node(e: &Element<'_>) -> Result<Option<Node>> {
     Ok(Some(node))
 }
 
-/// Geometric transform attribute: base attribute data (u8 version, u8
-/// state, u32 inhibit, u32 final), u8 version, u16 mask of the stored
-/// elements (bit 15 = element 0), the stored elements as f64.
-fn transform(body: &[u8]) -> Result<[[f64; 4]; 4]> {
-    let mask = super::u16_le(body, 11)?;
+/// Geometric transform attribute: base attribute data, version, u16 mask of
+/// the stored elements (bit 15 = element 0), the stored elements.
+/// JT 10: u8 version, u8 state, u32 inhibit, u32 final; u8 version; f64.
+/// JT 9: i16 version, u8 state, u32 inhibit; i16 version; f32.
+fn transform(body: &[u8], layout: Layout) -> Result<[[f64; 4]; 4]> {
+    let (mask_at, wide) = match layout {
+        Layout::Jt10 => (11, true),
+        Layout::Jt9 => (9, false),
+    };
+    let mask = super::u16_le(body, mask_at)?;
     let mut m = IDENTITY;
-    let mut at = 13;
+    let mut at = mask_at + 2;
     for i in 0..16 {
         if mask & (1 << (15 - i)) != 0 {
-            let v = super::f64_le(body, at)?;
+            let v = if wide {
+                super::f64_le(body, at)?
+            } else {
+                f64::from(super::f32_le(body, at)?)
+            };
             ensure!(v.is_finite(), damaged());
             if let Some(cell) = m.get_mut(i / 4).and_then(|row| row.get_mut(i % 4)) {
                 *cell = v;
             }
-            at += 8;
+            at += if wide { 8 } else { 4 };
         }
     }
     Ok(m)
@@ -1158,7 +1254,7 @@ mod tests {
         body.extend(((1u16 << 15) | (1 << 3)).to_le_bytes());
         body.extend((-1.0f64).to_le_bytes());
         body.extend(5.0f64.to_le_bytes());
-        let m = transform(&body).unwrap();
+        let m = transform(&body, Layout::Jt10).unwrap();
         assert_eq!(m[0][0], -1.0);
         assert_eq!(m[3][0], 5.0);
         assert_eq!(m[1][1], 1.0);
@@ -1179,5 +1275,299 @@ mod tests {
         let mut ten = b"Version 10.5 JT".to_vec();
         ten.resize(200, 0);
         assert!(read(&ten).is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // JT 9.5 assemblies: no openly licensed one exists, so the tests build
+    // one by the JT 9.5 reference around the real shape LOD of the NIST hex
+    // nut (the JT 9.4 stream NX keeps in the part).
+    // -----------------------------------------------------------------------
+
+    /// The JT file inside the NIST hex nut.
+    fn nut_jt() -> Vec<u8> {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/cad/nist/mtc-assembly/nx/90591A141 HEX NUT.prt"
+        );
+        let nx = std::fs::read(path).unwrap();
+        let streams = crate::nxpart::streams(&nx);
+        let stream = streams
+            .iter()
+            .find(|s| s.name == crate::nxpart::JT_STREAM)
+            .and_then(|s| crate::nxpart::data(&nx, s))
+            .unwrap();
+        stream[super::super::jt::jt_start(stream).unwrap()..].to_vec()
+    }
+
+    /// The LOD 0 segment of a JT 9 file: (TOC id, whole segment).
+    fn lod0(jt: &[u8]) -> ([u8; 16], Vec<u8>) {
+        let file = JtFile::open(jt).unwrap();
+        file.toc
+            .iter()
+            .map(|e| (e.id, file.raw(e.id).unwrap().unwrap()))
+            .find(|(_, s)| i32::from_le_bytes(s[16..20].try_into().unwrap()) == 7)
+            .map(|(id, s)| (id, s.to_vec()))
+            .unwrap()
+    }
+
+    fn element(out: &mut Vec<u8>, kind: [u8; 16], base: u8, id: i32, data: &[u8]) {
+        out.extend((21 + data.len() as i32).to_le_bytes());
+        out.extend(kind);
+        out.push(base);
+        out.extend(id.to_le_bytes());
+        out.extend(data);
+    }
+
+    fn end_marker(out: &mut Vec<u8>) {
+        element(out, END_OF_ELEMENTS, 0, 0, &[]);
+    }
+
+    /// Base node data (JT 9.5): i16 version, u32 flags, attribute ids.
+    fn base_node(flags: u32, attributes: &[i32]) -> Vec<u8> {
+        let mut d = 1i16.to_le_bytes().to_vec();
+        d.extend(flags.to_le_bytes());
+        d.extend((attributes.len() as i32).to_le_bytes());
+        attributes.iter().for_each(|a| d.extend(a.to_le_bytes()));
+        d
+    }
+
+    fn mbstring(s: &str) -> Vec<u8> {
+        let units: Vec<u16> = s.encode_utf16().collect();
+        let mut d = (units.len() as i32).to_le_bytes().to_vec();
+        units.iter().for_each(|u| d.extend(u.to_le_bytes()));
+        d
+    }
+
+    /// A JT 9.5 file: a partition with one instance of the shape per
+    /// transform (row vectors, metres; `None` = no transform attribute),
+    /// the shape's LOD segment copied from `shape`, optional units.
+    fn jt95(
+        shape: &([u8; 16], Vec<u8>),
+        placements: &[Option<[[f32; 4]; 4]>],
+        units: Option<&str>,
+    ) -> Vec<u8> {
+        let (shape_id, shape_segment) = shape;
+        const SHAPE_NODE: i32 = 2;
+        let mut lsg = Vec::new();
+        let instances: Vec<i32> = (0..placements.len() as i32).map(|i| 100 + i).collect();
+        // the partition (also the part, for its units)
+        let mut d = base_node(0, &[]);
+        d.extend(1i16.to_le_bytes());
+        d.extend((instances.len() as i32).to_le_bytes());
+        instances.iter().for_each(|i| d.extend(i.to_le_bytes()));
+        element(&mut lsg, PART_NODE, 0, 1, &d);
+        element(
+            &mut lsg,
+            TRI_STRIP_SHAPE_NODE,
+            1,
+            SHAPE_NODE,
+            &base_node(0, &[]),
+        );
+        for (k, (&id, placement)) in instances.iter().zip(placements).enumerate() {
+            let attribute = 200 + k as i32;
+            let attributes: Vec<i32> = placement.iter().map(|_| attribute).collect();
+            let mut d = base_node(0, &attributes);
+            d.extend(1i16.to_le_bytes());
+            d.extend(SHAPE_NODE.to_le_bytes());
+            element(&mut lsg, INSTANCE_NODE, 255, id, &d);
+            if let Some(m) = placement {
+                // base attribute data: i16 version, u8 state, u32 inhibit;
+                // i16 version, u16 mask, the stored f32 elements
+                let mut d = 1i16.to_le_bytes().to_vec();
+                d.push(0);
+                d.extend(0u32.to_le_bytes());
+                d.extend(1i16.to_le_bytes());
+                d.extend(0xFFFFu16.to_le_bytes());
+                m.iter().flatten().for_each(|v| d.extend(v.to_le_bytes()));
+                element(&mut lsg, TRANSFORM_ATTRIBUTE, 2, attribute, &d);
+            }
+        }
+        end_marker(&mut lsg);
+        // property atoms: base data i16 version, u32 flags; own i16 version
+        let atom = |payload: &[u8]| {
+            let mut d = 1i16.to_le_bytes().to_vec();
+            d.extend(0u32.to_le_bytes());
+            d.extend(1i16.to_le_bytes());
+            d.extend(payload);
+            d
+        };
+        element(
+            &mut lsg,
+            STRING_ATOM,
+            5,
+            300,
+            &atom(&mbstring("JT_LLPROP_SHAPEIMPL")),
+        );
+        let mut late = shape_id.to_vec();
+        late.extend(7i32.to_le_bytes());
+        late.extend(0i32.to_le_bytes());
+        late.extend(1i32.to_le_bytes());
+        element(&mut lsg, LATE_LOADED_ATOM, 5, 301, &atom(&late));
+        element(
+            &mut lsg,
+            STRING_ATOM,
+            5,
+            302,
+            &atom(&mbstring("JT_PROP_MEASUREMENT_UNITS")),
+        );
+        element(
+            &mut lsg,
+            STRING_ATOM,
+            5,
+            303,
+            &atom(&mbstring(units.unwrap_or(""))),
+        );
+        end_marker(&mut lsg);
+        // property table
+        lsg.extend(1i16.to_le_bytes());
+        lsg.extend(2i32.to_le_bytes());
+        for (node, pairs) in [
+            (SHAPE_NODE, vec![(300i32, 301i32)]),
+            (1, units.map(|_| (302, 303)).into_iter().collect()),
+        ] {
+            lsg.extend(node.to_le_bytes());
+            for (k, v) in pairs {
+                lsg.extend(k.to_le_bytes());
+                lsg.extend(v.to_le_bytes());
+            }
+            lsg.extend(0i32.to_le_bytes());
+        }
+        // the LSG segment: zlib like every JT 9 scene graph
+        let mut z = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
+        std::io::Write::write_all(&mut z, &lsg).unwrap();
+        let packed = z.finish().unwrap();
+        let lsg_id = [0x42u8; 16];
+        let mut lsg_segment = lsg_id.to_vec();
+        lsg_segment.extend(1i32.to_le_bytes());
+        lsg_segment.extend((24 + 9 + packed.len() as i32).to_le_bytes());
+        lsg_segment.extend(2i32.to_le_bytes());
+        lsg_segment.extend((packed.len() as i32 + 1).to_le_bytes());
+        lsg_segment.push(2);
+        lsg_segment.extend(&packed);
+        // header (80 bytes text, u8 order, i32 empty, i32 TOC, GUID), segments, TOC
+        let mut file = b"Version 9.5 JT".to_vec();
+        file.resize(80, b' ');
+        file.push(0);
+        file.extend(0i32.to_le_bytes());
+        let toc_at_field = file.len();
+        file.extend(0i32.to_le_bytes());
+        file.extend(lsg_id);
+        let mut toc = Vec::new();
+        for (id, segment, kind) in [(lsg_id, &lsg_segment, 1u32), (*shape_id, shape_segment, 7)] {
+            toc.extend(id);
+            toc.extend((file.len() as i32).to_le_bytes());
+            toc.extend((segment.len() as u32).to_le_bytes());
+            toc.extend((kind << 24).to_le_bytes());
+            file.extend(segment);
+        }
+        let toc_at = file.len() as i32;
+        file[toc_at_field..toc_at_field + 4].copy_from_slice(&toc_at.to_le_bytes());
+        file.extend(2i32.to_le_bytes());
+        file.extend(toc);
+        file
+    }
+
+    fn translation(x: f32, y: f32, z: f32) -> [[f32; 4]; 4] {
+        [
+            [1., 0., 0., 0.],
+            [0., 1., 0., 0.],
+            [0., 0., 1., 0.],
+            [x, y, z, 1.],
+        ]
+    }
+
+    #[test]
+    fn single_part_jt9_files_read_exactly_as_before() {
+        let jt = nut_jt();
+        let before = super::super::jt::read_file(&jt).unwrap();
+        assert_eq!(read(&jt).unwrap(), before, "the JT inside NX parts");
+        // a synthetic 9.5 file with the shape once, unplaced: the same mesh
+        let one = jt95(&lod0(&jt), &[None], None);
+        assert_eq!(read(&one).unwrap(), before);
+    }
+
+    #[test]
+    fn jt95_assemblies_are_put_together_from_the_scene_graph() {
+        let jt = nut_jt();
+        let nut = super::super::jt::read_file(&jt).unwrap();
+        let [x0, y0, z0, x1, y1, z1] = nut.bounds();
+        // 100 mm along x, and turned 90° about z at 100 mm along y
+        let turned = [
+            [0., 1., 0., 0.],
+            [-1., 0., 0., 0.],
+            [0., 0., 1., 0.],
+            [0., 0.1, 0., 1.],
+        ];
+        let file = jt95(
+            &lod0(&jt),
+            &[Some(translation(0.1, 0., 0.)), Some(turned)],
+            None,
+        );
+        let mesh = read(&file).unwrap();
+        assert_eq!(mesh.parts, 2);
+        assert_eq!(mesh.triangle_count(), 2 * nut.triangle_count());
+        let b = mesh.bounds();
+        // (x, y) + (100, 0) for the first copy, (−y, x) + (0, 100) for the
+        // turned one
+        let want = [
+            (x0 + 100.0).min(-y1),
+            y0.min(x0 + 100.0),
+            z0,
+            (x1 + 100.0).max(-y0),
+            y1.max(x1 + 100.0),
+            z1,
+        ];
+        for (got, want) in b.iter().zip(want) {
+            assert!((got - want).abs() < 1e-3, "{b:?} vs {want:?}");
+        }
+        // every copy is closed and outwards: the total volume is twice the nut's
+        let one = crate::massprops::compute(&nut).unwrap();
+        let both = crate::massprops::compute(&mesh).unwrap();
+        assert!(both.closed && !both.inverted_fixed);
+        assert!((both.volume / one.volume - 2.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn jt95_units_and_mirrors() {
+        let jt = nut_jt();
+        let nut = super::super::jt::read_file(&jt).unwrap();
+        // the same coordinates read as millimetres: 1000 times smaller
+        let mm = jt95(
+            &lod0(&jt),
+            &[None, Some(translation(0.0, 0.0, 0.0))],
+            Some("Millimeters"),
+        );
+        let mesh = read(&mm).unwrap();
+        let (b, n) = (mesh.bounds(), nut.bounds());
+        assert!((b[3] - b[0] - (n[3] - n[0]) / 1000.0).abs() < 1e-6, "{b:?}");
+        // a mirrored copy keeps its triangles pointing outwards
+        let mut mirror = translation(0.0, 0.0, 0.0);
+        mirror[0][0] = -1.0;
+        let file = jt95(
+            &lod0(&jt),
+            &[Some(translation(0.05, 0., 0.)), Some(mirror)],
+            None,
+        );
+        let g = crate::massprops::compute(&read(&file).unwrap()).unwrap();
+        assert!(g.closed && !g.inverted_fixed, "{g:?}");
+    }
+
+    #[test]
+    fn damaged_jt95_assemblies_never_panic() {
+        let jt = nut_jt();
+        let file = jt95(&lod0(&jt), &[Some(translation(0.1, 0., 0.)), None], None);
+        // the scene graph densely, the shape segment (tested in `jt`) sparsely
+        let shape_at = file.len() - lod0(&jt).1.len() - 2 * 28 - 4;
+        let flips = (0..shape_at.min(file.len()))
+            .step_by(7)
+            .chain((shape_at..file.len()).step_by(file.len() / 60 + 1));
+        for at in flips {
+            let mut copy = file.clone();
+            copy[at] ^= 0x5A;
+            let _ = read(&copy);
+        }
+        for cut in (0..file.len()).step_by(file.len() / 10 + 1) {
+            let _ = read(&file[..cut]);
+        }
     }
 }

@@ -3573,6 +3573,7 @@ dependencies = [
  "rand 0.8.8",
  "regex",
  "reqwest",
+ "ring",
  "rlimit",
  "rpassword",
  "rust_xlsxwriter",

@@ -100,7 +100,7 @@ pub(crate) fn read_file(data: &[u8]) -> Result<Mesh> {
 /// index of `u32 9, u32 count, u32 0` and `count` 16-byte entries (19 in a
 /// small part, 259 in a large one). A stream laid out differently is
 /// searched for the version text in its first 64 KiB.
-fn jt_start(stream: &[u8]) -> Option<usize> {
+pub(super) fn jt_start(stream: &[u8]) -> Option<usize> {
     const VERSION: &[u8] = b"Version ";
     let count = usize::try_from(super::u32_le(stream, 4).ok()?).ok()?;
     let after_index = count.checked_mul(16).and_then(|n| n.checked_add(12));
@@ -168,6 +168,12 @@ fn read_jt(jt: &[u8]) -> Result<Mesh> {
     }
     let total: usize = lods.iter().map(|l| l.triangles.len()).sum();
     super::pn::to_mesh(lods, total, TO_MM)
+}
+
+/// The JT 9 tri-strip set of one whole shape LOD segment (segment header
+/// included), for the scene graph of stand-alone JT 9 files (`jt10`).
+pub(super) fn read_lod_segment(segment: &[u8]) -> Result<Option<Lod>> {
+    read_segment(segment, 0, segment.len())
 }
 
 /// The Tri-Strip Set element of a shape LOD segment, if it has one.

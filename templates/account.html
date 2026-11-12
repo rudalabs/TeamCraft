@@ -169,6 +169,10 @@
       </select>
       <button type="submit">Create</button>
     </form>
+    {% if sso_token_idle_days and user.auth_source == "oidc" %}
+    <p class="hint">Single sign-on accounts: a new token expires after {{ sso_token_idle_days }} days without use at
+      the latest (every use renews it).</p>
+    {% endif %}
   </section>
 
   {% if user.auth_source == "local" %}

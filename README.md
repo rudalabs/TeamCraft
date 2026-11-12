@@ -166,12 +166,13 @@ end-to-end tests against a real PostgreSQL.
 
 - **3D preview** – in the browser, converted on the server, no plug-ins:
   STEP, NX, SOLIDWORKS and Inventor parts and assemblies (put together from
-  their part files, hidden components left out), Rhino models (`.3dm`, SubD included),
-  SketchUp models (`.skp`, SketchUp 3 to today), JT files with their whole
-  assembly, Fusion designs (`.f3d`), STL, OBJ, PLY, 3MF, glTF, point clouds and more.
+  their part files, hidden components left out), CATIA V5 parts, Rhino models
+  (`.3dm`, SubD included), SketchUp models (`.skp`, SketchUp 3 to today), JT
+  files with their whole assembly, Fusion designs (`.f3d`), STL, OBJ, PLY, 3MF,
+  glTF, point clouds and more.
 - **CAD thumbnails** – the preview images stored in Inventor drawings and Solid
-  Edge files; NX, SOLIDWORKS, Inventor, Rhino, SketchUp, JT and Fusion files get a
-  sharper thumbnail rendered from their 3D preview.
+  Edge files; NX, SOLIDWORKS, Inventor, CATIA, Rhino, SketchUp, JT and Fusion
+  files get a sharper thumbnail rendered from their 3D preview.
 - **FEA/CFD results** – VTK, VTU/VTP and CalculiX results coloured by a result
   field, with legend.
 - **Search** – ranked full-text search over numbers, names, materials, file
@@ -221,7 +222,12 @@ end-to-end tests against a real PostgreSQL.
 - **Roles and read permissions** – viewer, editor and admin roles; restricted
   project groups visible only to their members.
 - **Single sign-on** – any OpenID Connect provider, with group
-  synchronisation.
+  synchronisation and back-channel logout.
+- **Offboarding** – for teams that change every season: everything a leaver
+  still holds in one report, *Offboard and deactivate* in one step (hand-over
+  of work and manager roles, token revocation, release of check-outs),
+  *Season handover* of a whole project group, groups left without an active
+  manager, and SSO users who stopped signing in.
 - **Numbering schemes** – generated item numbers per project group from
   `{PROJECT}`, `{TYPE}`, `{YYYY}` and `{SEQ:n}`.
 - **Custom attributes** – vendor, supplier part number, RoHS … as text,
@@ -248,8 +254,11 @@ end-to-end tests against a real PostgreSQL.
 - **Web UI** – light and dark design that follows the operating system, plus
   distribution skins; responsive down to phone width.
 - **Desktop app** – Linux, macOS and Windows client with a local working
-  folder, *Get* of whole assemblies, an import wizard, an Agent view and an
-  update notice (never installs anything itself).
+  folder, *Get* of whole assemblies, an import wizard, a *Files* view of each
+  project group, a navigable *Graph* of every revision (BOM children,
+  references and where-used, coloured by state, with quantities and preview
+  images), *Park* of work in progress, an Agent view, crash reports the user
+  decides about and an update notice (never installs anything itself).
 - **REST API** – everything the UI does, with personal access tokens.
 - **MCP server** – AI assistants such as Claude Code search, explain BOMs and
   draft changes with your rights, never approving anything.
@@ -280,13 +289,26 @@ there is no separate enterprise edition.
     notifications and the AI assistant.
   - Per group, administrators can be limited to audited, time-limited access
     with a written reason, or to managing without reading.
+  - [Need-to-know groups](https://rudalabs.github.io/TeamCraft/admin/permissions.html):
+    membership conditions (IdP claims, networks, maximum sign-in age), a
+    read and download log, and periodic access reviews with an evidence
+    report.
   - Personal access tokens can be scoped: full, write without approving,
-    read-only or MCP-only.
+    read-only or MCP-only; SSO users' tokens can expire after a number of
+    idle days.
+  - [Offboarding](https://rudalabs.github.io/TeamCraft/admin/users.html#when-someone-leaves)
+    for high-turnover teams: a holdings report per user, *Offboard and
+    deactivate*, season handover per group, groups without an active
+    manager, OpenID Connect back-channel logout and a report of SSO users
+    who stopped signing in.
 - **Traceability**
   - An [audit log](https://rudalabs.github.io/TeamCraft/admin/operations.html)
-    of every change and every sign-in, failed attempts included.
+    of every change and every sign-in, failed attempts included, exportable
+    as CSV or JSON.
   - Four-eyes change orders: nobody who wrote, prepared or changed the data
-    can approve it.
+    can approve it. Review policies per project group, review rounds,
+    optional sign-off with the password or a fresh SSO sign-in, and the
+    approvers named in every Pack and Go manifest.
   - Released data never changes; as-built records per serial number.
 - **Company AI instead of shadow AI**
   - *Ask TeamCraft* runs on the AI service the organisation chooses; the key
@@ -314,22 +336,16 @@ there is no separate enterprise edition.
   `*_FILE` for Docker or Kubernetes secrets; see the
   [configuration reference](https://rudalabs.github.io/TeamCraft/admin/configuration.html).
 
-**Planned** – open issues, partly built:
+**Planned** – what is left of the issues above (all their steps are built):
 
 - **Need-to-know projects** ([#151](https://github.com/rudalabs/TeamCraft/issues/151))
-  – still open: membership conditions (IdP claims, networks, session age).
-  Built: administrator access with a reason, interface switches per group, a
-  read and download log, and access reviews with an evidence report.
+  – optional: a watermark on downloads, claims for local accounts.
 - **Ownership and approval rules** ([#152](https://github.com/rudalabs/TeamCraft/issues/152))
-  – still open: obsolete through change orders, sign-off with
-  re-authentication, substitutes, approvals in exports. Built: review
-  policies per group, review rounds, item owners and admin handover.
+  – substitutes per user, the review policy shown on the change page.
 - **Offboarding for high-turnover teams** ([#173](https://github.com/rudalabs/TeamCraft/issues/173))
-  – still open: a holdings report per user, deactivation as one offboarding
-  step, groups without an active manager, season handover. Built: managers
-  release a leaver's check-outs in bulk, demote managers and take over a
-  deactivated author's change order
-  ([When someone leaves](https://rudalabs.github.io/TeamCraft/admin/users.html#when-someone-leaves)).
+  – a timed stale-lock rule, the access review page for groups that are not
+  need-to-know; automatic deprovisioning through SCIM is not planned for now
+  ([research](https://rudalabs.github.io/TeamCraft/research/scim-deprovisioning.html)).
 
 TeamCraft is a community project without commercial support or a service
 level agreement.
@@ -465,6 +481,8 @@ Third-party components (complete list with versions in `Cargo.lock` and
 | gltf, quick-xml, zip                 | glTF, 3MF/AMF, Pack and Go                  | MIT / Apache-2.0                                             |
 | csv, calamine, encoding_rs           | BOM import: CSV, Excel/ODS, Windows-1252    | MIT-Unlicense / MIT / MIT-Apache + BSD-3                     |
 | cfb, crc32fast                       | previews stored in CAD files                | MIT / MIT-Apache                                             |
+| lzma-rs, ruzstd                      | JT 10 scene graphs, Zstandard segments of Inventor files | MIT                                     |
+| pdf_oxide                            | text of PDF reports for the search          | MIT / Apache-2.0                                             |
 | OpenSKP (Rust port, vendored in `vendor/openskp`, © 2024–2026 Ahsan Mehmood) | SketchUp 3–2020 files in the 3D preview | MIT          |
 | earcut algorithm (© 2016 Mapbox, ported in `src/mesh/earcut.rs`) | triangulating SketchUp faces    | ISC                                                          |
 | rust_xlsxwriter                      | Excel export of BOMs and comparisons        | MIT / Apache-2.0                                             |
@@ -472,6 +490,7 @@ Third-party components (complete list with versions in `Cargo.lock` and
 | chacha20poly1305 (RustCrypto)        | encrypted backups                           | MIT / Apache-2.0                                             |
 | reqwest, rustls, lettre              | HTTP client, TLS, e-mail                    | MIT / Apache-2.0                                             |
 | argon2, sha2                         | password hashing, content hashes            | MIT / Apache-2.0                                             |
+| ring                                 | signatures of OIDC back-channel logout tokens | Apache-2.0 AND ISC                                         |
 | Tauri 2                              | desktop app                                 | MIT / Apache-2.0                                             |
 | futures-core                         | desktop app: cancellable streamed uploads   | MIT / Apache-2.0                                             |
 | Montserrat, Oswald                   | fonts                                       | SIL OFL 1.1                                                  |

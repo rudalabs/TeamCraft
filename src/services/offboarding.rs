@@ -42,6 +42,68 @@ impl<T> Listed<T> {
     }
 }
 
+/// Single sign-on users without activity for this many days are reported by
+/// [`idle_sso_users`] (the stale threshold of the access review).
+pub const IDLE_SSO_DAYS: i64 = crate::services::access_review::STALE_DAYS;
+
+/// An active single sign-on user who stopped signing in but still holds
+/// something (issue #173, step 9): typically removed at the identity provider
+/// and never offboarded in TeamCraft.
+#[derive(Clone, Debug, Serialize, sqlx::FromRow)]
+pub struct IdleSsoUser {
+    pub user_id: Uuid,
+    pub username: String,
+    pub display_name: String,
+    pub last_login_at: Option<DateTime<Utc>>,
+    /// Latest sign-in, token use or the account's creation.
+    pub last_active_at: Option<DateTime<Utc>>,
+    /// When the identity provider last logged them out (back channel).
+    pub idp_logout_at: Option<DateTime<Utc>>,
+    pub memberships: i64,
+    pub tokens: i64,
+    pub checkouts: i64,
+}
+
+/// Active single sign-on users without a sign-in or token use for
+/// [`IDLE_SSO_DAYS`] who still hold memberships, tokens or check-outs –
+/// candidates for *Offboard and deactivate*. Bounded by [`MAX_LIST`].
+///
+/// # Invariants
+///
+/// * **Permission:** administrators (403 otherwise).
+/// * **Data:** read-only; counts over every group (management data, also of
+///   need-to-know groups); the clock of the database decides what is idle.
+pub async fn idle_sso_users(pool: &PgPool, actor: &Actor) -> AppResult<Vec<IdleSsoUser>> {
+    if !actor.is_admin() {
+        return Err(AppError::Forbidden(
+            "Only administrators see the idle single sign-on users.".into(),
+        ));
+    }
+    Ok(sqlx::query_as::<_, IdleSsoUser>(
+        "SELECT * FROM (
+           SELECT u.id AS user_id, u.username, u.display_name, u.last_login_at, u.idp_logout_at,
+                  GREATEST(u.last_login_at, u.created_at,
+                           (SELECT MAX(t.last_used_at) FROM api_tokens t WHERE t.user_id = u.id))
+                      AS last_active_at,
+                  (SELECT COUNT(*) FROM project_members pm WHERE pm.user_id = u.id) AS memberships,
+                  (SELECT COUNT(*) FROM api_tokens t
+                   WHERE t.user_id = u.id AND (t.expires_at IS NULL OR t.expires_at > now()))
+                      AS tokens,
+                  (SELECT COUNT(*) FROM revisions r WHERE r.checked_out_by = u.id) AS checkouts
+           FROM users u
+           WHERE u.auth_source = 'oidc' AND u.active
+         ) idle
+         WHERE last_active_at < now() - make_interval(days => $1)
+           AND (memberships > 0 OR tokens > 0 OR checkouts > 0)
+         ORDER BY last_active_at, username
+         LIMIT $2",
+    )
+    .bind(IDLE_SSO_DAYS as i32)
+    .bind(MAX_LIST)
+    .fetch_all(pool)
+    .await?)
+}
+
 /// A revision the user has checked out.
 #[derive(Clone, Debug, Serialize, sqlx::FromRow)]
 pub struct HeldRevision {

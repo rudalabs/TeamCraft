@@ -180,6 +180,12 @@ pub fn router(state: AppState) -> Router {
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
         .route("/metrics", get(metrics_endpoint))
+        // the identity provider posts here; outside the web pages' cross-site
+        // guard, the signed logout token is the credential (issue #173)
+        .route(
+            "/auth/oidc/backchannel-logout",
+            axum::routing::post(web::oidc_backchannel_logout),
+        )
         .nest("/api/v1", api::router(&state))
         .merge(web::router(&state))
         .layer(SetResponseHeaderLayer::if_not_present(

@@ -118,6 +118,7 @@ pub const KNOWN_VARIABLES: &[&str] = &[
     "TEAMCRAFT_OIDC_GROUPS_CLAIM",
     "TEAMCRAFT_OIDC_ISSUER_URL",
     "TEAMCRAFT_OIDC_SCOPES",
+    "TEAMCRAFT_OIDC_TOKEN_IDLE_DAYS",
     "TEAMCRAFT_OIDC_USERNAME_CLAIM",
     "TEAMCRAFT_OIDC_VIEWER_GROUP",
     "TEAMCRAFT_PREVIEW_CACHE_MAX_MB",
@@ -290,6 +291,12 @@ pub struct Config {
     /// is refused (`TEAMCRAFT_SIGNIN_MAX_FAILURES`; five times as many per
     /// client address; 0 = off). See [`crate::auth::SignInThrottle`].
     pub signin_max_failures: u32,
+    /// Idle lifetime in days of new API and desktop tokens of single sign-on
+    /// users (`TEAMCRAFT_OIDC_TOKEN_IDLE_DAYS`; 0 = off, the default): a token
+    /// without an expiry or with a longer one expires after that many days
+    /// without use, so a leaver removed only at the identity provider does
+    /// not keep a working token (issue #173).
+    pub oidc_token_idle_days: u32,
     /// Bearer token of `GET /metrics`; `None` = the endpoint is off.
     pub metrics_token: Option<String>,
     /// Adds the `Secure` attribute to cookies (required when served via HTTPS).
@@ -990,6 +997,11 @@ impl Config {
             })?,
         };
 
+        let oidc_token_idle_days = env.parse_or("TEAMCRAFT_OIDC_TOKEN_IDLE_DAYS", 0u32)?;
+        if oidc_token_idle_days > 3650 {
+            bail!("TEAMCRAFT_OIDC_TOKEN_IDLE_DAYS must be between 0 (off) and 3650");
+        }
+
         let audit_retention_days = env.parse_or("TEAMCRAFT_AUDIT_RETENTION_DAYS", 0u32)?;
         if audit_retention_days != 0
             && !(MIN_AUDIT_RETENTION_DAYS..=36_500).contains(&audit_retention_days)
@@ -1155,6 +1167,7 @@ impl Config {
             audit_retention_days,
             retention_latest_grace_days,
             signin_max_failures,
+            oidc_token_idle_days,
             metrics_token,
             cookie_secure,
             log_format,

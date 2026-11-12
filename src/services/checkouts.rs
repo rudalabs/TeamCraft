@@ -95,7 +95,81 @@ pub struct RevisionStatus {
     /// `true` if somebody else holds the lock: local changes cannot be
     /// checked in right now.
     pub locked_by_other: bool,
+    /// Somebody else released the actor's check-out of this revision and
+    /// nobody has checked it out since (issue #173, step 10): the desktop
+    /// app tells the former holder that their local changes stay but need
+    /// a new check-out. `None` otherwise.
+    pub released: Option<ReleasedCheckout>,
     pub files: Vec<FileStatus>,
+}
+
+/// A forced release of the actor's own check-out (`revision.checkout_forced_release`).
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct ReleasedCheckout {
+    /// Who released it (display name; the user name if the account is gone).
+    pub by_name: String,
+    pub at: DateTime<Utc>,
+    /// The reason a manager gave, if any.
+    pub reason: Option<String>,
+    /// The sentence to show the former holder ([`released_message`]).
+    pub message: String,
+}
+
+/// What the former holder of a released check-out is told in the working
+/// folder: their local files are not touched, but checking them in needs
+/// the lock again.
+pub fn released_message(by_name: &str) -> String {
+    format!("Released by {by_name}; your local changes are kept and need a new check-out.")
+}
+
+/// The audit actions that take or give back the lock of a revision; the
+/// newest of them says what happened to the lock last.
+const LOCK_ACTIONS: [&str; 4] = [
+    "revision.checkout",
+    "revision.checkin",
+    "revision.checkout_cancel",
+    "revision.checkout_forced_release",
+];
+
+/// The forced release of `actor`'s check-out of `rev`, if that is the last
+/// thing that happened to its lock and it is not checked out now. Read from
+/// the audit log (`details.holder`, written by `revisions::cancel_checkout`),
+/// so it needs no state of its own; releases audited before the holder was
+/// recorded are not reported.
+pub async fn released_from(
+    pool: &PgPool,
+    actor: &Actor,
+    rev: &Revision,
+) -> AppResult<Option<ReleasedCheckout>> {
+    if rev.checked_out_by.is_some() {
+        return Ok(None);
+    }
+    let row: Option<(String, DateTime<Utc>, String, serde_json::Value)> = sqlx::query_as(
+        "SELECT a.action, a.at, COALESCE(u.display_name, a.username), a.details
+           FROM audit_log a LEFT JOIN users u ON u.id = a.user_id
+          WHERE a.entity_id = $1 AND a.entity_type = 'revision' AND a.action = ANY($2)
+          ORDER BY a.at DESC, a.id DESC
+          LIMIT 1",
+    )
+    .bind(rev.id)
+    .bind(&LOCK_ACTIONS[..])
+    .fetch_optional(pool)
+    .await?;
+    let Some((action, at, by_name, details)) = row else {
+        return Ok(None);
+    };
+    let holder = details["holder"]
+        .as_str()
+        .and_then(|h| Uuid::parse_str(h).ok());
+    if action != "revision.checkout_forced_release" || holder != Some(actor.id) {
+        return Ok(None);
+    }
+    Ok(Some(ReleasedCheckout {
+        message: released_message(&by_name),
+        by_name,
+        at,
+        reason: details["reason"].as_str().map(str::to_string),
+    }))
 }
 
 /// The status of every file of a revision for one workspace. With an empty
@@ -195,7 +269,9 @@ pub async fn file_status(
             }),
         });
     }
+    let released = released_from(pool, actor, &rev).await?;
     Ok(RevisionStatus {
+        released,
         revision_id: rev.id,
         item_number: rev.item_number.clone(),
         code: rev.code.clone(),

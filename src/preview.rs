@@ -33,8 +33,9 @@ use crate::{
 
 /// Bump to invalidate every cached preview (reader fixes, new format).
 /// Bump `shape::VERSION` with it: the shape signatures stored in the
-/// database are computed from these meshes.
-pub const CACHE_VERSION: u32 = 2;
+/// database are computed from these meshes. 3: Inventor files with
+/// Zstandard segments (#271), cached as failed before.
+pub const CACHE_VERSION: u32 = 3;
 
 /// Conversions that run at the same time.
 pub const MAX_PARALLEL: usize = 2;
@@ -181,6 +182,8 @@ pub enum PreviewFormat {
     InvPart,
     /// Inventor assemblies: put together from the previews of their parts.
     InvAssembly,
+    /// CATIA V5 parts: the visualisation (CGR) data they store.
+    CatiaPart,
     /// SketchUp models: their faces triangulated, components placed.
     SketchUp,
     /// Autodesk Fusion designs: the display scene they store.
@@ -196,7 +199,7 @@ pub enum PreviewFormat {
 }
 
 impl PreviewFormat {
-    pub const ALL: [PreviewFormat; 26] = [
+    pub const ALL: [PreviewFormat; 27] = [
         PreviewFormat::Stl,
         PreviewFormat::Obj,
         PreviewFormat::Ply,
@@ -214,6 +217,7 @@ impl PreviewFormat {
         PreviewFormat::Rhino,
         PreviewFormat::InvPart,
         PreviewFormat::InvAssembly,
+        PreviewFormat::CatiaPart,
         PreviewFormat::SketchUp,
         PreviewFormat::FusionDesign,
         PreviewFormat::Pts,
@@ -255,6 +259,7 @@ impl PreviewFormat {
             PreviewFormat::Rhino => "rhino",
             PreviewFormat::InvPart => "inventor-part",
             PreviewFormat::InvAssembly => "inventor-assembly",
+            PreviewFormat::CatiaPart => "catia-part",
             PreviewFormat::SketchUp => "sketchup",
             PreviewFormat::FusionDesign => "fusion-design",
             PreviewFormat::Pts => "pts",
