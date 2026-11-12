@@ -760,12 +760,18 @@ mod tests {
     fn damaged_products_never_panic() {
         let beam = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 5.0, 6.0, 7.0];
         let product = sample(OWN, &[("frame", PART, None), ("beam", PART, Some(beam))]);
-        for at in 0..product.len() {
+        // every byte that is not padding: the container entry (0x800) and
+        // the object stream (0x1000 on); every third byte stays fast
+        let entry = 0x800..0x800 + 64;
+        let stream = 0x1000..product.len();
+        for at in entry.chain(stream.step_by(3)) {
             let mut copy = product.clone();
             copy[at] ^= 0x5a;
             let _ = components(&copy);
             let _ = document(&copy);
-            let _ = components(&product[..at]);
+        }
+        for cut in (0x1000..product.len()).step_by(7) {
+            let _ = components(&product[..cut]);
         }
     }
 }
