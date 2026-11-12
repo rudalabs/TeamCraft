@@ -15,6 +15,14 @@ see the notices in the README.
 
 ### Added
 
+- 3D preview of stand-alone JT 10 files (`.jt`, ISO 14306): parts and whole
+  assemblies from one file – the scene graph (LZMA via the pure-Rust
+  `lzma-rs`, MIT) with transforms, units and hidden nodes, each shape's
+  finest level of detail through the JT 9 topology coder plus the JT 10
+  integer codecs, hash-checked and refined along its normals. The thumbnail
+  is rendered from the 3D preview. Verified with the NIST box assembly (36
+  placements equal to NX, sizes equal to NIST's STEP files). JT 9 files
+  keep the reader of #200.
 - Offboarding (#173, step 8): **Season handover** of a project group
   (`/projects/{id}/season`, managers and administrators): tick the members
   who leave – or let the page tick those inactive since a date or past their

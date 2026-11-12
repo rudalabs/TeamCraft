@@ -66,6 +66,7 @@ pub fn supports(format_id: &str) -> bool {
                 | "solidworks-drawing"
                 | "nx-part"
                 | "rhino"
+                | "jt"
                 | "sketchup"
         )
 }
@@ -466,14 +467,16 @@ pub const RENDERED_SIZE: u32 = 512;
 /// Formats whose thumbnail is rendered from their 3D preview instead of the
 /// image stored in the file: NX parts (the embedded JPEG is small and poor,
 /// the tessellation in the file is good), SOLIDWORKS and Inventor parts and
-/// assemblies, Rhino and SketchUp models (one look for every CAD system).
-/// Files without a 3D preview (drawings, assemblies none of whose parts are
-/// in TeamCraft, Rhino models saved without meshes, SketchUp files without
-/// faces) keep the stored image.
+/// assemblies, Rhino and SketchUp models (one look for every CAD system) and
+/// stand-alone JT files (a visualisation format: the tessellation is the
+/// content). Files without a 3D preview (drawings, assemblies none of whose
+/// parts are in TeamCraft, Rhino models saved without meshes, SketchUp files
+/// without faces) keep the stored image.
 pub fn rendered(format_id: &str) -> bool {
     matches!(
         format_id,
         "nx-part"
+            | "jt"
             | "rhino"
             | "solidworks-part"
             | "solidworks-assembly"
