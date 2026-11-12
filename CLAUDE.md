@@ -92,10 +92,12 @@ src/pagecontext.rs the page the user is on (kind, ids, view, rule, query, rows s
 src/vault.rs       content-addressed file storage (objects/ab/cd/<sha256>)
 src/httprange.rs   Range / If-Range of file downloads (ETag = SHA-256, 206 / 416): resumable downloads
 src/mesh.rs        pure-Rust 3D readers (STL, OBJ, PLY, OFF, 3MF, AMF, glTF, 3DS, PTS/XYZ/LAS, STEP via truck, NX parts via their JT stream: mesh/jt.rs, SOLIDWORKS parts via their display lists: mesh/sw.rs, Inventor parts via their graphics segment: mesh/inventor.rs, Fusion designs via their display scene: mesh/f3d.rs, all + PN refinement mesh/pn.rs,
-                   Rhino .3dm: stored meshes, SubD subdivided, blocks placed: mesh/rhino.rs) → TCMESH01;
+                   Rhino .3dm: stored meshes, SubD subdivided, blocks placed: mesh/rhino.rs,
+                   SketchUp .skp: faces triangulated (mesh/earcut.rs), components placed: mesh/sketchup.rs, 3–2020 files via vendor/openskp) → TCMESH01;
                    mesh.rs = read() dispatch only; mesh/model.rs = Mesh, fields, TCMESH01 encode/decode;
                    mesh/helpers.rs = bounded byte access and limits; one file per simple format with its own tests
                    (stl, obj, ply, off, three_mf = 3MF+AMF, gltf, three_ds, points = PTS/XYZ/LAS)
+vendor/            vendored third-party crates as path dependencies, unchanged, with their licences (vendor/README.md): openskp (MIT)
 src/simmesh.rs     simulation results with fields: simmesh/vtk_legacy.rs, vtk_xml.rs, frd.rs over simmesh/grid.rs (cells → outer surface) and numbers.rs
 src/preview.rs     preview cache (vault/previews/), isolated conversion in a child process with time limit
                    (also the shape signatures and the mass integrals, cached per content hash)
@@ -119,7 +121,7 @@ src/invpart.rs     Inventor files: OLE storage RSeStorage, zlib segments (meta s
                    sections, typed arrays; src/invplace.rs: assembly components (UFRxDoc: files, visibility) + placements
                    (AmRxSegment), composed by services/assemblies.rs
 src/thumbnail.rs   preview images stored in Inventor / Solid Edge / SolidWorks / NX files (OLE via cfb, PNG, DIB → BMP, JPEG), cached in previews/;
-                   NX, SOLIDWORKS and Inventor parts/assemblies, Fusion designs: a PNG rendered from the 3D preview instead (mesh/render.rs, software z-buffer)
+                   NX, SOLIDWORKS and Inventor parts/assemblies, Rhino and SketchUp models, Fusion designs: a PNG rendered from the 3D preview instead (mesh/render.rs, software z-buffer)
 src/bomtable.rs    BOM tables exported by CAD programs (CSV/TSV, Excel, ODS): header synonyms, levels, units – heuristic
 src/stepbom.rs     product structure of STEP assemblies (own Part 21 reader: PRODUCT … NEXT_ASSEMBLY_USAGE_OCCURRENCE) → BomTable
 src/assets.rs      embedded CSS/JS/logos/fonts, cache busting (?v=<asset hash>, ETag)

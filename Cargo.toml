@@ -43,6 +43,9 @@ flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs", "chrono"] }
 # Zstandard entries of Fusion design archives (.f3d), read through zip's raw entries; pure Rust (MIT), no hash feature (the ZIP CRC-32 is checked)
 ruzstd = { version = "0.9", default-features = false, features = ["std"] }
+# SketchUp 3-2020 files (classic MFC container): the Rust port of OpenSKP (MIT),
+# vendored unchanged because it is not on crates.io – see vendor/README.md
+openskp = { path = "vendor/openskp", version = "1.5.0" }
 # SMTP for e-mail notifications (MIT); rustls/ring/webpki-roots as reqwest already uses
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls", "hostname"] }
 minijinja = "2"

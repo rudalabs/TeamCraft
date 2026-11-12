@@ -211,8 +211,9 @@ async fn a_revision_without_a_3d_file_says_so() {
     let (_, max) = app.user_in("max", Role::Editor, &["ROVER"]).await;
     let spec = part(&app, &max, "ROVER", "Harness spec").await;
     upload(&app, &max, &spec, "harness.pdf", b"%PDF-1.4").await;
-    // a native part without a lightweight model the viewer reads
-    upload(&app, &max, &spec, "harness.ipt", b"not a real part").await;
+    // a native part without a lightweight model the viewer reads (Solid
+    // Edge; Inventor parts have a 3D preview since #265)
+    upload(&app, &max, &spec, "harness.par", b"not a real part").await;
 
     let (_, result) = open(&app, &max, json!({ "item": spec })).await;
     assert_eq!(result["isError"], false, "{result}");
