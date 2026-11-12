@@ -35,6 +35,7 @@ pub const MESH_FORMATS: &[&str] = &[
     "vtk-legacy",
     "vtk-unstructured",
     "calculix-frd",
+    "fusion-design",
 ];
 
 /// File names `textindex` treats differently (quoted strings, plain text,

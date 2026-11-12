@@ -83,6 +83,7 @@ has the same notes under `/api/v1/file-versions/{id}/annotations`.
 | B-rep (tessellated) | STEP (`.step`, `.stp`, `.p21`)                                                                                                |
 | Native CAD          | NX parts (`.prt`), SOLIDWORKS parts (`.sldprt`, 2015+) – the tessellation stored in the file; their assemblies from the parts |
 | Native CAD          | Rhino models (`.3dm`) – the meshes stored in the file, SubD objects refined from their control net                            |
+|                     | Fusion designs (`.f3d`) – the display mesh Fusion stores                                                                      |
 | Meshes              | STL, OBJ, PLY, OFF, 3MF (incl. components), AMF, glTF / GLB, 3DS                                                              |
 | Point clouds        | PTS, XYZ, LAS (uncompressed), PLY and OBJ without faces                                                                       |
 | Simulation results  | VTK (`.vtk`), VTU, VTP, CalculiX FRD – coloured by result fields                                                              |
@@ -136,11 +137,14 @@ from their control net. Hidden objects and hidden layers are left out. A
 model saved without render meshes (*Save Small*, or very old files) has
 no 3D preview and shows the picture Rhino stored instead (see
 [Research: 3D preview of Rhino models](../research/rhino-3dm-preview.md)).
+**Fusion** designs (`.f3d`) carry the triangles Fusion draws on screen;
+TeamCraft shows them, refined the same way (see
+[Research: 3D preview of Fusion designs](../research/fusion-ogs-preview.md)).
 
 For the rest TeamCraft shows what other PLM systems show:
 
 * **A picture of the 3D preview** for NX and SOLIDWORKS parts and
-  assemblies and for Rhino models. It replaces the image stored in the file and is a 512 × 512
+  assemblies, Rhino models and Fusion designs. It replaces the image stored in the file and is a 512 × 512
   PNG with a transparent background, drawn once and cached. An assembly's
   picture is drawn again when one of its parts changes. Drawings, and
   assemblies none of whose parts are in TeamCraft, keep the stored image.

@@ -59,7 +59,12 @@ pub fn supports(format_id: &str) -> bool {
         || format_id.starts_with("solidedge-")
         || matches!(
             format_id,
-            "solidworks-part" | "solidworks-assembly" | "solidworks-drawing" | "nx-part" | "rhino"
+            "solidworks-part"
+                | "solidworks-assembly"
+                | "solidworks-drawing"
+                | "nx-part"
+                | "rhino"
+                | "fusion-design"
         )
 }
 
@@ -116,6 +121,9 @@ pub fn extract_from<R: Read + Seek>(mut file: R) -> io::Result<Option<Thumbnail>
     if head.starts_with(crate::mesh::rhino::MAGIC) {
         return from_rhino(file);
     }
+    if crate::fusion::is_archive(head) {
+        return from_fusion(file);
+    }
     let mut data = Vec::new();
     file.take(MAX_SCAN).read_to_end(&mut data)?;
     Ok(find_in(&data, false).map(|f| f.thumbnail))
@@ -137,6 +145,20 @@ fn from_sw_container<R: Read + Seek>(file: R) -> io::Result<Option<Thumbnail>> {
         return Ok(None);
     };
     let Some(data) = sw.read(crate::swpart::PREVIEW_SECTION, MAX_STREAM)? else {
+        return Ok(None);
+    };
+    Ok(png_at(&data).map(|f| f.thumbnail))
+}
+
+/// Fusion designs: the PNG Fusion stored (`Previews/big.png`).
+fn from_fusion<R: Read + Seek>(file: R) -> io::Result<Option<Thumbnail>> {
+    let Some(mut archive) = crate::fusion::Archive::open(file)? else {
+        return Ok(None);
+    };
+    let Some(name) = archive.entry(crate::fusion::PREVIEW_PNG) else {
+        return Ok(None);
+    };
+    let Some(data) = archive.read(&name, MAX_STREAM)? else {
         return Ok(None);
     };
     Ok(png_at(&data).map(|f| f.thumbnail))
@@ -459,14 +481,14 @@ pub const RENDERED_SIZE: u32 = 512;
 /// Formats whose thumbnail is rendered from their 3D preview instead of the
 /// image stored in the file: NX parts (the embedded JPEG is small and poor,
 /// the tessellation in the file is good) and SOLIDWORKS parts and
-/// assemblies and Rhino models (one look for every CAD system). Files without a 3D preview
-/// (drawings, assemblies none of whose parts are in TeamCraft, Rhino models
-/// saved without meshes) keep the
-/// stored image.
+/// assemblies, Rhino models and Fusion designs (one look for every CAD
+/// system). Files without a 3D preview (drawings, assemblies none of whose
+/// parts are in TeamCraft, Rhino models saved without meshes, Fusion files
+/// without a display scene) keep the stored image.
 pub fn rendered(format_id: &str) -> bool {
     matches!(
         format_id,
-        "nx-part" | "solidworks-part" | "solidworks-assembly" | "rhino"
+        "nx-part" | "solidworks-part" | "solidworks-assembly" | "rhino" | "fusion-design"
     )
 }
 

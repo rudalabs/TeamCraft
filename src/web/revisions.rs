@@ -1122,7 +1122,12 @@ async fn rendered_thumbnail(
         |e: tokio::task::JoinError| AppError::Other(anyhow::anyhow!("thumbnail task failed: {e}"));
     let store_failed =
         |e: std::io::Error| AppError::Other(anyhow::anyhow!("cannot store the thumbnail: {e}"));
-    if let Ok(mesh_path) = st.previews.mesh(&st.vault, &sha256, preview).await {
+    let mesh = st.previews.mesh(&st.vault, &sha256, preview).await;
+    if !preview.may_be_assembly() && mesh.is_err() {
+        // only assemblies are put together from their parts
+        return Ok(None);
+    }
+    if let Ok(mesh_path) = mesh {
         let cache = cache.to_path_buf();
         return tokio::task::spawn_blocking(
             move || -> std::io::Result<Option<thumbnail::Thumbnail>> {

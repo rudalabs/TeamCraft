@@ -30,6 +30,7 @@
 
 use anyhow::{anyhow, bail, ensure, Result};
 
+use super::pn::Lod;
 use super::{check_triangles, ends_early, Mesh};
 
 /// Largest symbol count of one packet.
@@ -52,8 +53,6 @@ const TRI_STRIP_SET_LOD: [u8; 16] = guid(
 );
 /// JT lengths are metres.
 const TO_MM: f64 = 1000.0;
-/// Triangles the refinement aims at (the LOD is refined up to 3 × 3).
-const REFINE_BUDGET: usize = 500_000;
 
 /// A GUID as stored in the file (first three fields little endian).
 const fn guid(a: u32, b: u16, c: u16, d: [u8; 8]) -> [u8; 16] {
@@ -168,63 +167,7 @@ fn read_jt(jt: &[u8]) -> Result<Mesh> {
         bail!("The lightweight representation of the NX part contains no triangles.");
     }
     let total: usize = lods.iter().map(|l| l.triangles.len()).sum();
-    let level = refine_level(total);
-    let mut mesh = Mesh::default();
-    for lod in lods {
-        let (points, triangles) = if level > 1 && lod.normals_valid() {
-            super::pn::refine(
-                &lod.points,
-                &lod.triangles,
-                &lod.normals,
-                &lod.normal_triangles,
-                level,
-            )
-        } else {
-            (lod.points, lod.triangles)
-        };
-        check_triangles(mesh.triangle_count() + triangles.len())?;
-        let mut part = Mesh {
-            parts: 1,
-            ..Mesh::default()
-        };
-        for p in &points {
-            part.vertex([p[0] * TO_MM, p[1] * TO_MM, p[2] * TO_MM]);
-        }
-        part.indices.extend(triangles.iter().flatten());
-        mesh.append(part);
-    }
-    Ok(mesh)
-}
-
-/// Subdivision level so that the refined mesh stays near the budget.
-pub(super) fn refine_level(triangles: usize) -> usize {
-    let mut level = 3;
-    while level > 1 && triangles.saturating_mul(level * level) > REFINE_BUDGET {
-        level -= 1;
-    }
-    level
-}
-
-/// One decoded level of detail: points in metres, triangles, and per
-/// triangle corner the index of its normal.
-#[derive(Debug, Default)]
-pub(crate) struct Lod {
-    pub points: Vec<[f64; 3]>,
-    pub triangles: Vec<[u32; 3]>,
-    pub normals: Vec<[f64; 3]>,
-    pub normal_triangles: Vec<[u32; 3]>,
-}
-
-impl Lod {
-    fn normals_valid(&self) -> bool {
-        !self.normals.is_empty()
-            && self.normal_triangles.len() == self.triangles.len()
-            && self
-                .normal_triangles
-                .iter()
-                .flatten()
-                .all(|&n| (n as usize) < self.normals.len())
-    }
+    super::pn::to_mesh(lods, total, TO_MM)
 }
 
 /// The Tri-Strip Set element of a shape LOD segment, if it has one.

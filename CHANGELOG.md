@@ -15,6 +15,9 @@ see the notices in the README.
 
 ### Added
 
+- 3D preview of Autodesk Fusion designs (`.f3d`) from the display mesh
+  Fusion stores in the file, refined along its exact normals like NX parts;
+  the thumbnail is rendered from it (the PNG Fusion stored is the fallback).
 - Offboarding (#173, step 8): **Season handover** of a project group
   (`/projects/{id}/season`, managers and administrators): tick the members
   who leave – or let the page tick those inactive since a date or past their

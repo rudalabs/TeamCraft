@@ -171,6 +171,8 @@ pub enum PreviewFormat {
     SwAssembly,
     /// Rhino models: the meshes they store, SubD control nets refined.
     Rhino,
+    /// Autodesk Fusion designs: the display scene they store.
+    FusionDesign,
     Pts,
     Xyz,
     Las,
@@ -182,7 +184,7 @@ pub enum PreviewFormat {
 }
 
 impl PreviewFormat {
-    pub const ALL: [PreviewFormat; 22] = [
+    pub const ALL: [PreviewFormat; 23] = [
         PreviewFormat::Stl,
         PreviewFormat::Obj,
         PreviewFormat::Ply,
@@ -198,6 +200,7 @@ impl PreviewFormat {
         PreviewFormat::SwPart,
         PreviewFormat::SwAssembly,
         PreviewFormat::Rhino,
+        PreviewFormat::FusionDesign,
         PreviewFormat::Pts,
         PreviewFormat::Xyz,
         PreviewFormat::Las,
@@ -235,6 +238,7 @@ impl PreviewFormat {
             PreviewFormat::SwPart => "solidworks-part",
             PreviewFormat::SwAssembly => "solidworks-assembly",
             PreviewFormat::Rhino => "rhino",
+            PreviewFormat::FusionDesign => "fusion-design",
             PreviewFormat::Pts => "pts",
             PreviewFormat::Xyz => "xyz",
             PreviewFormat::Las => "las",

@@ -167,10 +167,10 @@ end-to-end tests against a real PostgreSQL.
 - **3D preview** – in the browser, converted on the server, no plug-ins:
   STEP, NX and SOLIDWORKS parts and assemblies (put together from their part
   files, hidden components left out), Rhino models (`.3dm`, SubD included),
-  STL, OBJ, PLY, 3MF, glTF, point clouds and more.
+  Fusion designs (`.f3d`), STL, OBJ, PLY, 3MF, glTF, point clouds and more.
 - **CAD thumbnails** – the preview images stored in Inventor and Solid Edge
-  files; NX, SOLIDWORKS and Rhino files get a sharper thumbnail rendered from
-  their 3D preview.
+  files; NX, SOLIDWORKS, Rhino and Fusion files get a sharper thumbnail
+  rendered from their 3D preview.
 - **FEA/CFD results** – VTK, VTU/VTP and CalculiX results coloured by a result
   field, with legend.
 - **Search** – ranked full-text search over numbers, names, materials, file
