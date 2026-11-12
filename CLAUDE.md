@@ -91,7 +91,7 @@ src/assistant.rs   built-in assistant ("Ask TeamCraft"): tool loop over src/llm 
 src/pagecontext.rs the page the user is on (kind, ids, view, rule, query, rows shown): parsing and caps only – ids are hints
 src/vault.rs       content-addressed file storage (objects/ab/cd/<sha256>)
 src/httprange.rs   Range / If-Range of file downloads (ETag = SHA-256, 206 / 416): resumable downloads
-src/mesh.rs        pure-Rust 3D readers (STL, OBJ, PLY, OFF, 3MF, AMF, glTF, 3DS, PTS/XYZ/LAS, STEP via truck, NX parts via their JT stream: mesh/jt.rs, SOLIDWORKS parts via their display lists: mesh/sw.rs, both + PN refinement mesh/pn.rs,
+src/mesh.rs        pure-Rust 3D readers (STL, OBJ, PLY, OFF, 3MF, AMF, glTF, 3DS, PTS/XYZ/LAS, STEP via truck, NX parts via their JT stream: mesh/jt.rs, SOLIDWORKS parts via their display lists: mesh/sw.rs, Inventor parts via their graphics segment: mesh/inventor.rs, all + PN refinement mesh/pn.rs,
                    Rhino .3dm: stored meshes, SubD subdivided, blocks placed: mesh/rhino.rs,
                    SketchUp .skp: faces triangulated (mesh/earcut.rs), components placed: mesh/sketchup.rs, 3–2020 files via vendor/openskp) → TCMESH01;
                    mesh.rs = read() dispatch only; mesh/model.rs = Mesh, fields, TCMESH01 encode/decode;
@@ -116,8 +116,11 @@ src/nxasm.rs       NX assemblies: components + placements from /Root/FastLoad/St
                    services/assemblies.rs composes the assembly preview from the parts' previews (found by file name)
 src/swpart.rs      SOLIDWORKS 2015+ section container: Deflate sections (bounded, CRC-checked), PreviewPNG, component tree (COMPINSTANCETREE):
                    referenced files and placements (assembly previews, also via services/assemblies.rs)
+src/invpart.rs     Inventor files: OLE storage RSeStorage, zlib segments (meta stream: section lengths + class UUID table),
+                   sections, typed arrays; src/invplace.rs: assembly components (UFRxDoc: files, visibility) + placements
+                   (AmRxSegment), composed by services/assemblies.rs
 src/thumbnail.rs   preview images stored in Inventor / Solid Edge / SolidWorks / NX files (OLE via cfb, PNG, DIB → BMP, JPEG), cached in previews/;
-                   NX and SOLIDWORKS parts/assemblies, Rhino and SketchUp models: a PNG rendered from the 3D preview instead (mesh/render.rs, software z-buffer)
+                   NX, SOLIDWORKS and Inventor parts/assemblies, Rhino and SketchUp models: a PNG rendered from the 3D preview instead (mesh/render.rs, software z-buffer)
 src/bomtable.rs    BOM tables exported by CAD programs (CSV/TSV, Excel, ODS): header synonyms, levels, units – heuristic
 src/stepbom.rs     product structure of STEP assemblies (own Part 21 reader: PRODUCT … NEXT_ASSEMBLY_USAGE_OCCURRENCE) → BomTable
 src/assets.rs      embedded CSS/JS/logos/fonts, cache busting (?v=<asset hash>, ETag)

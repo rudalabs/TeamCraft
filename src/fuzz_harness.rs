@@ -63,6 +63,23 @@ pub fn swpart(data: &[u8]) {
     }
 }
 
+/// Inventor files: the segments of the part graphics and the assembly
+/// placements walked, the 3D preview of a part, the components of an
+/// assembly.
+pub fn invpart(data: &[u8]) {
+    let _ = crate::mesh::read("inventor-part", data);
+    let _ = crate::invplace::components(data);
+    if let Ok(mut ole) = cfb::CompoundFile::open(Cursor::new(data)) {
+        for name in ["PmGraphicsSegment", crate::invplace::PLACEMENTS] {
+            if let Ok(Some(segment)) = crate::invpart::segment(&mut ole, name, LIMIT) {
+                for section in segment.sections() {
+                    let _ = section;
+                }
+            }
+        }
+    }
+}
+
 /// NX part stream container: directory, every stream, the reference
 /// streams and the JT tessellation of the 3D preview.
 pub fn nxpart(data: &[u8]) {
@@ -210,6 +227,7 @@ pub const TARGETS: &[Target] = &[
     ("stepbom", stepbom),
     ("swpart", swpart),
     ("nxpart", nxpart),
+    ("invpart", invpart),
     ("cadrefs", cadrefs),
     ("bomtable", bomtable),
     ("thumbnail", thumbnail),
