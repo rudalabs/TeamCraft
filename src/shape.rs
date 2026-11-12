@@ -34,8 +34,9 @@ use crate::mesh::Mesh;
 /// are ignored and computed again – also when the preview meshes change
 /// (`preview::CACHE_VERSION`), since the signature is computed from them.
 /// 2: the STEP readers of preview cache version 2 (tessellated AP242,
-/// partial previews without a signature).
-pub const VERSION: i16 = 2;
+/// partial previews without a signature). 3: preview cache version 3
+/// (Inventor parts with Zstandard segments, #271).
+pub const VERSION: i16 = 3;
 /// Bins of the D2 histogram.
 pub const D2_BINS: usize = 32;
 /// Point pairs drawn for the D2 histogram.
