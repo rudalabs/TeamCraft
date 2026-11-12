@@ -66,6 +66,9 @@ pub struct Component {
     pub translation: [f64; 3],
     /// The layer the component was moved to (`None`: the default layer).
     pub layer: Option<u32>,
+    /// Inventor only: the occurrence (id, persistent key) and the poses its
+    /// assembly gives components further down (flexible sub-assemblies).
+    pub occurrence: Option<crate::invplace::Occurrence>,
 }
 
 impl Component {
@@ -98,6 +101,7 @@ impl Component {
             rotation,
             translation: parent.place(self.translation),
             layer: self.layer,
+            occurrence: self.occurrence.clone(),
         }
     }
 }
@@ -109,6 +113,7 @@ pub fn identity() -> Component {
         rotation: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
         translation: [0.0; 3],
         layer: None,
+        occurrence: None,
     }
 }
 
@@ -814,6 +819,7 @@ mod tests {
             rotation: [[0.0, 1.0, 0.0], [-1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
             translation: [10.0, 0.0, 0.0],
             layer: Some(9),
+            occurrence: None,
         };
         assert_eq!(quarter.within(&identity()).layer, Some(9));
         assert_eq!(quarter.place([1.0, 0.0, 0.0]), [10.0, 1.0, 0.0]);

@@ -1122,6 +1122,9 @@ async fn rendered_thumbnail(
         |e: tokio::task::JoinError| AppError::Other(anyhow::anyhow!("thumbnail task failed: {e}"));
     let store_failed =
         |e: std::io::Error| AppError::Other(anyhow::anyhow!("cannot store the thumbnail: {e}"));
+    // An image in the cache is answered at once. Only a missing one is drawn,
+    // through `Previews::render`: a few at a time, and once per image however
+    // many requests ask for it (a folder of new parts asks for all of them).
     let mesh = st.previews.mesh(&st.vault, &sha256, preview).await;
     if !preview.may_be_assembly() && mesh.is_err() {
         // only assemblies are put together from their parts
@@ -1129,46 +1132,66 @@ async fn rendered_thumbnail(
     }
     if let Ok(mesh_path) = mesh {
         let cache = cache.to_path_buf();
-        return tokio::task::spawn_blocking(
-            move || -> std::io::Result<Option<thumbnail::Thumbnail>> {
-                if let Some(Some(known)) = thumbnail::lookup(&cache, &sha256)? {
-                    return Ok(Some(known));
-                }
-                let Some(image) = thumbnail::render_mesh(&std::fs::read(mesh_path)?) else {
-                    return Ok(None);
-                };
-                thumbnail::store(&cache, &sha256, Some(&image))?;
-                Ok(Some(image))
-            },
-        )
-        .await
-        .map_err(blocking_failed)?
-        .map_err(store_failed);
+        let known = {
+            let (cache, sha256) = (cache.clone(), sha256.clone());
+            tokio::task::spawn_blocking(move || thumbnail::lookup(&cache, &sha256))
+                .await
+                .map_err(blocking_failed)?
+                .map_err(store_failed)?
+        };
+        if let Some(Some(known)) = known {
+            return Ok(Some(known));
+        }
+        let key = format!("thumbnail of {sha256}");
+        return st
+            .previews
+            .render(
+                &key,
+                move || -> std::io::Result<Option<thumbnail::Thumbnail>> {
+                    if let Some(Some(known)) = thumbnail::lookup(&cache, &sha256)? {
+                        return Ok(Some(known));
+                    }
+                    let Some(image) = thumbnail::render_mesh(&std::fs::read(mesh_path)?) else {
+                        return Ok(None);
+                    };
+                    thumbnail::store(&cache, &sha256, Some(&image))?;
+                    Ok(Some(image))
+                },
+            )
+            .await?
+            .map_err(store_failed);
     }
     let Some(mesh_path) =
         crate::services::assemblies::mesh(st, me, file.revision_id, &sha256, &file.format).await?
     else {
         return Ok(None);
     };
-    tokio::task::spawn_blocking(move || -> std::io::Result<Option<thumbnail::Thumbnail>> {
-        let png = mesh_path.with_extension("png");
-        if let Ok(bytes) = std::fs::read(&png) {
-            return Ok(Some(thumbnail::Thumbnail {
-                content_type: "image/png",
-                bytes,
-            }));
-        }
-        let Some(image) = thumbnail::render_mesh(&std::fs::read(&mesh_path)?) else {
-            return Ok(None);
-        };
-        let tmp = png.with_extension(format!("{}.tmp", Uuid::new_v4().simple()));
-        std::fs::write(&tmp, &image.bytes)?;
-        std::fs::rename(&tmp, &png)?;
-        Ok(Some(image))
-    })
-    .await
-    .map_err(blocking_failed)?
-    .map_err(store_failed)
+    let png = mesh_path.with_extension("png");
+    let stored = |bytes| thumbnail::Thumbnail {
+        content_type: "image/png",
+        bytes,
+    };
+    if let Ok(bytes) = tokio::fs::read(&png).await {
+        return Ok(Some(stored(bytes)));
+    }
+    st.previews
+        .render(&png.to_string_lossy(), {
+            let png = png.clone();
+            move || -> std::io::Result<Option<thumbnail::Thumbnail>> {
+                if let Ok(bytes) = std::fs::read(&png) {
+                    return Ok(Some(stored(bytes)));
+                }
+                let Some(image) = thumbnail::render_mesh(&std::fs::read(&mesh_path)?) else {
+                    return Ok(None);
+                };
+                let tmp = png.with_extension(format!("{}.tmp", Uuid::new_v4().simple()));
+                std::fs::write(&tmp, &image.bytes)?;
+                std::fs::rename(&tmp, &png)?;
+                Ok(Some(image))
+            }
+        })
+        .await?
+        .map_err(store_failed)
 }
 
 /// The preview image of a CAD file, read once and cached next to the 3D

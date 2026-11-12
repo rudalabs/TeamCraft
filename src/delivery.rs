@@ -18,8 +18,14 @@
 //! Without configuration the pending rows are marked `skipped`. A failed
 //! delivery is retried on the next runs and marked `failed` after
 //! [`MAX_ATTEMPTS`]. One TeamCraft instance delivers (no row locking).
+//!
+//! A run serves [`PARALLEL_RECIPIENTS`] recipients at the same time; the
+//! notifications of one recipient go out one after the other, in the order
+//! they were queued, e-mail and chat of a notification side by side. A mail
+//! server that answers slowly (the SMTP timeout is 20 s) holds up the
+//! recipient it is serving, not the whole run and not the chat messages.
 
-use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
+use std::{collections::HashMap, future::Future, pin::Pin, sync::Arc, time::Duration};
 
 use lettre::{
     message::{header::ContentType, Mailbox},
@@ -31,7 +37,7 @@ use uuid::Uuid;
 
 use crate::{
     config::Config,
-    error::AppResult,
+    error::{AppError, AppResult},
     mattermost::{BotClient, ChatFailure, DirectMessenger},
 };
 
@@ -39,6 +45,29 @@ use crate::{
 pub const MAX_ATTEMPTS: i32 = 5;
 /// Pause between two runs of the background task.
 const INTERVAL: Duration = Duration::from_secs(15);
+/// Recipients served at the same time, i.e. the connections one run opens
+/// to the mail server at most. Hosted mail services limit the simultaneous
+/// connections of one sender to a handful (three is common), so this stays
+/// small: enough that one slow delivery does not hold up the others.
+pub const PARALLEL_RECIPIENTS: usize = 3;
+
+/// A notification with a pending channel, and what its delivery needs.
+#[derive(sqlx::FromRow)]
+struct Pending {
+    id: Uuid,
+    user_id: Uuid,
+    title: String,
+    body: String,
+    link: String,
+    email_state: String,
+    chat_state: String,
+    delivery_attempts: i32,
+    email: Option<String>,
+    display_name: String,
+    chat_user: String,
+    confidential: bool,
+    generic: bool,
+}
 
 pub type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
@@ -240,25 +269,11 @@ impl Delivery {
         ))
         .execute(pool)
         .await?;
-        #[derive(sqlx::FromRow)]
-        struct Row {
-            id: Uuid,
-            title: String,
-            body: String,
-            link: String,
-            email_state: String,
-            chat_state: String,
-            delivery_attempts: i32,
-            email: Option<String>,
-            display_name: String,
-            chat_user: String,
-            confidential: bool,
-            generic: bool,
-        }
         // `confidential` is evaluated now: a group restricted after the row
         // was queued keeps the text out of a shared channel.
-        let rows = sqlx::query_as::<_, Row>(&format!(
-            "SELECT n.id, n.title, n.body, n.link, n.email_state, n.chat_state, n.delivery_attempts,
+        let rows = sqlx::query_as::<_, Pending>(&format!(
+            "SELECT n.id, n.user_id, n.title, n.body, n.link, n.email_state, n.chat_state,
+                    n.delivery_attempts,
                     u.email, u.display_name, COALESCE(u.mattermost_username, u.username) AS chat_user,
                     {} AS confidential, {} AS generic
              FROM notifications n JOIN users u ON u.id = n.user_id
@@ -273,90 +288,161 @@ impl Delivery {
             .await?
             .name(&self.instance_name)
             .to_string();
+        // One line per recipient, in the order the notifications were queued:
+        // a user reads theirs in order, and the recipients are served side by
+        // side, so a slow mail server holds up one line, not all of them.
+        let mut lines: Vec<Vec<Pending>> = Vec::new();
+        let mut line_of: HashMap<Uuid, usize> = HashMap::new();
+        for row in rows {
+            let at = *line_of.entry(row.user_id).or_insert(lines.len());
+            match lines.get_mut(at) {
+                Some(line) => line.push(row),
+                None => lines.push(vec![row]),
+            }
+        }
+        let mut lines = lines.into_iter();
+        let mut tasks = tokio::task::JoinSet::new();
         let mut report = Report::default();
-        for mut row in rows {
-            // a group that switched `notification_content` off: generic text
-            // and the link only, in e-mail and chat (direct messages too)
-            if row.generic {
-                (row.title, row.body) = generic_text(&self.instance_name);
-            }
-            let url = format!("{}{}", self.public_url, row.link);
-            let mut errors = Vec::new();
-            let mut email_state = row.email_state.clone();
-            if email_state == "pending" {
-                match self
-                    .send_mail(
-                        &name,
-                        &row.title,
-                        &row.body,
-                        &url,
-                        row.email.as_deref(),
-                        &row.display_name,
-                    )
-                    .await
-                {
-                    Ok(()) => {
-                        email_state = "sent".into();
-                        report.emails += 1;
+        let mut failed: Option<AppError> = None;
+        loop {
+            // after a failure (the database) no further line is started
+            while failed.is_none() && tasks.len() < PARALLEL_RECIPIENTS {
+                let Some(line) = lines.next() else { break };
+                let (delivery, pool, name) = (self.clone(), pool.clone(), name.clone());
+                tasks.spawn(async move {
+                    let mut report = Report::default();
+                    for row in line {
+                        delivery.deliver(&pool, &name, row, &mut report).await?;
                     }
-                    Err(e) => errors.push(format!("e-mail: {e}")),
+                    Ok::<_, AppError>(report)
+                });
+            }
+            // a line that was started is finished: what it sent is recorded
+            let Some(done) = tasks.join_next().await else {
+                break;
+            };
+            match done {
+                Ok(Ok(line)) => {
+                    report.emails += line.emails;
+                    report.chats += line.chats;
+                    report.failures += line.failures;
+                }
+                Ok(Err(e)) => failed = failed.or(Some(e)),
+                Err(e) => {
+                    failed = failed.or(Some(AppError::Other(anyhow::anyhow!(
+                        "notification delivery task failed: {e}"
+                    ))));
                 }
             }
-            let mut chat_state = row.chat_state.clone();
-            let mut permanent_chat = false;
-            if chat_state == "pending" {
-                match self
-                    .post_chat(
-                        &name,
-                        &row.title,
-                        &row.body,
-                        &url,
-                        &row.chat_user,
-                        row.confidential,
-                    )
-                    .await
-                {
-                    Ok(()) => {
-                        chat_state = "sent".into();
-                        report.chats += 1;
-                    }
-                    Err(e) => {
-                        // an unknown or deactivated user does not appear by retrying
-                        permanent_chat = e.permanent;
-                        errors.push(format!("Mattermost: {e}"));
-                    }
-                }
+        }
+        match failed {
+            Some(e) => Err(e),
+            None => Ok(report),
+        }
+    }
+
+    /// Sends one notification on its pending channels – e-mail and chat at
+    /// the same time, they do not depend on each other – and records the
+    /// outcome.
+    async fn deliver(
+        &self,
+        pool: &PgPool,
+        name: &str,
+        mut row: Pending,
+        report: &mut Report,
+    ) -> AppResult<()> {
+        // a group that switched `notification_content` off: generic text
+        // and the link only, in e-mail and chat (direct messages too)
+        if row.generic {
+            (row.title, row.body) = generic_text(&self.instance_name);
+        }
+        let url = format!("{}{}", self.public_url, row.link);
+        let mail = async {
+            if row.email_state != "pending" {
+                return None;
             }
-            let attempts = row.delivery_attempts + i32::from(!errors.is_empty());
-            if !errors.is_empty() {
-                report.failures += 1;
-                tracing::warn!(notification = %row.id, attempts, errors = %errors.join("; "), "notification delivery failed");
-                if attempts >= MAX_ATTEMPTS {
-                    if email_state == "pending" {
-                        email_state = "failed".into();
-                    }
-                    if chat_state == "pending" {
-                        chat_state = "failed".into();
-                    }
+            Some(
+                self.send_mail(
+                    name,
+                    &row.title,
+                    &row.body,
+                    &url,
+                    row.email.as_deref(),
+                    &row.display_name,
+                )
+                .await,
+            )
+        };
+        let chat = async {
+            if row.chat_state != "pending" {
+                return None;
+            }
+            Some(
+                self.post_chat(
+                    name,
+                    &row.title,
+                    &row.body,
+                    &url,
+                    &row.chat_user,
+                    row.confidential,
+                )
+                .await,
+            )
+        };
+        let (mailed, posted) = tokio::join!(mail, chat);
+        let mut errors = Vec::new();
+        let mut email_state = row.email_state.clone();
+        match mailed {
+            Some(Ok(())) => {
+                email_state = "sent".into();
+                report.emails += 1;
+            }
+            Some(Err(e)) => errors.push(format!("e-mail: {e}")),
+            None => {}
+        }
+        let mut chat_state = row.chat_state.clone();
+        let mut permanent_chat = false;
+        match posted {
+            Some(Ok(())) => {
+                chat_state = "sent".into();
+                report.chats += 1;
+            }
+            Some(Err(e)) => {
+                // an unknown or deactivated user does not appear by retrying
+                permanent_chat = e.permanent;
+                errors.push(format!("Mattermost: {e}"));
+            }
+            None => {}
+        }
+        let attempts = row.delivery_attempts + i32::from(!errors.is_empty());
+        if !errors.is_empty() {
+            report.failures += 1;
+            tracing::warn!(notification = %row.id, attempts, errors = %errors.join("; "), "notification delivery failed");
+            if attempts >= MAX_ATTEMPTS {
+                if email_state == "pending" {
+                    email_state = "failed".into();
                 }
-                if permanent_chat && chat_state == "pending" {
+                if chat_state == "pending" {
                     chat_state = "failed".into();
                 }
             }
-            sqlx::query(
-                "UPDATE notifications SET email_state = $2, chat_state = $3, delivery_attempts = $4,
-                        delivery_error = $5
-                 WHERE id = $1",
-            )
-            .bind(row.id)
-            .bind(&email_state)
-            .bind(&chat_state)
-            .bind(attempts)
-            .bind(errors.join("; "))
-            .execute(pool)
-            .await?;
+            if permanent_chat && chat_state == "pending" {
+                chat_state = "failed".into();
+            }
         }
-        Ok(report)
+        sqlx::query(
+            "UPDATE notifications SET email_state = $2, chat_state = $3, delivery_attempts = $4,
+                    delivery_error = $5
+             WHERE id = $1",
+        )
+        .bind(row.id)
+        .bind(&email_state)
+        .bind(&chat_state)
+        .bind(attempts)
+        .bind(errors.join("; "))
+        .execute(pool)
+        .await?;
+        Ok(())
     }
 
     async fn send_mail(

@@ -148,6 +148,44 @@ impl Mesh {
         self.parts += other.parts.max(1);
     }
 
+    /// Appends the geometry of `other` with every vertex moved by `place`:
+    /// what [`Mesh::append`] does with a placed copy of `other`, without
+    /// making that copy first (an assembly places the same part many times).
+    /// Indices are shifted and colours filled in the same way; result fields
+    /// and the partial-preview note belong to one file and are not carried
+    /// over.
+    pub fn append_placed(&mut self, other: &Mesh, place: impl Fn([f64; 3]) -> [f64; 3]) {
+        let offset = self.vertex_count() as u32;
+        self.fields.clear();
+        if self.colors.is_empty() && !other.colors.is_empty() {
+            self.colors = NEUTRAL.repeat(self.vertex_count());
+        }
+        if !self.colors.is_empty() || !other.colors.is_empty() {
+            if other.colors.is_empty() {
+                self.colors
+                    .extend_from_slice(&NEUTRAL.repeat(other.vertex_count()));
+            } else {
+                self.colors.extend_from_slice(&other.colors);
+            }
+        }
+        // copied in one piece, then moved where they are
+        let first = self.positions.len();
+        self.positions.extend_from_slice(&other.positions);
+        if let Some(placed) = self.positions.get_mut(first..) {
+            for v in placed.chunks_exact_mut(3) {
+                if let [x, y, z] = v {
+                    let q = place([f64::from(*x), f64::from(*y), f64::from(*z)]);
+                    *x = q[0] as f32;
+                    *y = q[1] as f32;
+                    *z = q[2] as f32;
+                }
+            }
+        }
+        self.indices
+            .extend(other.indices.iter().map(|i| i + offset));
+        self.parts += other.parts.max(1);
+    }
+
     /// Validates the mesh: finite coordinates, indices in range, limits.
     pub fn check(&self) -> Result<()> {
         if self.positions.is_empty() {
@@ -565,6 +603,72 @@ mod tests {
         c.append(with_field("S"));
         assert!(c.fields.is_empty());
         assert!(b.check().is_ok() && c.check().is_ok());
+    }
+
+    /// `append_placed` must give exactly what the copy it replaces gave: a
+    /// clone of the part without fields, moved, then appended.
+    #[test]
+    fn append_placed_equals_appending_a_moved_copy() {
+        let place = |p: [f64; 3]| [p[1] + 10.0, -p[0] + 0.5, p[2] * 2.0 - 3.0];
+        fn plain() -> Mesh {
+            Mesh {
+                positions: vec![0., 0., 0., 1., 0., 0., 0., 1., 0., 0.25, 0.5, 4.],
+                indices: vec![0, 1, 2, 1, 2, 3],
+                parts: 0,
+                ..Mesh::default()
+            }
+        }
+        fn coloured() -> Mesh {
+            Mesh {
+                colors: vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12],
+                parts: 3,
+                ..plain()
+            }
+        }
+        fn with_field() -> Mesh {
+            Mesh {
+                fields: vec![Field {
+                    name: "T".into(),
+                    unit: "K".into(),
+                    values: vec![1.0; 4],
+                }],
+                faces: Some((1, 2)),
+                ..coloured()
+            }
+        }
+        let by_copy = |out: &mut Mesh, part: &Mesh| {
+            let mut placed = part.clone();
+            placed.fields.clear();
+            placed.faces = None;
+            for p in placed.positions.chunks_exact_mut(3) {
+                let q = place([f64::from(p[0]), f64::from(p[1]), f64::from(p[2])]);
+                p.copy_from_slice(&[q[0] as f32, q[1] as f32, q[2] as f32]);
+            }
+            out.append(placed);
+        };
+        // every order of parts with and without colours, starting empty
+        let parts = [plain(), coloured(), with_field()];
+        for first in 0..3 {
+            for second in 0..3 {
+                for third in 0..3 {
+                    let (mut direct, mut copied) = (Mesh::default(), Mesh::default());
+                    for i in [first, second, third] {
+                        direct.append_placed(&parts[i], place);
+                        by_copy(&mut copied, &parts[i]);
+                    }
+                    assert_eq!(direct, copied, "{first} {second} {third}");
+                    assert!(direct.check().is_ok());
+                    assert_eq!(direct.vertex_count(), 12);
+                    assert_eq!(direct.indices[6..], [4, 5, 6, 5, 6, 7, 8, 9, 10, 9, 10, 11]);
+                }
+            }
+        }
+        // the part itself is untouched, and a mesh with fields loses them
+        assert_eq!(parts[2], with_field());
+        let mut target = with_field();
+        target.append_placed(&parts[0], place);
+        assert!(target.fields.is_empty());
+        assert_eq!(target.parts, 4);
     }
 
     #[test]
