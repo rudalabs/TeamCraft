@@ -331,6 +331,60 @@ fn damaged_solidworks_parts_never_panic() {
     }
 }
 
+/// Creo parts are tessellated from the B-rep they store (no display
+/// tessellation in the file): the NIST part is closed and matches its
+/// STEP export.
+#[test]
+fn creo_parts_get_a_3d_preview() {
+    let rel = "ctc-01/creo-10/nist_ctc_01_asme1_rd_cr10030.prt.5";
+    assert_eq!(
+        preview::PreviewFormat::of(rel),
+        Some(preview::PreviewFormat::CreoPart)
+    );
+    let mesh = preview::convert(preview::PreviewFormat::CreoPart, &fixture(rel))
+        .unwrap_or_else(|e| panic!("{rel}: {e}"));
+    mesh.check().unwrap();
+    assert!(
+        mesh.triangle_count() > 10_000,
+        "{rel}: {}",
+        mesh.triangle_count()
+    );
+    assert!(is_closed(&mesh), "{rel}: not closed");
+    let s = teamcraft::shape::compute(&mesh).unwrap_or_else(|e| panic!("{rel}: {e}"));
+    assert!(s.is_valid() && s.closed && s.volume > 0.0, "{rel}: {s:?}");
+    let b = mesh.bounds();
+    let (min, max) = ([-400.0, -225.0, -100.0], [400.0, 225.0, 50.0]);
+    for i in 0..3 {
+        assert!((b[i] - min[i]).abs() < 0.05, "{rel}: {b:?}");
+        assert!((b[i + 3] - max[i]).abs() < 0.05, "{rel}: {b:?}");
+    }
+}
+
+/// A damaged Creo file is an error, never a panic: the file is cut short
+/// and bytes all over it are overwritten.
+#[test]
+fn damaged_creo_parts_never_panic() {
+    let rel = "ctc-01/creo-10/nist_ctc_01_asme1_rd_cr10030.prt.5";
+    let bytes = std::fs::read(fixture(rel)).unwrap();
+    for cut in (0..bytes.len()).step_by(bytes.len() / 40) {
+        let _ = mesh::read("creo-part", &bytes[..cut]);
+    }
+    let mut state = 0x9e37_79b9_7f4a_7c15u64;
+    for _ in 0..30 {
+        let mut damaged = bytes.clone();
+        for _ in 0..16 {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            let at = (state % damaged.len() as u64) as usize;
+            damaged[at] = (state >> 32) as u8;
+        }
+        if let Ok(mesh) = mesh::read("creo-part", &damaged) {
+            mesh.check().unwrap();
+        }
+    }
+}
+
 /// Inventor parts show the display tessellation they store, welded on its
 /// exact coordinates and refined along its normals; ctc-01 has the bounding
 /// box of its NX and STEP versions.

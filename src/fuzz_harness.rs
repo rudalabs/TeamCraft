@@ -225,12 +225,26 @@ pub fn mesh_step(data: &[u8]) {
 /// A target: its name (as in `fuzz/fuzz_targets/<name>.rs`) and entry point.
 pub type Target = (&'static str, fn(&[u8]));
 
+/// Creo part container: table of contents, every section inflated and
+/// parsed, and the 3D preview tessellated from the B-rep.
+pub fn creopart(data: &[u8]) {
+    if let Ok(toc) = crate::mesh::creo::container::toc(data) {
+        for e in toc.iter().take(400) {
+            if let Ok(Some(body)) = crate::mesh::creo::container::section(data, &toc, &e.name) {
+                let _ = crate::mesh::creo::tagged::parse(&body);
+            }
+        }
+    }
+    let _ = crate::mesh::read("creo-part", data);
+}
+
 /// Every target by name: the fuzz targets and the corpus test use this list.
 pub const TARGETS: &[Target] = &[
     ("stepbom", stepbom),
     ("swpart", swpart),
     ("nxpart", nxpart),
     ("invpart", invpart),
+    ("creopart", creopart),
     ("cadrefs", cadrefs),
     ("bomtable", bomtable),
     ("thumbnail", thumbnail),

@@ -186,6 +186,8 @@ pub enum PreviewFormat {
     CatiaPart,
     /// SketchUp models: their faces triangulated, components placed.
     SketchUp,
+    /// PTC Creo parts: tessellated from the B-rep they store.
+    CreoPart,
     /// Autodesk Fusion designs: the display scene they store.
     FusionDesign,
     Pts,
@@ -199,7 +201,7 @@ pub enum PreviewFormat {
 }
 
 impl PreviewFormat {
-    pub const ALL: [PreviewFormat; 27] = [
+    pub const ALL: [PreviewFormat; 28] = [
         PreviewFormat::Stl,
         PreviewFormat::Obj,
         PreviewFormat::Ply,
@@ -219,6 +221,7 @@ impl PreviewFormat {
         PreviewFormat::InvAssembly,
         PreviewFormat::CatiaPart,
         PreviewFormat::SketchUp,
+        PreviewFormat::CreoPart,
         PreviewFormat::FusionDesign,
         PreviewFormat::Pts,
         PreviewFormat::Xyz,
@@ -261,6 +264,7 @@ impl PreviewFormat {
             PreviewFormat::InvAssembly => "inventor-assembly",
             PreviewFormat::CatiaPart => "catia-part",
             PreviewFormat::SketchUp => "sketchup",
+            PreviewFormat::CreoPart => "creo-part",
             PreviewFormat::FusionDesign => "fusion-design",
             PreviewFormat::Pts => "pts",
             PreviewFormat::Xyz => "xyz",
@@ -282,7 +286,7 @@ impl PreviewFormat {
 
     /// B-rep formats are tessellated (slower) – the rest is read as is.
     pub fn is_brep(self) -> bool {
-        matches!(self, PreviewFormat::Step)
+        matches!(self, PreviewFormat::Step | PreviewFormat::CreoPart)
     }
 
     /// Assemblies whose preview is put together from their parts' previews

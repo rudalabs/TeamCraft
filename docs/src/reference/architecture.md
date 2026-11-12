@@ -39,7 +39,9 @@
   (`mesh/inventor.rs`), the CGR visualisation data inside CATIA V5 parts
   (`mesh/catia.rs`) and the display scene inside Fusion designs
   (`mesh/f3d.rs`, archive in `fusion.rs`) and refines them along their stored
-  normals (`mesh/pn.rs`); stand-alone JT 10 files and JT 9.5 assemblies come with
+  normals (`mesh/pn.rs`); Creo parts carry no tessellation, so their exact
+  B-rep is read and triangulated (`mesh/creo/`: container, tagged format,
+  surfaces, tessellation); stand-alone JT 10 files and JT 9.5 assemblies come with
   their scene graph (`mesh/jt10.rs`), Rhino models with their stored meshes
   and SubD (`mesh/rhino.rs`), SketchUp models are triangulated with earcut
   (`mesh/sketchup.rs`, `mesh/earcut.rs`; SketchUp 3–2020 through the vendored

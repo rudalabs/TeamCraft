@@ -25,6 +25,7 @@
 use anyhow::{bail, Result};
 
 mod catia;
+pub mod creo;
 mod earcut;
 mod f3d;
 mod gltf;
@@ -72,6 +73,7 @@ pub fn read(format: &str, data: &[u8]) -> Result<Mesh> {
         "nx-part" => jt::read_nx(data)?,
         "jt" => jt10::read(data)?,
         "solidworks-part" => sw::read_part(data)?,
+        "creo-part" => creo::read_part(data)?,
         "solidworks-assembly" => bail!(
             "A SOLIDWORKS assembly is shown with the previews of its parts (found by file name)."
         ),

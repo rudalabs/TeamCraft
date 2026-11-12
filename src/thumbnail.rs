@@ -43,8 +43,9 @@ use std::{
 /// instead of the embedded JPEG; 4: SOLIDWORKS parts and assemblies rendered
 /// from their 3D preview; 5: Rhino models; 6: Inventor parts and assemblies
 /// rendered from their 3D preview; 7: Inventor files with Zstandard
-/// segments, which kept their stored image before, #271).
-pub const CACHE_VERSION: u32 = 7;
+/// segments, which kept their stored image before, #271; 8: Creo parts
+/// rendered from their 3D preview – both branches had used 7).
+pub const CACHE_VERSION: u32 = 8;
 
 const OLE_MAGIC: [u8; 8] = [0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1];
 const PNG_MAGIC: [u8; 8] = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
@@ -69,6 +70,7 @@ pub fn supports(format_id: &str) -> bool {
                 | "catia-part"
                 | "jt"
                 | "sketchup"
+                | "creo-part"
                 | "fusion-design"
         )
 }
@@ -486,8 +488,8 @@ pub const RENDERED_SIZE: u32 = 512;
 /// Formats whose thumbnail is rendered from their 3D preview instead of the
 /// image stored in the file: NX parts (the embedded JPEG is small and poor,
 /// the tessellation in the file is good), SOLIDWORKS and Inventor parts and
-/// assemblies, Rhino and SketchUp models, CATIA V5 parts, Fusion designs (one
-/// look for every CAD system) and stand-alone JT files (a visualisation
+/// assemblies, Rhino and SketchUp models, CATIA V5 parts, Creo parts, Fusion
+/// designs (one look for every CAD system) and stand-alone JT files (a visualisation
 /// format: the tessellation is the content). Files without a 3D preview
 /// (drawings, assemblies none of whose parts are in TeamCraft, Rhino models
 /// saved without meshes, SketchUp files without faces, Fusion files without a
@@ -504,6 +506,7 @@ pub fn rendered(format_id: &str) -> bool {
             | "inventor-assembly"
             | "catia-part"
             | "sketchup"
+            | "creo-part"
             | "fusion-design"
     )
 }

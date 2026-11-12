@@ -15,6 +15,16 @@ see the notices in the README.
 
 ### Added
 
+- 3D preview of PTC Creo parts (`.prt.N`): the exact B-rep stored in the
+  file (`VisibGeom`) is read – text table of contents, LZW sections, the
+  self-describing tagged format with its compressed numbers – and
+  tessellated: planes, cylinders, cones, tori, bicubic splines, rolling-ball
+  fillets and ruled surfaces with their contours, edges sampled in both
+  faces' parameter spaces, ear clipping per face region, welding and PN
+  refinement along the analytic normals (`src/mesh/creo/`). The thumbnail is
+  rendered from the preview (thumbnail cache version 8: every cached
+  thumbnail is made again once). New fuzz target `creopart`. Model units and
+  assemblies are not covered yet (`docs/src/research/creo-brep-preview.md`).
 - 3D preview of Autodesk Fusion designs (`.f3d`) from the display mesh
   Fusion stores in the file, refined along its exact normals like NX parts;
   the thumbnail is rendered from it (the PNG Fusion stored is the fallback).

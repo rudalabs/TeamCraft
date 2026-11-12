@@ -42,6 +42,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "creopart"
+path = "fuzz_targets/creopart.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "nxpart"
 path = "fuzz_targets/nxpart.rs"
 test = false

@@ -85,6 +85,7 @@ has the same notes under `/api/v1/file-versions/{id}/annotations`.
 | Native CAD          | CATIA V5 parts (`.CATPart`) – the visualisation data stored in the file                                                       |
 | Native CAD          | Rhino models (`.3dm`) – the meshes stored in the file, SubD objects refined from their control net                            |
 | Native CAD          | SketchUp models (`.skp`, SketchUp 3 to today) – their faces, components and groups in place                                   |
+| Native CAD          | Creo parts (`.prt.N`) – tessellated from the exact faces stored in the file                                                   |
 |                     | Fusion designs (`.f3d`) – the display mesh Fusion stores                                                                      |
 | Visualisation       | JT (`.jt`): JT 10 parts and whole assemblies, placed; JT 9 as NX writes it                                                    |
 | Meshes              | STL, OBJ, PLY, OFF, 3MF (incl. components), AMF, glTF / GLB, 3DS                                                              |
@@ -113,12 +114,16 @@ several fields, a selector – see [Simulations](simulation.md#results-in-3d).
 Native CAD files (Inventor, Solid Edge, SolidWorks, NX, Creo, CATIA, …) are
 proprietary; TeamCraft does not read their exact geometry (see
 [Research: previews of native CAD files](../research/cad-previews.md)).
-The exceptions are **NX**, **SOLIDWORKS**, **Inventor** and **CATIA V5**. All
-four save a tessellation of every part into the file: NX in a documented
-format (JT 9), SOLIDWORKS (2015 and later) as the display lists it draws the
-part with, Inventor as the triangle lists of its graphics segment, and CATIA
-as the visualisation data it draws on screen (see
+The exceptions are **NX**, **SOLIDWORKS**, **Inventor**, **CATIA V5** and
+**Creo**. The first four save a tessellation of every part into the file: NX
+in a documented format (JT 9), SOLIDWORKS (2015 and later) as the display
+lists it draws the part with, Inventor as the triangle lists of its graphics
+segment, and CATIA as the visualisation data it draws on screen (see
 [Research: 3D preview of CATIA V5 parts](../research/catia-cgr-preview.md)).
+Creo stores no tessellation, but its exact faces with every edge already
+sampled; TeamCraft triangulates those faces itself – planes, cylinders,
+cones, tori, spline, fillet and ruled faces (see
+[Research: 3D preview of Creo parts](../research/creo-brep-preview.md)).
 
 TeamCraft shows that tessellation in the 3D viewer, refined along the
 exact surface normals stored with it, so round faces stay round.
@@ -165,11 +170,11 @@ For the rest TeamCraft shows what other PLM systems show:
   is rendered from it (see
   [Research: 3D preview of stand-alone JT files](../research/jt10-preview.md)).
 * **A picture of the 3D preview** for NX, SOLIDWORKS and Inventor parts and
-  assemblies, CATIA parts, Rhino and SketchUp models and Fusion designs. It
-  replaces the image stored in the file and is a 512 × 512 PNG with a
-  transparent background, drawn once and cached. An assembly's picture is
-  drawn again when one of its parts changes. Drawings, and assemblies none of
-  whose parts are in TeamCraft, keep the stored image.
+  assemblies, CATIA and Creo parts, Rhino and SketchUp models and Fusion
+  designs. It replaces the image stored in the file and is a 512 × 512 PNG
+  with a transparent background, drawn once and cached. An assembly's
+  picture is drawn again when one of its parts changes. Drawings, and
+  assemblies none of whose parts are in TeamCraft, keep the stored image.
 * **The preview image stored in the file.** Inventor drawings and
   presentations (`.idw`, `.ipn`), Solid Edge (`.par`, `.psm`, `.asm`, `.pwd`, `.dft`), NX assemblies and drawings (`.prt`, a JPEG) and
   SolidWorks files (up to 2014 in their OLE container, from 2015 on in a

@@ -17,7 +17,7 @@ allocate what a file only claims.
 | Damage test                  | `tests/parser_robustness.rs`                                                                                                                       | every `cargo test`: small hand-made samples, every prefix and hundreds of corruptions              |
 
 The targets are `stepbom`, `swpart`, `nxpart`, `invpart` (Inventor segments, part meshes and assembly placements),
-`cadrefs`, `bomtable`,
+`creopart` (the Creo B-rep container, tagged format and tessellation), `cadrefs`, `bomtable`,
 `thumbnail`, `textindex`, `htmltext` (HTML reports and the charset detection of text files), `mesh` (STL, OBJ, PLY, OFF,
 3MF, AMF, glTF, 3DS,
 points, LAS, VTK legacy and XML, CalculiX FRD) and `mesh_step` (the STEP
