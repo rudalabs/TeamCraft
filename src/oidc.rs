@@ -152,13 +152,7 @@ impl OidcClient {
         let discovery = self.discovery().await?;
         let now = chrono::Utc::now().timestamp();
         let check = |keys: &[Jwk]| {
-            verify_logout_token(
-                token,
-                keys,
-                &discovery.issuer,
-                &self.config.client_id,
-                now,
-            )
+            verify_logout_token(token, keys, &discovery.issuer, &self.config.client_id, now)
         };
         let result = match check(&self.signing_keys(false).await?) {
             // a key the cache does not know yet: the provider may have rotated
