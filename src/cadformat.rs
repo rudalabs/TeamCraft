@@ -1898,7 +1898,9 @@ mod tests {
         let product = info("catia-product").unwrap();
         assert_eq!(product.system_short, "CATIA");
         assert_eq!(product.kind, FormatKind::Assembly);
-        assert_eq!(product.preview, None);
+        // put together from its parts (services::assemblies)
+        assert_eq!(product.preview, Some("catia-product"));
+        assert_eq!(info("catia-drawing").unwrap().preview, None);
         assert_eq!(ids_named_by("parasolid").len(), 2);
         assert_eq!(ids_named_by("NX part"), vec!["nx-part"]);
         assert_eq!(info("step").unwrap().preview, Some("step"));
