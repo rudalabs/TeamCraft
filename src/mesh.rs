@@ -26,6 +26,7 @@ use anyhow::{bail, Result};
 
 mod gltf;
 mod helpers;
+mod inventor;
 mod jt;
 mod model;
 mod obj;
@@ -70,6 +71,10 @@ pub fn read(format: &str, data: &[u8]) -> Result<Mesh> {
             "A SOLIDWORKS assembly is shown with the previews of its parts (found by file name)."
         ),
         "rhino" => rhino::read(data)?,
+        "inventor-part" => inventor::read_part(data)?,
+        "inventor-assembly" => bail!(
+            "An Inventor assembly is shown with the previews of its parts (found by file name)."
+        ),
         "vtk-legacy" => crate::simmesh::vtk_legacy(data)?,
         "vtk-unstructured" | "vtk-polydata" => crate::simmesh::vtk_xml(data)?,
         "calculix-frd" => crate::simmesh::frd(data)?,

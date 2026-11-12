@@ -450,6 +450,14 @@ Changes since the `v0.2.5` tag.
 - Mutation testing with cargo-mutants (#170): configuration, a report-only
   check on pull requests and a weekly run; the gaps of the first
   whole-repository run are closed with unit tests (#207).
+- 3D preview of Inventor parts (`.ipt`) from the display tessellation
+  Inventor stores in the file, welded and refined along its exact surface
+  normals like NX and SOLIDWORKS parts. Inventor assemblies (`.iam`) are
+  put together from the previews of their part and sub-assembly files, with
+  the placements stored in the assembly (re-posed flexible sub-assemblies
+  included); hidden and suppressed components are left out. The
+  thumbnails of Inventor parts and assemblies are rendered from the 3D
+  preview. New fuzz target `invpart`.
 
 ### Changed
 

@@ -700,6 +700,7 @@ pub fn placements(xml: &[u8]) -> Option<Vec<crate::nxasm::Component>> {
                 rotation: [[t[0], t[1], t[2]], [t[4], t[5], t[6]], [t[8], t[9], t[10]]],
                 translation: [t[12] * 1000.0, t[13] * 1000.0, t[14] * 1000.0],
                 layer: None,
+                occurrence: None,
             }
             .within(&parent);
             let children = instances
