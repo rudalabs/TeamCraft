@@ -4380,6 +4380,65 @@ async fn inventor_assemblies_are_put_together_from_their_parts() {
     app.teardown().await;
 }
 
+/// A stand-alone JT 10 file carries its parts and its assembly: one upload
+/// gives the placed 3D preview (the NIST assembly: 36 instances of 8
+/// parts) and a thumbnail rendered from it.
+#[tokio::test]
+async fn jt_files_show_their_assembly_in_3d() {
+    let Some(app) = common::setup_with(&[("TEAMCRAFT_MAX_UPLOAD_MB", "8")]).await else {
+        return;
+    };
+    let (_, eng) = app.user_in("eng", Role::Editor, &["GEARBOX"]).await;
+    app.api(
+        Method::POST,
+        "/api/v1/items",
+        &eng,
+        Some(json!({ "item_type": "assembly", "name": "Crada", "project": "GEARBOX" })),
+    )
+    .await;
+    let data = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/cad/nist/mtc-assembly/nx/NIST mtc crada assembly.jt"),
+    )
+    .unwrap();
+    let files = app
+        .api_multipart(
+            "/api/v1/items/ASM-000001/revisions/A/files",
+            &eng,
+            &[("crada.jt", data.as_slice())],
+            &[],
+        )
+        .await;
+    assert_eq!(files.status, StatusCode::CREATED, "{}", files.text());
+    let file = &files.json()[0];
+    assert_eq!(file["format"], "jt");
+    assert_eq!(file["format_info"]["preview"], "jt");
+    assert_eq!(file["format_info"]["thumbnail"], true);
+    let id = file["id"].as_str().unwrap().to_string();
+    let r = app
+        .api(Method::GET, &format!("/api/v1/files/{id}/mesh"), &eng, None)
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let mesh = teamcraft::mesh::Mesh::decode(&r.body).unwrap();
+    assert_eq!(mesh.parts, 36, "every instance placed");
+    let b = mesh.bounds();
+    assert!((b[3] - b[0] - 152.4).abs() < 0.01, "{b:?}");
+    assert!((b[4] - b[1] - 101.6).abs() < 0.01, "{b:?}");
+
+    let thumb = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/files/{id}/thumbnail"),
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(thumb.status, StatusCode::OK, "{}", thumb.text());
+    assert_eq!(thumb.header("content-type").as_deref(), Some("image/png"));
+    assert_eq!(png_size(&thumb.body), (512, 512));
+    app.teardown().await;
+}
+
 /// The most used Teamcenter working features: favorites, saved
 /// searches, Save As and the BOM comparison.
 #[tokio::test]

@@ -93,7 +93,8 @@ src/vault.rs       content-addressed file storage (objects/ab/cd/<sha256>)
 src/httprange.rs   Range / If-Range of file downloads (ETag = SHA-256, 206 / 416): resumable downloads
 src/mesh.rs        pure-Rust 3D readers (STL, OBJ, PLY, OFF, 3MF, AMF, glTF, 3DS, PTS/XYZ/LAS, STEP via truck, NX parts via their JT stream: mesh/jt.rs, SOLIDWORKS parts via their display lists: mesh/sw.rs, Inventor parts via their graphics segment: mesh/inventor.rs, Fusion designs via their display scene: mesh/f3d.rs, all + PN refinement mesh/pn.rs,
                    Rhino .3dm: stored meshes, SubD subdivided, blocks placed: mesh/rhino.rs,
-                   SketchUp .skp: faces triangulated (mesh/earcut.rs), components placed: mesh/sketchup.rs, 3–2020 files via vendor/openskp) → TCMESH01;
+                   SketchUp .skp: faces triangulated (mesh/earcut.rs), components placed: mesh/sketchup.rs, 3–2020 files via vendor/openskp,
+                   stand-alone JT 10 files with their scene graph: mesh/jt10.rs) → TCMESH01;
                    mesh.rs = read() dispatch only; mesh/model.rs = Mesh, fields, TCMESH01 encode/decode;
                    mesh/helpers.rs = bounded byte access and limits; one file per simple format with its own tests
                    (stl, obj, ply, off, three_mf = 3MF+AMF, gltf, three_ds, points = PTS/XYZ/LAS)

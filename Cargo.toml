@@ -37,6 +37,8 @@ chacha20poly1305 = { version = "0.10", features = ["stream"] }
 cfb = "0.10"
 crc32fast = "1"
 encoding_rs = "0.8"
+# LZMA (.xz) segments of stand-alone JT 10 files (MIT, pure Rust)
+lzma-rs = "0.3"
 # Raw Deflate segments of SOLIDWORKS 2015+ files; the same flate2/zlib-rs that zip already uses
 flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 # ZIP export "Pack and Go" (MIT); Deflate via flate2/zlib-rs, no other codecs

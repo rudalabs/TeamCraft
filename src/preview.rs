@@ -168,7 +168,8 @@ pub enum PreviewFormat {
     Step,
     /// Siemens NX parts: the lightweight (JT) representation they store.
     NxPart,
-    /// Standalone JT visualisation files (JT 9).
+    /// Standalone JT visualisation files: JT 10 with its scene graph (parts
+    /// and assemblies), JT 9 as NX writes it.
     Jt,
     /// SOLIDWORKS parts: the display tessellation they store.
     SwPart,
