@@ -1,4 +1,4 @@
-//! 3D previews of NX, SOLIDWORKS and Inventor assemblies.
+//! 3D previews of NX, SOLIDWORKS and Inventor assemblies and CATIA products.
 //!
 //! An assembly's preview is put together from the previews of its
 //! component files, with the placements the assembly stores: NX in its
@@ -6,14 +6,18 @@
 //! (`swpart::placements`, sub-assemblies already resolved there), Inventor
 //! in `UFRxDoc` and `AmRxSegment` (`invplace`, sub-assemblies are files of
 //! their own; a parent may re-pose children of a flexible
-//! sub-assembly, `invplace::Override`).
+//! sub-assembly, `invplace::Override`), CATIA in the object stream of the
+//! product (`catprod`, sub-products are files of their own).
 //!
 //! 1. The components are found **by file name** (`NAME.prt` for NX, the
 //!    file name of the stored path for SOLIDWORKS and Inventor), the way file
 //!    references are matched (`references::files_of_revision`): a file of
 //!    the assembly's own revision first, otherwise the latest revision of
-//!    another item the viewer may see. Components that are not in
-//!    TeamCraft are left out.
+//!    another item the viewer may see. A CATIA product names no files: a
+//!    component is the document whose `CATProdCont` UUID it refers to
+//!    (among the CATIA files of the product's revision and those found by
+//!    name), otherwise `<part number>.CATPart` or `.CATProduct` by name.
+//!    Components that are not in TeamCraft are left out.
 //! 2. A component that is an assembly itself is resolved the same way,
 //!    its placements composed with the parent's (depth and cycles bounded).
 //! 3. Every part is converted like any other part (isolated preview
@@ -78,6 +82,7 @@ enum Family {
     Nx,
     SolidWorks,
     Inventor,
+    Catia,
 }
 
 impl Family {
@@ -86,15 +91,22 @@ impl Family {
             "nx-part" => Some(Family::Nx),
             "solidworks-assembly" => Some(Family::SolidWorks),
             "inventor-assembly" => Some(Family::Inventor),
+            "catia-product" => Some(Family::Catia),
             _ => None,
         }
     }
 
-    /// The lower-case file name of a component.
-    fn key(self, name: &str) -> String {
+    /// The lower-case file name of a component (CATIA: the UUID of its
+    /// document, else its part number).
+    fn key(self, component: &nxasm::Component) -> String {
+        let name = &component.name;
         match self {
             Family::Nx => format!("{}.prt", name.to_lowercase()),
             Family::SolidWorks | Family::Inventor => name.to_lowercase(),
+            Family::Catia => component
+                .document
+                .clone()
+                .unwrap_or_else(|| name.to_lowercase()),
         }
     }
 
@@ -103,6 +115,7 @@ impl Family {
             Family::Nx => format == "nx-part",
             Family::SolidWorks => matches!(format, "solidworks-part" | "solidworks-assembly"),
             Family::Inventor => matches!(format, "inventor-part" | "inventor-assembly"),
+            Family::Catia => matches!(format, "catia-part" | "catia-product"),
         }
     }
 
@@ -112,6 +125,7 @@ impl Family {
             Family::Nx => PreviewFormat::NxPart,
             Family::SolidWorks => PreviewFormat::SwPart,
             Family::Inventor => PreviewFormat::InvPart,
+            Family::Catia => PreviewFormat::CatiaPart,
         }
     }
 }
@@ -168,6 +182,73 @@ async fn resolve(
     Ok(out)
 }
 
+/// CATIA files of a product's own revision whose documents are compared.
+const MAX_OWN_CATIA: i64 = 2_000;
+
+/// Finds the documents of a CATIA product's components, keyed like
+/// [`Family::key`]: by the UUID of their `CATProdCont` among the CATIA
+/// files of the product's revision and the files found by name, otherwise
+/// `<part number>.CATPart` / `.CATProduct` by name. Copies of a document
+/// keep its UUID: a file of the product's own revision wins.
+async fn resolve_catia(
+    st: &AppState,
+    actor: &Actor,
+    revision_id: Uuid,
+    components: &[nxasm::Component],
+) -> AppResult<HashMap<String, Found>> {
+    let names = |c: &nxasm::Component| {
+        let n = c.name.to_lowercase();
+        [format!("{n}.catpart"), format!("{n}.catproduct")]
+    };
+    let keys: Vec<String> = components.iter().flat_map(names).collect();
+    let by_name = resolve(&st.db, actor, revision_id, &keys).await?;
+    let mut candidates = sqlx::query_as::<_, Found>(&format!(
+        "SELECT lower(f.filename) AS key, f.sha256, COALESCE(f.format, '') AS format,
+                f.revision_id
+         FROM files f
+         JOIN revisions r ON r.id = f.revision_id
+         JOIN items i ON i.id = r.item_id
+         WHERE f.revision_id = $1 AND f.format IN ('catia-part', 'catia-product')
+           AND {}
+         ORDER BY f.filename
+         LIMIT {MAX_OWN_CATIA}",
+        access::item_visible("i", 2)
+    ))
+    .bind(revision_id)
+    .bind(&actor.hidden_projects)
+    .fetch_all(&st.db)
+    .await?;
+    candidates.extend(by_name.values().cloned());
+    // the documents, read off the first bytes of every candidate
+    let mut documents: HashMap<String, Found> = HashMap::new();
+    let mut read: HashSet<String> = HashSet::new();
+    for file in candidates {
+        if !read.insert(file.sha256.clone()) {
+            continue;
+        }
+        let path = st.vault.object_path(&file.sha256)?;
+        let document = tokio::task::spawn_blocking(move || crate::catprod::document_of(&path))
+            .await
+            .map_err(|e| AppError::Other(anyhow::anyhow!("reading the product failed: {e}")))?;
+        if let Ok(Some(document)) = document {
+            documents.entry(document).or_insert(file);
+        }
+    }
+    let mut out = HashMap::new();
+    for c in components {
+        let key = Family::Catia.key(c);
+        let by_document = c.document.as_ref().and_then(|d| documents.get(d));
+        let [part, product] = names(c);
+        if let Some(file) = by_document
+            .or_else(|| by_name.get(&part))
+            .or_else(|| by_name.get(&product))
+        {
+            out.insert(key, file.clone());
+        }
+    }
+    Ok(out)
+}
+
 /// Largest component tree read from a SOLIDWORKS assembly.
 const MAX_TREE: u64 = 64 * 1024 * 1024;
 
@@ -183,6 +264,8 @@ async fn kind(st: &AppState, sha256: &str, format: &str) -> AppResult<Kind> {
         "solidworks-assembly" => solidworks_assembly(&path).unwrap_or(Kind::Other),
         "inventor-part" => Kind::Part(Vec::new()),
         "inventor-assembly" => crate::invplace::kind_of(&path).unwrap_or(Kind::Other),
+        "catia-part" => Kind::Part(Vec::new()),
+        "catia-product" => crate::catprod::kind_of(&path).unwrap_or(Kind::Other),
         _ => nxasm::kind_of(&path).unwrap_or(Kind::Other),
     })
     .await
@@ -239,12 +322,16 @@ pub async fn plan(
         Vec::new(),
     )];
     while let Some((components, parent, revision, path, overrides)) = stack.pop() {
-        let keys: Vec<String> = components.iter().map(|c| family.key(&c.name)).collect();
-        let found = resolve(&st.db, actor, revision, &keys).await?;
+        let found = if family == Family::Catia {
+            resolve_catia(st, actor, revision, &components).await?
+        } else {
+            let keys: Vec<String> = components.iter().map(|c| family.key(c)).collect();
+            resolve(&st.db, actor, revision, &keys).await?
+        };
         let mut kinds: HashMap<String, Kind> = HashMap::new();
         for c in components.iter().rev() {
             let placement = Override::pose(&overrides, c).within(&parent);
-            let Some(file) = found.get(&family.key(&c.name)) else {
+            let Some(file) = found.get(&family.key(c)) else {
                 plan.missing.push(c.name.clone());
                 hasher.update(b"\0missing:");
                 hasher.update(c.name.as_bytes());

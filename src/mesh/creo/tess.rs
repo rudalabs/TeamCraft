@@ -829,7 +829,7 @@ pub fn build(coarse: &Coarse) -> Result<Mesh> {
             *n = n.map(|x| -x);
         }
     }
-    let level = crate::mesh::jt::refine_level(triangles.len());
+    let level = crate::mesh::pn::refine_level(triangles.len());
     let (points, triangles) = if level > 1 {
         crate::mesh::pn::refine(&points, &triangles, &normals, &normal_triangles, level)
     } else {

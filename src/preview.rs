@@ -184,6 +184,8 @@ pub enum PreviewFormat {
     InvAssembly,
     /// CATIA V5 parts: the visualisation (CGR) data they store.
     CatiaPart,
+    /// CATIA V5 products: put together from the previews of their parts.
+    CatiaProduct,
     /// SketchUp models: their faces triangulated, components placed.
     SketchUp,
     /// PTC Creo parts: tessellated from the B-rep they store.
@@ -201,7 +203,7 @@ pub enum PreviewFormat {
 }
 
 impl PreviewFormat {
-    pub const ALL: [PreviewFormat; 28] = [
+    pub const ALL: [PreviewFormat; 29] = [
         PreviewFormat::Stl,
         PreviewFormat::Obj,
         PreviewFormat::Ply,
@@ -220,6 +222,7 @@ impl PreviewFormat {
         PreviewFormat::InvPart,
         PreviewFormat::InvAssembly,
         PreviewFormat::CatiaPart,
+        PreviewFormat::CatiaProduct,
         PreviewFormat::SketchUp,
         PreviewFormat::CreoPart,
         PreviewFormat::FusionDesign,
@@ -263,6 +266,7 @@ impl PreviewFormat {
             PreviewFormat::InvPart => "inventor-part",
             PreviewFormat::InvAssembly => "inventor-assembly",
             PreviewFormat::CatiaPart => "catia-part",
+            PreviewFormat::CatiaProduct => "catia-product",
             PreviewFormat::SketchUp => "sketchup",
             PreviewFormat::CreoPart => "creo-part",
             PreviewFormat::FusionDesign => "fusion-design",
@@ -291,11 +295,15 @@ impl PreviewFormat {
 
     /// Assemblies whose preview is put together from their parts' previews
     /// (`services::assemblies`): NX files without a lightweight
-    /// representation of their own, SOLIDWORKS and Inventor assemblies.
+    /// representation of their own, SOLIDWORKS and Inventor assemblies,
+    /// CATIA products.
     pub fn may_be_assembly(self) -> bool {
         matches!(
             self,
-            PreviewFormat::NxPart | PreviewFormat::SwAssembly | PreviewFormat::InvAssembly
+            PreviewFormat::NxPart
+                | PreviewFormat::SwAssembly
+                | PreviewFormat::InvAssembly
+                | PreviewFormat::CatiaProduct
         )
     }
 
@@ -1242,6 +1250,11 @@ mod tests {
             PreviewFormat::of("Pump.IAM"),
             Some(PreviewFormat::InvAssembly)
         );
+        assert_eq!(
+            PreviewFormat::of("Frame.CATProduct"),
+            Some(PreviewFormat::CatiaProduct)
+        );
+        assert!(PreviewFormat::CatiaProduct.may_be_assembly());
         assert_eq!(PreviewFormat::of("Bracket.par"), None, "native CAD");
         assert_eq!(
             PreviewFormat::of("plate.iges"),

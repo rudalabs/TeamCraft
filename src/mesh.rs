@@ -83,6 +83,9 @@ pub fn read(format: &str, data: &[u8]) -> Result<Mesh> {
             "An Inventor assembly is shown with the previews of its parts (found by file name)."
         ),
         "catia-part" => catia::read_part(data)?,
+        "catia-product" => bail!(
+            "A CATIA product is shown with the previews of its parts (found by document or part number)."
+        ),
         "sketchup" => sketchup::read(data)?,
         "fusion-design" => f3d::read_f3d(data)?,
         "vtk-legacy" => crate::simmesh::vtk_legacy(data)?,

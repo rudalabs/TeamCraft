@@ -82,7 +82,7 @@ has the same notes under `/api/v1/file-versions/{id}/annotations`.
 |---------------------|-------------------------------------------------------------------------------------------------------------------------------|
 | B-rep (tessellated) | STEP (`.step`, `.stp`, `.p21`)                                                                                                |
 | Native CAD          | NX parts (`.prt`), SOLIDWORKS parts (`.sldprt`, 2015+), Inventor parts (`.ipt`) – the tessellation stored in the file; their assemblies from the parts |
-| Native CAD          | CATIA V5 parts (`.CATPart`) – the visualisation data stored in the file                                                       |
+| Native CAD          | CATIA V5 parts (`.CATPart`) – the visualisation data stored in the file; products (`.CATProduct`) from the parts            |
 | Native CAD          | Rhino models (`.3dm`) – the meshes stored in the file, SubD objects refined from their control net                            |
 | Native CAD          | SketchUp models (`.skp`, SketchUp 3 to today) – their faces, components and groups in place                                   |
 | Native CAD          | Creo parts (`.prt.N`) – tessellated from the exact faces stored in the file                                                   |
@@ -128,8 +128,8 @@ cones, tori, spline, fillet and ruled faces (see
 TeamCraft shows that tessellation in the 3D viewer, refined along the
 exact surface normals stored with it, so round faces stay round.
 
-An **assembly** of NX, SOLIDWORKS or Inventor is put together from its part
-files (CATIA products are not previewed yet).
+An **assembly** of NX, SOLIDWORKS or Inventor and a **CATIA product** are
+put together from their part files.
 Check the parts in, under their file names, either in the assembly's
 revision or as items of their own. The assembly then shows every component
 in its place, sub-assemblies included (see
@@ -137,12 +137,24 @@ in its place, sub-assemblies included (see
 [3D preview of SOLIDWORKS files](../research/solidworks-display-preview.md),
 [3D preview of Inventor files](../research/inventor-display-preview.md)).
 
+A CATIA product stores no file names, only an id of each component's
+document. TeamCraft finds the component among the CATIA files of the
+product's revision by that id, whatever the file is called now; a renamed
+or copied part is still found. Otherwise it looks for
+`<part number>.CATPart` (or `.CATProduct`) by name, as above (see
+[Research: 3D preview of CATIA V5 products](../research/catia-product-structure.md)).
+Keep parts whose part number differs from their file name in the
+product's revision.
+
 These components are left out:
 
 * components that are not in TeamCraft;
 * NX components on layers the assembly hides;
 * SOLIDWORKS components that are suppressed or hidden;
 * Inventor components that are hidden or suppressed in the assembly.
+
+CATIA products show hidden components, too: TeamCraft does not recognise
+them yet.
 
 **Rhino** models (`.3dm`, Rhino 1 to 8) are shown from the meshes Rhino
 saves with them: mesh objects, the render meshes of polysurfaces and
@@ -170,7 +182,7 @@ For the rest TeamCraft shows what other PLM systems show:
   is rendered from it (see
   [Research: 3D preview of stand-alone JT files](../research/jt10-preview.md)).
 * **A picture of the 3D preview** for NX, SOLIDWORKS and Inventor parts and
-  assemblies, CATIA and Creo parts, Rhino and SketchUp models and Fusion
+  assemblies, CATIA parts and products, Creo parts, Rhino and SketchUp models and Fusion
   designs. It replaces the image stored in the file and is a 512 × 512 PNG
   with a transparent background, drawn once and cached. An assembly's
   picture is drawn again when one of its parts changes. Drawings, and

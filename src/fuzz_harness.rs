@@ -127,11 +127,14 @@ pub fn htmltext(data: &[u8]) {
     let _ = crate::htmltext::decode(data, false);
 }
 
-/// Every mesh and simulation result reader except STEP.
+/// Every mesh and simulation result reader except STEP, and the instances
+/// of CATIA products.
 pub fn mesh(data: &[u8]) {
     for format in MESH_FORMATS {
         let _ = crate::mesh::read(format, data);
     }
+    let _ = crate::catprod::components(data);
+    let _ = crate::catprod::document(data);
 }
 
 /// File names whose format `cadformat::detect` decides by content (the

@@ -89,9 +89,9 @@ parts from their JT stream?
     work in millimetres.
 * The thumbnail of a CATIA part is rendered from the 3D preview, as for NX
   parts (`thumbnail::rendered`).
-* **Later:** products, from their part files like NX assemblies. The
-  instance structure of `.CATProduct` is being decoded separately.
-  Multi-body parts, bodies with a transform in the scene graph, and indices
+* **Products** are put together from their part files like NX assemblies
+  (see [3D preview of CATIA V5 products](catia-product-structure.md)).
+* **Later:** multi-body parts, bodies with a transform in the scene graph, and indices
   above 65 535 vertices are untested.
 * **Never:** the exact B-rep (CGM). It is undocumented and would need a
   geometry kernel. The visualisation data is what other PLM viewers show as

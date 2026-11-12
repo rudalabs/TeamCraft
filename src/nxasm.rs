@@ -69,6 +69,8 @@ pub struct Component {
     /// Inventor only: the occurrence (id, persistent key) and the poses its
     /// assembly gives components further down (flexible sub-assemblies).
     pub occurrence: Option<crate::invplace::Occurrence>,
+    /// CATIA only: the UUID of the referenced document (`catprod`).
+    pub document: Option<String>,
 }
 
 impl Component {
@@ -102,6 +104,7 @@ impl Component {
             translation: parent.place(self.translation),
             layer: self.layer,
             occurrence: self.occurrence.clone(),
+            document: self.document.clone(),
         }
     }
 }
@@ -114,6 +117,7 @@ pub fn identity() -> Component {
         translation: [0.0; 3],
         layer: None,
         occurrence: None,
+        document: None,
     }
 }
 
@@ -820,6 +824,7 @@ mod tests {
             translation: [10.0, 0.0, 0.0],
             layer: Some(9),
             occurrence: None,
+            document: None,
         };
         assert_eq!(quarter.within(&identity()).layer, Some(9));
         assert_eq!(quarter.place([1.0, 0.0, 0.0]), [10.0, 1.0, 0.0]);

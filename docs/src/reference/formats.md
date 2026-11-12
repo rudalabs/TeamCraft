@@ -18,7 +18,7 @@ list is on every server at `/formats` and `GET /api/v1/formats`
 | Autodesk Fusion              | `.f3d` `.f3z` (refs) `.f2d`                                                                                                  |
 | AutoCAD                      | `.dwg` `.dxf` `.dwt`                                                                                                         |
 | PTC Creo                     | `.prt` `.asm` (refs) `.drw` (refs) `.frm` `.lay` `.sec` `.mfg` `.neu` `.pvz` `.pvs`; iterations `name.prt.7` become versions |
-| CATIA V5                     | `.CATPart` `.CATProduct` (refs) `.CATDrawing` (refs) `.cgr` `.CATAnalysis` `.CATProcess` `.CATMaterial` `.3dxml`             |
+| CATIA V5                     | `.CATPart` (3D) `.CATProduct` (3D) `.CATDrawing` (refs) `.cgr` `.CATAnalysis` `.CATProcess` `.CATMaterial` `.3dxml`          |
 | Ansys SpaceClaim / Discovery | `.scdoc`                                                                                                                     |
 | FreeCAD, OpenSCAD            | `.FCStd`, `.scad`                                                                                                            |
 | SolidCraft, FieldCraft       | `.sc` `.solidcraft`, `.fieldcraft` – see [FieldCraft and SolidCraft](interop.md)                                             |
@@ -100,10 +100,23 @@ scene graph holds one uncompressed mesh per body. The reader takes:
 * the triangle lists, strips and fans of each B-rep face.
 
 The mesh is refined along the stored normals like an NX part. A part saved
-without visualisation data has no 3D preview. Products (`.CATProduct`) and
-drawings have none yet: a product references its parts by container id, not
-by file name. Details are in
+without visualisation data has no 3D preview, nor do drawings. Details are in
 [Research: 3D preview of CATIA V5 parts](../research/catia-cgr-preview.md).
+
+CATIA V5 products (`.CATProduct`) are put together from their parts
+(`src/catprod.rs`, `services/assemblies.rs`). A product names no files.
+The object stream of its container `CATProdCont` holds per instance:
+
+* the part number and the instance name (`_InstanceName`);
+* a link to the UUID of the referenced document's `CATProdCont`, which
+  every CATIA file lists in the container table at its start;
+* the placement (`_Position`): X, Y and Z axis and origin in millimetres.
+
+A component is the CATIA file of the product's revision (or a file found by
+name) with that UUID, otherwise `<part number>.CATPart` or `.CATProduct`.
+Sub-products are entered, hidden components are not recognised yet. Details
+are in
+[Research: 3D preview of CATIA V5 products](../research/catia-product-structure.md).
 
 Rhino models (`.3dm`, versions 1 to 8) are read as openNURBS archives (`src/mesh/rhino.rs`): nested chunks, the object,
 layer, block-definition

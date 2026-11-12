@@ -166,7 +166,8 @@ end-to-end tests against a real PostgreSQL.
 
 - **3D preview** – in the browser, converted on the server, no plug-ins:
   STEP, NX, SOLIDWORKS and Inventor parts and assemblies (put together from
-  their part files, hidden components left out), CATIA V5 parts, Creo parts
+  their part files, hidden components left out), CATIA V5 parts and products
+  (products from their parts, found by document), Creo parts
   (tessellated from their exact B-rep), Rhino models (`.3dm`, SubD included),
   SketchUp models (`.skp`, SketchUp 3 to today), JT files with their whole
   assembly, Fusion designs (`.f3d`), STL, OBJ, PLY, 3MF, glTF, point clouds
