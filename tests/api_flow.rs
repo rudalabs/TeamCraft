@@ -2735,6 +2735,137 @@ async fn delivery_retries_and_gives_up() {
     app.teardown().await;
 }
 
+/// A mail server and a chat that take their time and note what they were
+/// given, and how many e-mails were on their way at the same time.
+#[derive(Default)]
+struct SlowChannels {
+    sending: std::sync::atomic::AtomicUsize,
+    peak: std::sync::atomic::AtomicUsize,
+    /// The `[TeamCraft] …` subjects in the order the e-mails went out.
+    mails: std::sync::Mutex<Vec<String>>,
+    /// The texts of the chat messages in the order they went out.
+    posts: std::sync::Mutex<Vec<String>>,
+}
+
+impl teamcraft::delivery::MailSender for SlowChannels {
+    fn send(
+        &self,
+        message: lettre::Message,
+    ) -> teamcraft::delivery::BoxFuture<'_, anyhow::Result<()>> {
+        use std::sync::atomic::Ordering;
+        let text = String::from_utf8_lossy(&message.formatted()).to_string();
+        let subject = text
+            .lines()
+            .find_map(|l| l.strip_prefix("Subject: [TeamCraft] "))
+            .unwrap_or_default()
+            .to_string();
+        Box::pin(async move {
+            let now = self.sending.fetch_add(1, Ordering::SeqCst) + 1;
+            self.peak.fetch_max(now, Ordering::SeqCst);
+            tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+            self.mails.lock().unwrap().push(subject);
+            self.sending.fetch_sub(1, Ordering::SeqCst);
+            Ok(())
+        })
+    }
+}
+
+impl teamcraft::delivery::ChatSender for SlowChannels {
+    fn post(
+        &self,
+        payload: serde_json::Value,
+    ) -> teamcraft::delivery::BoxFuture<'_, anyhow::Result<()>> {
+        Box::pin(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            let text = payload["text"].as_str().unwrap_or_default().to_string();
+            self.posts.lock().unwrap().push(text);
+            Ok(())
+        })
+    }
+}
+
+/// A run serves several recipients at the same time – a slow mail server
+/// holds up one of them, not the run – but never more than
+/// `PARALLEL_RECIPIENTS`, and every recipient gets their notifications in
+/// the order they were queued.
+#[tokio::test]
+async fn delivery_serves_recipients_side_by_side_and_each_in_order() {
+    use std::sync::atomic::Ordering;
+    let app = app_or_skip!();
+    const USERS: usize = 7;
+    const EACH: usize = 3;
+    let mut users = Vec::new();
+    for u in 1..=USERS {
+        let (actor, _) = app.user(&format!("user{u}"), Role::Editor).await;
+        users.push((u, actor.id));
+    }
+    sqlx::query("UPDATE users SET email = username || '@example.test'")
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    // queued interleaved: note 1 for everybody, then note 2, then note 3
+    for n in 1..=EACH {
+        for (u, id) in &users {
+            sqlx::query(
+                "INSERT INTO notifications (id, user_id, kind, title, email_state, chat_state, created_at)
+                 VALUES (gen_random_uuid(), $1, 'test', $2, 'pending', 'pending',
+                         now() + make_interval(secs => $3))",
+            )
+            .bind(id)
+            .bind(format!("user{u} note {n}"))
+            .bind((n * 100 + u) as f64)
+            .execute(&app.pool)
+            .await
+            .unwrap();
+        }
+    }
+    let channels = std::sync::Arc::new(SlowChannels::default());
+    let delivery = teamcraft::delivery::Delivery::with_senders(
+        "https://plm.example.test",
+        "TeamCraft",
+        Some((channels.clone(), "TeamCraft <teamcraft@example.test>")),
+        Some((channels.clone(), true)),
+    )
+    .unwrap();
+    let report = delivery.run_once(&app.pool).await.unwrap();
+    assert_eq!(
+        (report.emails, report.chats, report.failures),
+        ((USERS * EACH) as u64, (USERS * EACH) as u64, 0),
+        "{report:?}"
+    );
+    let peak = channels.peak.load(Ordering::SeqCst);
+    assert!(
+        (2..=teamcraft::delivery::PARALLEL_RECIPIENTS).contains(&peak),
+        "{peak} e-mails at the same time"
+    );
+    let mails = channels.mails.lock().unwrap().clone();
+    let posts = channels.posts.lock().unwrap().clone();
+    assert_eq!((mails.len(), posts.len()), (USERS * EACH, USERS * EACH));
+    for u in 1..=USERS {
+        let expected: Vec<String> = (1..=EACH).map(|n| format!("user{u} note {n}")).collect();
+        let of_user = |sent: &[String]| -> Vec<String> {
+            sent.iter()
+                .filter_map(|s| expected.iter().find(|e| s.contains(e.as_str())).cloned())
+                .collect()
+        };
+        assert_eq!(of_user(&mails), expected, "e-mails of user{u}: {mails:?}");
+        assert_eq!(of_user(&posts), expected, "chat of user{u}: {posts:?}");
+    }
+    let open: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM notifications WHERE email_state <> 'sent' OR chat_state <> 'sent'",
+    )
+    .fetch_one(&app.pool)
+    .await
+    .unwrap();
+    assert_eq!(open, 0, "every outcome is recorded");
+    assert_eq!(
+        delivery.run_once(&app.pool).await.unwrap(),
+        Default::default(),
+        "sent once"
+    );
+    app.teardown().await;
+}
+
 #[tokio::test]
 async fn bom_excel_export_reads_back() {
     let app = app_or_skip!();
@@ -3737,14 +3868,35 @@ async fn nx_assemblies_are_put_together_from_their_parts() {
             asm_id = files.json()[0]["id"].as_str().unwrap().to_string();
         }
     }
-    let r = app
-        .api(
-            Method::GET,
-            &format!("/api/v1/files/{asm_id}/mesh"),
-            &eng,
-            None,
-        )
-        .await;
+    // Nothing is converted yet, and the viewer and the thumbnails of a folder
+    // ask at the same time: the parts are converted once each, the assembly
+    // is composed once and its image drawn once – everybody gets the same.
+    let mesh_uri = format!("/api/v1/files/{asm_id}/mesh");
+    let thumb_uri = format!("/api/v1/files/{asm_id}/thumbnail");
+    let (r, m2, m3, t1, t2) = tokio::join!(
+        app.api(Method::GET, &mesh_uri, &eng, None),
+        app.api(Method::GET, &mesh_uri, &eng, None),
+        app.api(Method::GET, &mesh_uri, &eng, None),
+        app.api(Method::GET, &thumb_uri, &eng, None),
+        app.api(Method::GET, &thumb_uri, &eng, None)
+    );
+    for other in [&m2, &m3, &t1, &t2] {
+        assert_eq!(other.status, StatusCode::OK, "{}", other.text());
+    }
+    assert!(m2.body == r.body && m3.body == r.body, "one composition");
+    assert_eq!(t1.header("content-type").as_deref(), Some("image/png"));
+    assert!(t1.body == t2.body, "one image");
+    let composed = std::fs::read_dir(app.vault_dir.join("previews"))
+        .unwrap()
+        .flat_map(|dir| std::fs::read_dir(dir.unwrap().path()).unwrap())
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+        .filter(|name| name.contains(".asm-"))
+        .collect::<Vec<_>>();
+    assert_eq!(composed.len(), 2, "the mesh and its image: {composed:?}");
+    assert!(
+        composed.iter().all(|name| !name.contains(".tmp")),
+        "{composed:?}"
+    );
     assert_eq!(r.status, StatusCode::OK, "{}", r.text());
     let mesh = teamcraft::mesh::Mesh::decode(&r.body).unwrap();
     assert_eq!(mesh.parts, 36, "every instance placed");

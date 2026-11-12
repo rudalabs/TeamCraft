@@ -123,6 +123,27 @@ PostgreSQL.
 * **Scale check**: `tests/scale.rs` (ignored) seeds ~100k items and ~1M BOM
   lines and times these paths with their query plans – see
   [Operations → Scale check](../admin/operations.md#scale-check).
+* **API requests**: the bearer token of a request is resolved in one query
+  (`services::users::actor_for_api_token`) – the user with the memberships,
+  the groups that switched personal access tokens off and whether the use of
+  the token has to be recorded come from the same statement. The write
+  (`last_used_at`, the sliding expiry) follows at most once a minute per
+  token.
+* **Assembly previews** (`services::assemblies`): the distinct parts are
+  converted as many at a time as the preview queue runs
+  (`preview::MAX_PARALLEL`), each instance is placed straight into the
+  assembly mesh (`Mesh::append_placed`, no copy of the part per instance) and
+  a part's mesh is given up after its last placement.
+* **Thumbnails and compositions** (`Previews::render`): an image in the cache
+  is answered at once; a missing thumbnail is drawn and an assembly preview
+  composed at most `preview::MAX_RENDERS` at a time and once per cache entry –
+  requests that arrive together (the viewer and a folder of thumbnails) wait
+  for the one that works and read its result.
+* **Notification delivery** (`delivery.rs`): a run serves
+  `delivery::PARALLEL_RECIPIENTS` recipients at the same time, each
+  recipient's notifications in the order they were queued, e-mail and chat of
+  a notification side by side. A slow mail server (20 s timeout) holds up the
+  recipient it serves, not the run.
 * **Pages** run their independent queries concurrently (`tokio::try_join!`)
   and load per-row data with `= ANY($1)` instead of one query per row (vault explorer, BOM health, Pack and Go file
   lists).
