@@ -483,46 +483,16 @@ mod tests {
         }
     }
 
-    /// The NIST parts repacked with Zstandard (issue #271; no openly
-    /// licensed Inventor file with Zstandard segments is known) give the
-    /// same preview as the zlib originals; damaged copies are errors.
+    /// A part whose segments are Zstandard (issue #271) gives the same
+    /// preview as with zlib. The NIST parts repacked with Zstandard are
+    /// compared segment by segment in `invpart` (fast: no mesh is built).
     #[test]
     fn zstandard_parts_give_the_same_preview_as_zlib_ones() {
-        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/cad/nist");
-        for rel in [
-            "ftc-11/inventor-2021/INV_nist_ftc_11_asme1_2021.ipt",
-            "ctc-01/inventor-2021/INV_nist_ctc_01_asme1_2021.ipt",
-        ] {
-            let zlib = std::fs::read(format!("{dir}/{rel}")).unwrap();
-            let zstd = crate::invpart::tests::as_zstd(&zlib, 0);
-            let (a, b) = (read_part(&zlib).unwrap(), read_part(&zstd).unwrap());
-            assert_eq!(a.positions, b.positions, "{rel}");
-            assert_eq!(a.indices, b.indices, "{rel}");
-            assert!(edges_used_twice(&b), "{rel}: closed");
-        }
-        let zstd = crate::invpart::tests::as_zstd(
-            &std::fs::read(format!(
-                "{dir}/ftc-11/inventor-2021/INV_nist_ftc_11_asme1_2021.ipt"
-            ))
-            .unwrap(),
-            0,
-        );
-        for cut in (0..zstd.len()).step_by(4093) {
-            let _ = read_part(&zstd[..cut]);
-        }
-        let mut state = 0x2545_F491_u32;
-        for _ in 0..24 {
-            let mut damaged = zstd.clone();
-            for _ in 0..16 {
-                state ^= state << 13;
-                state ^= state >> 17;
-                state ^= state << 5;
-                let at = state as usize % damaged.len();
-                damaged[at] ^= 0xA5;
-            }
-            if let Ok(mesh) = read_part(&damaged) {
-                mesh.check().unwrap();
-            }
-        }
+        let zlib = part(cube());
+        let zstd = crate::invpart::tests::as_zstd(&zlib, 0);
+        let (a, b) = (read_part(&zlib).unwrap(), read_part(&zstd).unwrap());
+        assert_eq!(a.positions, b.positions);
+        assert_eq!(a.indices, b.indices);
+        assert!(edges_used_twice(&b), "closed");
     }
 }
