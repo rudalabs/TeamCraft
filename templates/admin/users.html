@@ -36,6 +36,36 @@
   </div>
 </div>
 
+{% if idle_sso %}
+<div class="card" id="idle-sso">
+  <h2>SSO users without sign-in</h2>
+  <p class="hint">Active single sign-on users without a sign-in or token use for {{ idle_sso_days }} days who still
+    hold memberships, tokens or check-outs – often removed at the identity provider but never offboarded here.
+    Removing someone at the provider does not deactivate them in TeamCraft: open the user and use
+    <em>Offboard and deactivate</em>.</p>
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">Username</th><th scope="col">Name</th><th scope="col">Last sign-in</th><th scope="col">Last activity</th><th scope="col">Logged out by the IdP</th><th scope="col" class="num">Memberships</th><th scope="col" class="num">Tokens</th><th scope="col" class="num">Check-outs</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+    <tbody>
+    {% for u in idle_sso %}
+      <tr>
+        <td class="mono nowrap"><a href="/admin/users/{{ u.user_id }}">{{ u.username }}</a></td>
+        <td>{{ u.display_name }}</td>
+        <td class="small nowrap">{% if u.last_login_at %}{{ m.time(u.last_login_at) }}{% else %}never{% endif %}</td>
+        <td class="small nowrap">{{ m.time(u.last_active_at) }}</td>
+        <td class="small nowrap">{% if u.idp_logout_at %}{{ m.time(u.idp_logout_at) }}{% else %}–{% endif %}</td>
+        <td class="num">{{ u.memberships }}</td>
+        <td class="num">{{ u.tokens }}</td>
+        <td class="num">{{ u.checkouts }}</td>
+        <td class="nowrap"><a href="/users/{{ u.user_id }}/holdings">What they hold</a></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endif %}
+
 {% if local_login %}
 <div class="card">
   <h2>New local account</h2>

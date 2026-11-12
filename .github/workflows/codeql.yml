@@ -23,9 +23,11 @@ on:
   schedule:
     - cron: '34 0 * * 6'
 
-# a newer push to a pull request replaces its running analysis
+# a newer push to a pull request replaces its running analysis; each commit on
+# main keeps its own run – with one group for main, a third push cancelled the
+# waiting analysis of the second, and its commit showed a red ✗ (#275)
 concurrency:
-  group: codeql-${{ github.ref }}-${{ github.event_name }}
+  group: codeql-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

@@ -1125,7 +1125,12 @@ async fn rendered_thumbnail(
     // An image in the cache is answered at once. Only a missing one is drawn,
     // through `Previews::render`: a few at a time, and once per image however
     // many requests ask for it (a folder of new parts asks for all of them).
-    if let Ok(mesh_path) = st.previews.mesh(&st.vault, &sha256, preview).await {
+    let mesh = st.previews.mesh(&st.vault, &sha256, preview).await;
+    if !preview.may_be_assembly() && mesh.is_err() {
+        // only assemblies are put together from their parts
+        return Ok(None);
+    }
+    if let Ok(mesh_path) = mesh {
         let cache = cache.to_path_buf();
         let known = {
             let (cache, sha256) = (cache.clone(), sha256.clone());

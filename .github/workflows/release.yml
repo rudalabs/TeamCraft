@@ -5,12 +5,20 @@
 #   (Linux deb/rpm/AppImage and Flatpak bundles, macOS dmg/app, Windows x64
 #   and arm64 msi/setup.exe plus portable zips) and SHA256SUMS.txt; 0.x versions and
 #   versions with a suffix (`v1.0.0-rc.1`) are marked as pre-release;
-# * a push to main, a pull request that changes this file, or "Run workflow"
-#   → the same files as workflow artifacts (kept 14 days), no release.
+# * main every night (when it changed since the last good build: code, not
+#   only *.md/docs/platforms), "Run workflow", or a pull request that changes
+#   this file or the packaging → the same files as workflow artifacts (kept
+#   14 days), no release.
+#
+# A push to main does not run this workflow. It used to, with a newer push
+# cancelling the running build: on a day with several merges about half of
+# the commits on main carried a red ✗ from cancelled release jobs, which hid
+# real failures (#275). A nightly build is never cancelled, needs one run per
+# day instead of one per merge, and a failure in it is a real one.
 #
 # Container image ghcr.io/rudalabs/teamcraft (Dockerfile, built natively on
 # an amd64 and an arm64 runner, merged into one multi-platform image):
-# * push to main → :edge;
+# * main (nightly or "Run workflow" on main) → :edge;
 # * tag v<version> → :<version> and :<major>.<minor>, plus :latest for every
 #   version without a suffix – also 0.x, although its GitHub Release is a
 #   pre-release, so that deploy/install.sh has a "newest release" before 1.0;
@@ -26,14 +34,18 @@ name: Release
 
 on:
   push:
-    branches: [main]
     tags: ["v*"]
-    paths-ignore: ["**.md", "docs/**", "platforms/**"]
-  # A change of the release pipeline builds everything once; a change of the
-  # Docker files builds and tests the image only.
+  # main, nightly; skipped when nothing but documentation changed since the
+  # last successful build (see the version job)
+  schedule:
+    - cron: "7 1 * * *"
+  # A change of the release pipeline or the packaging builds everything once;
+  # a change of the Docker files builds and tests the image only.
   pull_request:
     paths:
       - ".github/workflows/release.yml"
+      - "packaging/**"
+      - "desktop/tauri.conf.json"
       - "Dockerfile"
       - ".dockerignore"
       - "deploy/**"
@@ -42,9 +54,13 @@ on:
 permissions:
   contents: read
 
+# Runs of one ref queue up: a nightly build, a tag or "Run workflow" is never
+# cancelled (a cancelled run shows as a red ✗ on its commit), and two :edge
+# builds never finish in the wrong order. Only a newer push to a pull request
+# replaces its running build.
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
@@ -62,31 +78,63 @@ jobs:
     name: version check
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
+      # the nightly run looks up the last successful build
+      actions: read
     outputs:
       version: ${{ steps.v.outputs.version }}
       prerelease: ${{ steps.v.outputs.prerelease }}
       artifacts: ${{ steps.changes.outputs.artifacts }}
       image: ${{ steps.changes.outputs.image }}
+      publish: ${{ steps.changes.outputs.publish }}
     steps:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 2
       # Pull requests build only what they change: binaries and installers for
-      # a change of this file, the image for a change of the Docker files.
+      # a change of this file or the packaging, the image for a change of the
+      # Docker files. The nightly run builds nothing when main has no change
+      # outside the documentation since the last successful build of main.
       - id: changes
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
           artifacts=true image=true
           if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
             changed=$(git diff --name-only HEAD^1 HEAD)
             echo "$changed"
-            grep -qx '.github/workflows/release.yml' <<<"$changed" || artifacts=false
+            grep -qE '^(\.github/workflows/release\.yml|packaging/|desktop/tauri\.conf\.json)' <<<"$changed" || artifacts=false
             grep -qE '^(Dockerfile|\.dockerignore|deploy/|\.github/workflows/release\.yml)' <<<"$changed" || image=false
           fi
-          echo "artifacts=$artifacts image=$image"
-          echo "artifacts=$artifacts" >> "$GITHUB_OUTPUT"
-          echo "image=$image" >> "$GITHUB_OUTPUT"
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then
+            last=$(gh run list --workflow release.yml --branch main --status success --limit 20 \
+              --json headSha,event --jq '[.[] | select(.event != "pull_request")][0].headSha // ""') || last=""
+            if [ -n "$last" ] && git fetch --quiet --no-tags --depth=1 origin "$last"; then
+              code=$(git diff --name-only "$last" HEAD | grep -vE '\.md$|^docs/|^platforms/' || true)
+              if [ -z "$code" ]; then
+                echo "::notice::main has no code change since the last successful build ($last): nothing to build"
+                artifacts=false image=false
+              fi
+            fi
+          fi
+          # :edge from main (nightly or "Run workflow"), versions from tags;
+          # never from pull requests, forks or other branches
+          publish=false
+          if [ "$GITHUB_REPOSITORY" = "rudalabs/TeamCraft" ]; then
+            case "$GITHUB_EVENT_NAME/$GITHUB_REF" in
+              push/refs/tags/v*|schedule/refs/heads/main|workflow_dispatch/refs/heads/main) publish=true ;;
+            esac
+          fi
+          echo "artifacts=$artifacts image=$image publish=$publish"
+          {
+            echo "artifacts=$artifacts"
+            echo "image=$image"
+            echo "publish=$publish"
+          } >> "$GITHUB_OUTPUT"
       - id: v
         shell: bash
         run: |
@@ -340,9 +388,9 @@ jobs:
           - { os: ubuntu-24.04, arch: amd64 }
           - { os: ubuntu-24.04-arm, arch: arm64 }
     env:
-      # Published only for pushes (main and v* tags) to this repository;
-      # pull requests, forks and "Run workflow" only build.
-      PUSH: ${{ github.event_name == 'push' && github.repository == 'rudalabs/TeamCraft' }}
+      # Published only from main (:edge) and v* tags of this repository;
+      # pull requests, forks and "Run workflow" on other branches only build.
+      PUSH: ${{ needs.version.outputs.publish }}
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v3
@@ -388,7 +436,7 @@ jobs:
   image-manifest:
     name: image manifest
     needs: [version, image, docker-smoke]
-    if: github.event_name == 'push' && github.repository == 'rudalabs/TeamCraft'
+    if: needs.version.outputs.publish == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:

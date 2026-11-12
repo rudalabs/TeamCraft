@@ -2,14 +2,14 @@
 // TeamCraft Desktop – The main window: rail, navigator, status bar, update notice, notifications, long operations.
 // Part of the desktop UI (ES modules, no build step; js/main.js starts it).
 
-import { $, ICONS, api, badge, call, clear, dialog, enc, errorText, fmtDate, fmtSize, h, invoke, label, run, state, svgIcon, toast, tool } from "./core.js";
+import { $, ICONS, api, badge, call, clear, dialog, enc, errorText, fmtDate, fmtSize, h, invoke, label, run, setStatus, state, svgIcon, toast, tool } from "./core.js";
 import { checkServerVersion, showConnect } from "./connect.js";
 import { navHead, selectView } from "./navigator.js";
 import { activeTab, closeTab, renderActive, renderTabs, tabShortcut } from "./tabs.js";
 import { agent, agentProfiles, applyAiPolicy, localAgentsAllowed, openAgent, schedulePaint, updateAgentControls } from "./agent.js";
 import { openRevision } from "./revision.js";
 import { impactGroups } from "./references.js";
-import { SYNC_LABEL, checkWorkspaceLayout } from "./workspace.js";
+import { checkWorkspaceLayout } from "./workspace.js";
 import { openChange } from "./change.js";
 import { openRequest } from "./requests.js";
 import { openSettings } from "./settings.js";
@@ -387,47 +387,115 @@ export function watchTool(tab, kind, number, watching) {
   }, { title: watching ? "Stop the notifications about " + number : "Get notified about " + number });
 }
 
+/** My check-outs (worklist rows) in the shape of the workspace commands. */
+function checkoutRefs(checkouts) {
+  return checkouts.map(function (r) { return { id: r.id, project: r.project_code || null, item: r.item_number, code: r.code }; });
+}
+
+/** Which of my check-outs have local changes in the working folder (issue
+ * #173, step 10): `{changed: [{id, project, item, code, upload, conflicts}],
+ * clean: [...], unreadable: [[revision, error]]}` – sorted by the pure rule
+ * in `src/layout.rs` (`local_changes`). */
+export function checkoutsWithChanges(checkouts) {
+  return call("workspace_local_changes", { revisions: checkoutRefs(checkouts) });
+}
+
+/** How many check-outs hold (or might hold) work that is only on this computer. */
+export function atRisk(report) {
+  return report.changed.length + report.unreadable.length;
+}
+
+function revLink(r) {
+  return h("a", { href: "#", on: { click: function (e) { e.preventDefault(); openRevision(r.item, r.code, "workspace"); } } }, r.item + "/" + r.code);
+}
+
+/** The check-outs with local changes, each with a link to its Workspace tab. */
+export function localChangesList(report) {
+  return h("ul.small", null, report.changed.map(function (c) {
+    return h("li", null, [revLink(c), " – " + c.upload.join(", ") +
+      (c.conflicts.length ? (c.upload.length ? "; " : "") + "conflict (merge first): " + c.conflicts.join(", ") : "")]);
+  }).concat(report.unreadable.map(function (u) {
+    return h("li", null, [revLink(u[0]), " – could not be compared: " + u[1]]);
+  })));
+}
+
+/** Checks in (`park` false) or parks (`park` true: new versions, the lock
+ * stays) the modified and new files of every check-out with local changes,
+ * one after the other. A check-out with a conflict is left alone (the server
+ * would refuse it). Resolves with `{done, kept, failed}` (lines of text). */
+export function sendLocalChanges(report, park, comment) {
+  var out = { done: [], kept: [], failed: [] };
+  report.unreadable.forEach(function (u) { out.kept.push(u[0].item + "/" + u[0].code + ": could not be compared – " + u[1]); });
+  return report.changed.reduce(function (chain, c) {
+    return chain.then(function () {
+      var name = c.item + "/" + c.code;
+      if (c.conflicts.length) { out.kept.push(name + ": conflict in " + c.conflicts.join(", ") + " – merge in its Workspace tab"); return; }
+      setStatus((park ? "Parking " : "Checking in ") + name + " …");
+      return call(park ? "workspace_park" : "workspace_checkin", { project: c.project, item: c.item, code: c.code, files: c.upload, comment: comment })
+        .then(function () { out.done.push(name + " (" + c.upload.join(", ") + ")"); },
+          function (err) { out.failed.push(name + ": " + errorText(err)); });
+    });
+  }, Promise.resolve()).then(function () { setStatus(""); return out; });
+}
+
+function lines(title, list, cls) {
+  return list.length ? h("div" + (cls || ""), null, [h("strong", { text: title }), h("ul.small", null, list.map(function (t) { return h("li", { text: t }); }))]) : null;
+}
+
 /** "Check in all my check-outs": every revision without local changes in
- * the workspace is checked in on the server (lock released, one by one);
- * revisions with modified, new or conflicting files are left checked out
- * and listed – check them in one at a time with their files. */
+ * the workspace is checked in on the server (lock released, one by one).
+ * Revisions with modified or new files are listed first, with the offer to
+ * check them in with their files (issue #173, step 10); revisions with a
+ * conflict always stay checked out – merge them one at a time. */
 export function checkInAll() {
   var checkouts = (state.worklist && state.worklist.checkouts) || [];
-  var clean = [], skipped = [], unreadable = [];
   run("Comparing " + checkouts.length + " check-outs with the workspace", function () {
-    return checkouts.reduce(function (chain, r) {
-      return chain.then(function () {
-        return call("workspace_status", { project: r.project_code, item: r.item_number, code: r.code }).then(function (ws) {
-          var local = ws.files.filter(function (f) { return f.state === "modified" || f.state === "new" || f.state === "conflict"; });
-          if (local.length) skipped.push({ rev: r, files: local });
-          else clean.push(r);
-        }, function (err) { unreadable.push(r.item_number + "/" + r.code + ": " + errorText(err)); });
-      });
-    }, Promise.resolve()).then(function () {
-      if (!clean.length) return { revisions: [], checked_in: 0 };
-      return api("POST", "/worklist/checkin-all", { revisions: clean.map(function (r) { return r.id; }) }).then(function (result) {
-        // the released files become read-only in the working folder again
-        return clean.reduce(function (chain, r) {
-          return chain.then(function () {
-            return call("workspace_status", { project: r.project_code, item: r.item_number, code: r.code }).catch(function () {});
-          });
-        }, Promise.resolve()).then(function () { return result; });
-      });
+    return checkoutsWithChanges(checkouts);
+  }).then(function (report) {
+    if (!atRisk(report)) { releaseClean(checkouts.length, report, null); return; }
+    dialog("Local changes before Check in all", h("div.stack", null, [
+      h("p", { text: atRisk(report) + " of your " + checkouts.length + " check-outs have changes in the working folder that are not on the server yet:" }),
+      localChangesList(report),
+      h("p.small.muted", { text: "Check them in first: their modified and new files become new versions and their locks are released too. " +
+        "Check-outs with a conflict stay checked out. Only the others: just the check-outs without local changes are released." })
+    ]), [
+      { label: "Cancel", onClick: function (d) { d.close(); } },
+      { label: "Only the others", onClick: function (d) { d.close(); releaseClean(checkouts.length, report, null); } },
+      { label: "Check them in first", primary: true, submit: true, onClick: function (d) {
+        d.close();
+        sendLocalChanges(report, false, "Checked in with Check in all").then(function (sent) {
+          releaseClean(checkouts.length, report, sent);
+        });
+      } }
+    ], { wide: true });
+  }, function () {});
+}
+
+/** Releases the check-outs without local changes and reports everything. */
+function releaseClean(total, report, sent) {
+  run("Checking in " + report.clean.length + " check-outs without local changes", function () {
+    if (!report.clean.length) return { revisions: [], checked_in: 0 };
+    return api("POST", "/worklist/checkin-all", { revisions: report.clean.map(function (r) { return r.id; }) }).then(function (result) {
+      // the released files become read-only in the working folder again
+      return report.clean.reduce(function (chain, r) {
+        return chain.then(function () {
+          return call("workspace_status", { project: r.project, item: r.item, code: r.code }).catch(function () {});
+        });
+      }, Promise.resolve()).then(function () { return result; });
     });
   }).then(function (result) {
-    var failed = (result.revisions || []).filter(function (o) { return !o.ok; });
+    var failed = (result.revisions || []).filter(function (o) { return !o.ok; })
+      .map(function (o) { return o.item_number + "/" + o.code + ": " + o.error; });
+    var released = result.checked_in + (sent ? sent.done.length : 0);
     var body = h("div.stack", null, [
-      h("p", { text: result.checked_in + " of " + checkouts.length + " check-outs checked in – their locks are released." }),
-      skipped.length ? h("div.stack", null, [
-        h("p", { text: skipped.length + " kept checked out because of local changes – check them in one by one with their files:" }),
-        h("ul.small", null, skipped.map(function (s) {
-          return h("li", null, [h("a", { href: "#", on: { click: function (e) { e.preventDefault(); openRevision(s.rev.item_number, s.rev.code, "workspace"); } } },
-            s.rev.item_number + "/" + s.rev.code), " – " + s.files.map(function (f) { return f.name + " (" + (SYNC_LABEL[f.state] || f.state) + ")"; }).join(", ")]);
-        }))
+      h("p", { text: released + " of " + total + " check-outs checked in – their locks are released." }),
+      sent ? lines("Checked in with their local changes:", sent.done) : null,
+      sent ? lines("Kept checked out:", sent.kept) : null,
+      sent ? null : report.changed.length || report.unreadable.length ? h("div.stack", null, [
+        h("p", { text: atRisk(report) + " kept checked out because of local changes – check them in (or park them) one by one with their files:" }),
+        localChangesList(report)
       ]) : null,
-      failed.length || unreadable.length ? h("div.notice.error", null, [h("strong", { text: "Problems:" }),
-        h("ul.small", null, failed.map(function (o) { return h("li", { text: o.item_number + "/" + o.code + ": " + o.error }); })
-          .concat(unreadable.map(function (t) { return h("li", { text: t }); })))]) : null
+      lines("Problems:", failed.concat(sent ? sent.failed : []), ".notice.error")
     ]);
     dialog("Check in all my check-outs", body, [{ label: "Close", primary: true, submit: true, onClick: function (d) { d.close(); } }]);
     refreshWorklistCount().then(function () { if (state.view === "worklist") selectView("worklist"); renderActive(); }, function () {});

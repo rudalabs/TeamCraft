@@ -124,8 +124,8 @@ enum Command {
     /// runs every conversion in its own process with a time limit).
     #[command(hide = true)]
     PreviewMesh {
-        /// Format id: stl, obj, ply, off, 3mf, amf, gltf, glb, 3ds, step, nx-part, solidworks-part, rhino,
-        /// inventor-part, sketchup, pts, xyz, las –
+        /// Format id: stl, obj, ply, off, 3mf, amf, gltf, glb, 3ds, step, nx-part, jt, solidworks-part, rhino,
+        /// inventor-part, catia-part, creo-part, sketchup, fusion-design, pts, xyz, las –
         /// or tcm for a cached preview mesh (only --signature / --mass-properties)
         #[arg(long)]
         format: String,

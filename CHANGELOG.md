@@ -15,6 +15,83 @@ see the notices in the README.
 
 ### Added
 
+- 3D preview of PTC Creo parts (`.prt.N`): the exact B-rep stored in the
+  file (`VisibGeom`) is read – text table of contents, LZW sections, the
+  self-describing tagged format with its compressed numbers – and
+  tessellated: planes, cylinders, cones, tori, bicubic splines, rolling-ball
+  fillets and ruled surfaces with their contours, edges sampled in both
+  faces' parameter spaces, ear clipping per face region, welding and PN
+  refinement along the analytic normals (`src/mesh/creo/`). The thumbnail is
+  rendered from the preview (thumbnail cache version 8: every cached
+  thumbnail is made again once). New fuzz target `creopart`. Model units and
+  assemblies are not covered yet (`docs/src/research/creo-brep-preview.md`).
+- 3D preview of Autodesk Fusion designs (`.f3d`) from the display mesh
+  Fusion stores in the file, refined along its exact normals like NX parts;
+  the thumbnail is rendered from it (the PNG Fusion stored is the fallback).
+- Offboarding (#173, step 9) – leavers removed only at the identity
+  provider: **OpenID Connect Back-Channel Logout** at
+  `/auth/oidc/backchannel-logout` – a logout token signed by the provider
+  (checked against its `jwks_uri`, RS256 or ES256) ends every browser
+  session of that user at once, audited as `user.idp_logout`;
+  `TEAMCRAFT_OIDC_TOKEN_IDLE_DAYS` gives the new API and desktop tokens of
+  SSO users an idle lifetime (off by default); *Users* lists **SSO users
+  without sign-in** – active SSO users without a sign-in or token use for
+  90 days who still hold memberships, tokens or check-outs. Migration 0071
+  (`users.idp_logout_at`). Automatic deprovisioning through SCIM is not
+  built; see the research note *Deprovisioning through the identity
+  provider*.
+- Offboarding (#173, step 10), desktop app: *Check in all* and *Sign out*
+  list the check-outs with local changes and offer to check them in first
+  (sign-out also to park them); **Park…** uploads work in progress as new
+  versions and keeps the check-out, so it survives a lost laptop; after a
+  forced release the *Workspace* tab says *Released by X; your local changes
+  are kept and need a new check-out*.
+- 3D preview of Inventor parts (`.ipt`) from the display tessellation
+  Inventor stores in the file, welded and refined along its exact surface
+  normals like NX and SOLIDWORKS parts. Inventor assemblies (`.iam`) are
+  put together from the previews of their part and sub-assembly files, with
+  the placements stored in the assembly (re-posed flexible sub-assemblies
+  included); hidden and suppressed components are left out. The
+  thumbnails of Inventor parts and assemblies are rendered from the 3D
+  preview. New fuzz target `invpart`.
+- 3D preview of SketchUp models (`.skp`, SketchUp 3 to 2026): the faces are
+  triangulated (earcut port, holes included), components and groups placed
+  with their transforms, nested and scaled ones too, in millimetres; hidden
+  faces, hidden components, hidden tags (layers) and images are left out. The
+  thumbnail is rendered from the 3D preview; a file without faces keeps its
+  stored picture. SketchUp 2021+ files are read by an own reader, older ones
+  by the Rust port of OpenSKP (MIT), vendored unchanged in `vendor/openskp`.
+  39 test files of OpenSKP in `tests/fixtures/cad/openskp`. Research:
+  `docs/src/research/sketchup-preview.md`.
+- BOM quantities from the CAD instance counts (#247): the reference scan
+  stores how often an NX or SOLIDWORKS 2015+ assembly, and a STEP assembly
+  with external part files, places each referenced file
+  (`file_references.instances`, `GET …/references`; migrations 0064 and
+  0065 rescan the current files). The desktop *Import CAD Folder…* uses them
+  as BOM quantities; *Quantities from CAD…* in the desktop app adds missing
+  lines and corrects the quantity 1 of assemblies imported before.
+- Desktop app: **crash reports** – a panic, an uncaught UI error or a
+  session that ended unexpectedly is written locally (redacted); at the next
+  start the user sees the report and opens a prefilled GitHub issue, copies
+  or discards it. Nothing is sent on its own. Research:
+  `docs/src/research/crash-reporting.md`.
+- Desktop app, *Graph* tab: every BOM child shows a small **×n chip** – how
+  many instances of it the assembly contains, summed over its BOM lines –
+  and a drag that starts on a card pans the graph instead of opening it.
+- JT 9.5 assemblies in the 3D preview: a stand-alone JT 9 file with several
+  shapes (or a placed one) is put together through its scene graph like JT
+  10 – instances, transforms, units, hidden nodes – instead of showing its
+  parts piled up at the origin. Single-part JT 9 files and the JT inside NX
+  parts read exactly as before. Tested with JT 9.5 files built around the
+  real NIST hex nut (no openly licensed JT 9.5 assembly exists).
+- 3D preview of stand-alone JT 10 files (`.jt`, ISO 14306): parts and whole
+  assemblies from one file – the scene graph (LZMA via the pure-Rust
+  `lzma-rs`, MIT) with transforms, units and hidden nodes, each shape's
+  finest level of detail through the JT 9 topology coder plus the JT 10
+  integer codecs, hash-checked and refined along its normals. The thumbnail
+  is rendered from the 3D preview. Verified with the NIST box assembly (36
+  placements equal to NX, sizes equal to NIST's STEP files). JT 9 files
+  keep the reader of #200.
 - Offboarding (#173, step 8): **Season handover** of a project group
   (`/projects/{id}/season`, managers and administrators): tick the members
   who leave – or let the page tick those inactive since a date or past their
@@ -116,6 +193,10 @@ see the notices in the README.
   loosen. The access review shows the conditions and whether each member met
   them. The assistant applies the request's conditions (and, for a token, the
   `api_tokens` switch) at every tool step. Migration 0068.
+- 3D preview of CATIA V5 parts (`.CATPart`) from the visualisation (CGR)
+  data CATIA stores in the file, refined along its exact surface normals
+  like NX parts. Their thumbnail is rendered from it. Products are not
+  previewed yet.
 
 ### Changed
 
@@ -135,6 +216,13 @@ see the notices in the README.
 
 ### Fixed
 
+- Inventor 3D preview (#271): parts and assemblies whose segments are
+  compressed with Zstandard instead of zlib (seen in newer Inventor files;
+  every part failed with *damaged compressed data*) get their preview and
+  rendered thumbnail again. The compression is told by its magic bytes; the
+  Zstandard output is capped like the zlib output (pure-Rust `ruzstd`).
+  Preview cache version 3, thumbnail cache version 7 and shape signature
+  version 3: the failures cached before are converted again.
 - Desktop, *Graph* tab (#254): a click on a sub-assembly now turns the tab
   into that sub-assembly – tab title, header, toolbar and graph are its own –
   instead of re-centring the graph inside the tab of the assembly above it;
@@ -143,6 +231,10 @@ see the notices in the README.
   on the item in the middle opens its overview and no longer adds a step:
   each click used to add one, so the back control appeared although nothing
   had changed. `Ctrl`/`⌘`+click opens a node in a tab of its own.
+- Desktop, *Graph* tab on macOS and Linux (#242): WebKit ignored the
+  transforms of the SVG groups for the cards, so they landed away from their
+  edges; the cards now sit in an HTML layer above the SVG with the same zoom
+  and pan.
 - Every web page starts with a *Skip to the main content* link (visible
   while it has the keyboard focus), and the 17 empty column headers (action
   columns, the corner of the inertia tensor) have a name for screen readers.
@@ -162,25 +254,6 @@ Changes since the `v0.2.6` tag.
 
 ### Added
 
-- 3D preview of PTC Creo parts (`.prt.N`): the exact B-rep stored in the
-  file (`VisibGeom`) is read – text table of contents, LZW sections, the
-  self-describing tagged format with its compressed numbers – and
-  tessellated: planes, cylinders, cones, tori, bicubic splines, rolling-ball
-  fillets and ruled surfaces with their contours, edges sampled in both
-  faces' parameter spaces, ear clipping per face region, welding and PN
-  refinement along the analytic normals (`src/mesh/creo/`). The thumbnail is
-  rendered from the preview (`CACHE_VERSION` 7). Model units and assemblies
-  are not covered yet
-  (`docs/src/research/creo-brep-preview.md`).
-- 3D preview of SketchUp models (`.skp`, SketchUp 3 to 2026): the faces are
-  triangulated (earcut port, holes included), components and groups placed
-  with their transforms, nested and scaled ones too, in millimetres; hidden
-  faces, hidden components, hidden tags (layers) and images are left out. The
-  thumbnail is rendered from the 3D preview; a file without faces keeps its
-  stored picture. SketchUp 2021+ files are read by an own reader, older ones
-  by the Rust port of OpenSKP (MIT), vendored unchanged in `vendor/openskp`.
-  39 test files of OpenSKP in `tests/fixtures/cad/openskp`. Research:
-  `docs/src/research/sketchup-preview.md`.
 - The *Material* field (*New item*, *Edit revision*, desktop app) suggests the
   materials of the library with their density while you type (a `<datalist>`,
   also without JavaScript); a name that is not in the library gets a hint.
@@ -269,7 +342,6 @@ Changes since the `v0.2.5` tag.
   `PUT /api/v1/branding/name` sets them (admins). The footer, About, version
   and licence notices stay TeamCraft. `TEAMCRAFT_INSTANCE_NAME` is now only
   the default.
-
 - Need-to-know project groups, step 5 (#151): access review of a restricted
   group (migration 0053, `project_access_reviews`). Page `/projects/{id}/access-review` for managers and
   administrators: members with role, group role, source (manual or identity
@@ -485,14 +557,6 @@ Changes since the `v0.2.5` tag.
 - Mutation testing with cargo-mutants (#170): configuration, a report-only
   check on pull requests and a weekly run; the gaps of the first
   whole-repository run are closed with unit tests (#207).
-- 3D preview of Inventor parts (`.ipt`) from the display tessellation
-  Inventor stores in the file, welded and refined along its exact surface
-  normals like NX and SOLIDWORKS parts. Inventor assemblies (`.iam`) are
-  put together from the previews of their part and sub-assembly files, with
-  the placements stored in the assembly (re-posed flexible sub-assemblies
-  included); hidden and suppressed components are left out. The
-  thumbnails of Inventor parts and assemblies are rendered from the 3D
-  preview. New fuzz target `invpart`.
 
 ### Changed
 

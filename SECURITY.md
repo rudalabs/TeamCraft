@@ -43,7 +43,9 @@ otherwise.
 
 In scope:
 
-* authentication: passwords, sessions, API tokens, OpenID Connect;
+* authentication: passwords, sessions, API tokens, OpenID Connect – including
+  a back-channel logout token that TeamCraft accepts without the provider's
+  signature, or that ends another user's sessions;
 * permission checks: roles, project groups, check-out locks, released data;
 * read visibility of [restricted project groups](https://rudalabs.github.io/TeamCraft/admin/permissions.html):
   any way for a non-member to read an item, file, preview, BOM line,

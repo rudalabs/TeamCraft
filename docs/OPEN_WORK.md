@@ -96,8 +96,9 @@ feature milestone – the features in *What works* are enough; what is missing i
     - [x] F5: `Strict-Transport-Security` when the public URL is https
     - [ ] F6: OIDC with a plain `http://` issuer: refuse it outside `localhost`, or verify ID token signatures (JWKS)
       for it – a decision, since it can break installations with an internal IdP
-    - [ ] F7: end TeamCraft sessions of users removed at the IdP (shorter SSO sessions, back-channel logout or a
-      periodic check)
+    - [x] F7: end TeamCraft sessions of users removed at the IdP – OpenID Connect back-channel logout
+      (`/auth/oidc/backchannel-logout`, #173 step 9). Left: shorter SSO sessions for providers without back-channel
+      logout (`TEAMCRAFT_OIDC_SESSION_HOURS`, unpublished `ga/oidc-hardening` work)
     - [ ] F8: re-check the hash of a blob while it is downloaded (or periodically), not only in `vault check`
     - [x] F9: disk quota per user and in total for uploads (`services::quotas`, `teamcraft user quota` /
       `teamcraft vault quota`, `tests/quotas.rs`)
@@ -187,6 +188,10 @@ half a state behind. Prefer tests that fail on a real regression over tests that
   twice. Open: an item whose *creation* answer was lost (network gone between the server's commit and the app's
   log) is created again on the next run – fixed in code with an idempotency key for `POST /items`
   (`tests/item_idempotency.rs`) – **database tests written, not yet run against a real database**
+- [ ] BOM import time grows faster than the number of lines: 1 000 lines 3.9 s, 10 000 lines 101 s on a developer
+  machine (2026-11-12, debug build, `ten_thousand_lines_import_in_one_transaction`), about n^1.4. Find the step that
+  grows (plan lookups, per-row statements, counters) and make it linear; then lower `MAX_TEN_FOLD_GROWTH` in
+  `tests/import_scale_and_concurrency.rs` from 60 towards 20
 - [x] **Atomic processes** – the folder import per item is covered too (see *Import*); the rest is done, see *Done*
 - [ ] Coverage map: keep the feature → tests table of #65 in `CONTRIBUTING.md` (or `docs/src/dev/`) up to date, and
   make CI fail when the integration tests are skipped (`TEAMCRAFT_REQUIRE_DB_TESTS=1`, already set) – #65 was merged
@@ -253,12 +258,12 @@ half a state behind. Prefer tests that fail on a real regression over tests that
 - [ ] Flaky desktop test on macOS: `resume::tests::a_wrong_part_is_started_over_and_a_complete_one_only_renamed`
   (`desktop/src/resume.rs`, the assertion on the recorded `Range` headers) fails in about 2 of 15 runs – record the
   header before the test server answers, or compare the set of ranges instead of their order
-- [ ] Decide the release builds on `main` (disputed in the CI review, so not changed): today every push to `main`
-  builds all 14 release jobs (server, desktop installers, Flatpak, image; ~110–170 runner-min, ~50 min wall clock)
-  and a newer push cancels the run, so cancelled commits get no `:edge` image. Options: (a) keep as is; (b) image +
-  Docker smoke test per push, the other artifacts nightly, on tags and by hand; (c) per push only when packaging
-  inputs change. Either way: add `packaging/**` and `desktop/tauri.conf.json` to the PR paths of `release.yml`, so a
-  Flatpak or bundle change is built before it is merged
+- [x] Release builds on `main` (#275): every push to `main` built all 14 release jobs (~110–170 runner-min) and
+  a newer push cancelled the running build, so about half of the commits on `main` showed a red ✗ without a real
+  failure. Now nightly (skipped when only documentation changed since the last good build), on `v*` tags and by
+  hand; `:edge` follows `main` within a day. A pull request that changes `packaging/**` or
+  `desktop/tauri.conf.json` builds everything before it is merged. CI, CodeQL and the desktop workflow no longer
+  cancel or replace runs on `main` either
 - [ ] Run `scale.yml` once by hand – its schedule has never fired yet – and make a failing scheduled run open an
   issue instead of only an e-mail
 - [x] `fuzz.yml` had never built a single target: the prebuilt `cargo-fuzz` from `taiki-e/install-action` is a musl
@@ -417,7 +422,18 @@ real files and belong to section 3 once such files are at hand.
   manager, releases check-outs with a reason, sets "member until" (`project_members.expires_at`, flag only), removes
   members and demotes the old managers – each step through its own service and audited. Left: the access review page
   for internal groups, ownership hand-over from the season page (today: *Hand over work* on the user page).
-- [ ] Steps 9–10: IdP-driven offboarding, desktop working folder.
+- [x] Step 9: IdP-driven offboarding – (a) *SSO users without sign-in* on the admin *Users* page
+  (`services::offboarding::idle_sso_users`: no sign-in or token use for 90 days, still holding memberships, tokens or
+  check-outs); (b) `TEAMCRAFT_OIDC_TOKEN_IDLE_DAYS` caps new tokens of SSO users (`users::token_lifetime_for`);
+  (c) OpenID Connect Back-Channel Logout (`oidc::verify_logout_token`, `users::idp_logout`, migration 0071), tests
+  in `tests/oidc_flow.rs` with a signed logout token of the fake provider; (d) SCIM: research page only
+  (`docs/src/research/scim-deprovisioning.md`, not now). Left: a logout token with only `sid` (refused today), an
+  API route for the idle report.
+- [x] Step 10: desktop working folder – *Check in all* and *Sign out* list the check-outs with local changes
+  (`layout::local_changes`) and offer to check them in first (sign-out also to park them); *Park…* uploads work in
+  progress as new versions and keeps the lock (`POST …/files`, `files::attach`); after a forced release the
+  Workspace tab says *Released by X; your local changes are kept and need a new check-out* (`released` of
+  `…/file-status`, `checkouts::released_from`, read from the audit log).
 
 **Desktop app**
 
@@ -461,8 +477,10 @@ real files and belong to section 3 once such files are at hand.
 
 - [ ] Test real STEP exports of the CAD programs, assembly placements (`mapped_item` – parts of an assembly can
   overlap) and length units
-- [ ] Readers for IGES, BREP, Parasolid, JT, FBX, DAE, USD and E57 – recognised, not previewed (no pure-Rust readers
-  yet; candidate: `e57` crate)
+- [ ] Readers for IGES, BREP, Parasolid, FBX, DAE, USD and E57 – recognised, not previewed (no pure-Rust readers
+  yet; candidate: `e57` crate). JT 9 and 10 are read with their scene graph (`src/mesh/jt10.rs`); open there: JT 8, shattered
+  JT files (parts in other `.jt` files), a real JT 9.5 assembly as a test file (the tests build synthetic ones) – no
+  openly licensed test files yet
 
 **Simulation management (FEA/CFD)**
 
@@ -679,7 +697,7 @@ needs an issue with a reason first (see *Direction*).
 
 - [ ] Managed/SaaS and hybrid deployment (on-premises vault, cloud collaboration)
 - [ ] Permissions per object, per attribute and per lifecycle state; external (supplier) users
-- [ ] SAML, SCIM provisioning, ending sessions of users removed at the IdP (F7), built-in MFA
+- [ ] SAML, SCIM provisioning (research: *Deprovisioning through the identity provider*, not now), built-in MFA
 - [ ] Token scopes per project group (F2), project API keys
 - [ ] OpenAPI description, a stable versioned API, an event bus connector (Kafka/AMQP)
 - [ ] AI: per-user budgets (F16), prompt-injection protection for writes, AI-assisted impact analysis, semantic search
@@ -941,7 +959,8 @@ README licence table, follow the definition of done in `CLAUDE.md`. The docs are
   `tests/api_password.rs`, `tests/notification_settings_api.rs`, the metrics tests) run for the first time in its CI.
 - GA items started but not yet in a pull request (work kept in local worktrees): assistant budget (phase 4, F16),
   scoped tokens (F2), download hardening (F8, F10), retention and cleanup, parser hardening (F11,
-  F13, F14), MCP hardening (F15, F17), backup hardening (F19: file modes, signed manifest), OIDC hardening (F6, F7),
+  F13, F14), MCP hardening (F15, F17), backup hardening (F19: file modes, signed manifest), OIDC hardening (F6, F7
+  session hours – back-channel logout is done),
   OpenAPI description; not
   started: MCP versioning, CLI and configuration freeze, accessibility leftovers, SBOM and attestations, upgrade
   proofs per release, scale targets, JSON logs.

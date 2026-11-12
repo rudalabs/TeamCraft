@@ -475,6 +475,154 @@ fn damaged_nx_parts_never_panic() {
     }
 }
 
+/// The stand-alone JT 10.5 export of the NIST assembly: all 36 instances of
+/// its 8 parts at their places (checked against NX to 6e-6 mm), every
+/// part closed and consistently oriented, in millimetres. The box measures
+/// 152.4 × 101.6 mm like NIST's STEP file; the screws stand out on top.
+#[test]
+fn jt_assemblies_get_a_placed_3d_preview() {
+    let rel = "mtc-assembly/nx/NIST mtc crada assembly.jt";
+    assert_eq!(
+        preview::PreviewFormat::of(rel),
+        Some(preview::PreviewFormat::Jt)
+    );
+    let mesh = preview::convert(preview::PreviewFormat::Jt, &fixture(rel)).unwrap();
+    mesh.check().unwrap();
+    assert_eq!(mesh.parts, 36);
+    // LOD 0 of the 36 instances; too many triangles for a refinement
+    assert_eq!(mesh.triangle_count(), 269_304);
+    let b = mesh.bounds();
+    let expect = [-4.0, -4.0, -8.6, 148.4, 97.6, 99.05];
+    for (got, want) in b.iter().zip(expect) {
+        assert!((got - want).abs() < 0.001, "{b:?}");
+    }
+    let mut edges = std::collections::HashMap::<(u32, u32), u32>::new();
+    for t in mesh.indices.chunks_exact(3) {
+        for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+            *edges.entry((a, b)).or_default() += 1;
+        }
+    }
+    assert!(
+        edges
+            .iter()
+            .all(|(&(a, b), &n)| n == 1 && edges.get(&(b, a)) == Some(&1)),
+        "every part is closed and consistently oriented"
+    );
+    let s = teamcraft::shape::compute(&mesh).unwrap();
+    assert!(s.is_valid() && s.closed && s.volume > 0.0, "{s:?}");
+    let bytes = mesh.encode();
+    assert_eq!(mesh::Mesh::decode(&bytes).unwrap(), mesh);
+    assert!(thumbnail::rendered("jt") && thumbnail::supports("jt"));
+}
+
+/// The JT assembly as the geometry file of *Mass settings*: one closed mesh
+/// of the whole assembly in its frame, whose volume is the sum of the NIST
+/// NX part files times their instance counts (both in mm, within the
+/// difference of their tessellations).
+#[test]
+fn jt_assembly_mass_matches_its_parts() {
+    let jt = preview::convert(
+        preview::PreviewFormat::Jt,
+        &fixture("mtc-assembly/nx/NIST mtc crada assembly.jt"),
+    )
+    .unwrap();
+    let g = teamcraft::massprops::compute(&jt).unwrap();
+    assert!(g.closed && g.checked, "{g:?}");
+    assert!(!g.inverted_fixed, "every part is oriented outwards");
+    let mut parts = 0.0;
+    for (rel, count) in [
+        ("mtc-assembly/nx/NIST mtc crada box.prt", 1.0),
+        ("mtc-assembly/nx/NIST mtc crada cover.prt", 1.0),
+        ("mtc-assembly/nx/NIST mtc crada plate.prt", 1.0),
+        ("mtc-assembly/nx/NIST mtc crada polycarb.prt", 1.0),
+        ("mtc-assembly/nx/90591A141 HEX NUT.prt", 10.0),
+        ("mtc-assembly/nx/91274A118 SHCS.prt", 14.0),
+        ("mtc-assembly/nx/91274A141 SHCS.prt", 4.0),
+        ("mtc-assembly/nx/91304A112 FHSCS.prt", 4.0),
+    ] {
+        let part = preview::convert(preview::PreviewFormat::NxPart, &fixture(rel)).unwrap();
+        parts += count * teamcraft::massprops::compute(&part).unwrap().volume;
+    }
+    let ratio = g.volume / parts;
+    assert!((ratio - 1.0).abs() < 0.01, "{} vs {parts} mm³", g.volume);
+}
+
+/// A damaged JT file is an error, never a panic: bytes all over the file
+/// (scene graph, shape segments, TOC) are flipped in turn, and the file is
+/// cut short.
+#[test]
+fn damaged_jt_files_never_panic() {
+    let data = std::fs::read(fixture("mtc-assembly/nx/NIST mtc crada assembly.jt")).unwrap();
+    let step = data.len() / 40;
+    for at in (0..data.len()).step_by(step) {
+        let mut copy = data.clone();
+        copy[at] ^= 0x5A;
+        let _ = mesh::read("jt", &copy);
+    }
+    for cut in (0..data.len()).step_by(data.len() / 12) {
+        let _ = mesh::read("jt", &data[..cut]);
+    }
+}
+
+const CATIA_PART: &str = "ctc-01/catia-v5/nist_ctc_01_asme1_rd_ct5290_ra.CATPart";
+
+/// A CATIA V5 part is previewed from the visualisation (CGR) data CATIA
+/// stores in it: closed, in millimetres, and exactly as large as the STEP
+/// export of the same model (vertex box -400..400, -225..225, -100..50).
+#[test]
+fn catia_parts_get_a_closed_3d_preview() {
+    assert_eq!(
+        preview::PreviewFormat::of(CATIA_PART),
+        Some(preview::PreviewFormat::CatiaPart)
+    );
+    let mesh = preview::convert(preview::PreviewFormat::CatiaPart, &fixture(CATIA_PART))
+        .unwrap_or_else(|e| panic!("{e}"));
+    mesh.check().unwrap();
+    // 6 932 stored triangles, refined along the stored normals
+    assert!(mesh.triangle_count() > 6_932, "{}", mesh.triangle_count());
+    let mut edges = std::collections::HashMap::<(u32, u32), u32>::new();
+    for t in mesh.indices.chunks_exact(3) {
+        for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+            *edges.entry((a, b)).or_default() += 1;
+        }
+    }
+    assert!(
+        edges
+            .iter()
+            .all(|(&(a, b), &n)| n == 1 && edges.get(&(b, a)) == Some(&1)),
+        "the mesh is not closed"
+    );
+    let b = mesh.bounds();
+    for (got, want) in b.iter().zip([-400.0, -225.0, -100.0, 400.0, 225.0, 50.0]) {
+        assert!((got - want).abs() < 0.01, "{b:?}");
+    }
+    let s = teamcraft::shape::compute(&mesh).unwrap();
+    assert!(s.is_valid() && s.closed && s.volume > 0.0, "{s:?}");
+    let bytes = mesh.encode();
+    assert_eq!(mesh::Mesh::decode(&bytes).unwrap(), mesh);
+}
+
+/// Damaged CATIA files are an error or a smaller mesh, never a panic.
+#[test]
+fn damaged_catia_parts_never_panic() {
+    let data = std::fs::read(fixture(CATIA_PART)).unwrap();
+    // the nested CGR document holds the mesh
+    let start = data
+        .windows(8)
+        .skip(1)
+        .position(|w| w == b"V5_CFV2\0")
+        .unwrap()
+        + 1;
+    for at in (start..data.len()).step_by(2_999) {
+        let mut copy = data.clone();
+        copy[at] ^= 0x5A;
+        let _ = mesh::read("catia-part", &copy);
+    }
+    for cut in (0..data.len()).step_by(4999) {
+        let _ = mesh::read("catia-part", &data[..cut]);
+    }
+}
+
 /// Every STEP fixture – AP203 geometry only and AP242 with PMI – gets a
 /// complete 3D preview. The AP242 file used to fail: its tessellated PMI
 /// (empty lists `()`) made the B-rep reader's parser reject the whole file.

@@ -398,6 +398,107 @@ impl TokenLifetime {
     pub fn fixed(days: Option<i64>) -> Self {
         days.map_or(TokenLifetime::Unlimited, TokenLifetime::Days)
     }
+
+    /// The lifetime under an idle limit of `idle` days (0 = none): no expiry
+    /// or a longer one becomes `IdleDays(idle)`; a shorter fixed or idle
+    /// lifetime stays.
+    pub fn capped(self, idle: u32) -> Self {
+        let idle = i64::from(idle);
+        if idle == 0 {
+            return self;
+        }
+        match self {
+            TokenLifetime::Days(d) if d <= idle => self,
+            TokenLifetime::IdleDays(d) => TokenLifetime::IdleDays(d.min(idle)),
+            _ => TokenLifetime::IdleDays(idle),
+        }
+    }
+}
+
+/// The lifetime of a new token of `user`: for a single sign-on user capped by
+/// `TEAMCRAFT_OIDC_TOKEN_IDLE_DAYS` (`sso_idle_days`, 0 = off; issue #173),
+/// for anybody else as asked.
+pub async fn token_lifetime_for(
+    pool: &PgPool,
+    user: Uuid,
+    asked: TokenLifetime,
+    sso_idle_days: u32,
+) -> AppResult<TokenLifetime> {
+    if sso_idle_days == 0 {
+        return Ok(asked);
+    }
+    let sso: bool = sqlx::query_scalar(
+        "SELECT COALESCE((SELECT auth_source = 'oidc' FROM users WHERE id = $1), false)",
+    )
+    .bind(user)
+    .fetch_one(pool)
+    .await?;
+    if sso {
+        return Ok(asked.capped(sso_idle_days));
+    }
+    Ok(asked)
+}
+
+/// What a back-channel logout of the identity provider did.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct IdpLogout {
+    pub user_id: Uuid,
+    pub username: String,
+    pub sessions_ended: u64,
+}
+
+/// The identity provider logged the user with the subject `sub` out
+/// (OpenID Connect Back-Channel Logout, issue #173 step 9): their browser
+/// sessions end and the time is noted (`users.idp_logout_at`). An unknown
+/// subject does nothing (`None`). API and desktop tokens stay.
+///
+/// # Invariants
+///
+/// * **Permission:** none – the caller has checked the provider's signed
+///   logout token (`oidc::OidcClient::verify_logout_token`).
+/// * **Locks:** the user row (`FOR UPDATE`).
+/// * **Audit:** `user.idp_logout` (by the system) with the number of
+///   sessions ended.
+/// * **Notifications / webhooks:** none.
+/// * **Atomic:** one transaction.
+pub async fn idp_logout(pool: &PgPool, sub: &str) -> AppResult<Option<IdpLogout>> {
+    let mut tx = pool.begin().await?;
+    let user: Option<(Uuid, String)> = sqlx::query_as(
+        "SELECT id, username FROM users WHERE oidc_subject = $1 AND auth_source = 'oidc'
+         FOR UPDATE",
+    )
+    .bind(sub)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some((user_id, username)) = user else {
+        tx.rollback().await?;
+        return Ok(None);
+    };
+    let sessions_ended = sqlx::query("DELETE FROM sessions WHERE user_id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    sqlx::query("UPDATE users SET idp_logout_at = now() WHERE id = $1")
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    audit::record(
+        &mut tx,
+        None,
+        "user.idp_logout",
+        "user",
+        Some(user_id),
+        format!("The identity provider logged {username} out ({sessions_ended} sessions ended)"),
+        json!({ "sessions": sessions_ended }),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(Some(IdpLogout {
+        user_id,
+        username,
+        sessions_ended,
+    }))
 }
 
 /// Creates a personal access token. The plaintext is returned exactly once.
@@ -1331,5 +1432,21 @@ mod tests {
             Some("a@b.de")
         );
         assert!(clean_email(Some("not-an-email")).is_err());
+    }
+
+    #[test]
+    fn the_sso_idle_limit_caps_token_lifetimes() {
+        use TokenLifetime::*;
+        // off: everything as asked
+        assert_eq!(Unlimited.capped(0), Unlimited);
+        assert_eq!(Days(400).capped(0), Days(400));
+        // no expiry or a longer one becomes the idle limit
+        assert_eq!(Unlimited.capped(30), IdleDays(30));
+        assert_eq!(Days(31).capped(30), IdleDays(30));
+        assert_eq!(IdleDays(90).capped(30), IdleDays(30));
+        // a shorter or equal lifetime stays
+        assert_eq!(Days(30).capped(30), Days(30));
+        assert_eq!(Days(7).capped(30), Days(7));
+        assert_eq!(IdleDays(14).capped(30), IdleDays(14));
     }
 }

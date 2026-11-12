@@ -37,10 +37,15 @@ chacha20poly1305 = { version = "0.10", features = ["stream"] }
 cfb = "0.10"
 crc32fast = "1"
 encoding_rs = "0.8"
+# LZMA (.xz) segments of stand-alone JT 10 files (MIT, pure Rust)
+lzma-rs = "0.3"
 # Raw Deflate segments of SOLIDWORKS 2015+ files; the same flate2/zlib-rs that zip already uses
 flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
 # ZIP export "Pack and Go" (MIT); Deflate via flate2/zlib-rs, no other codecs
 zip = { version = "9", default-features = false, features = ["deflate-flate2-zlib-rs", "chrono"] }
+# Zstandard: segments of newer Inventor files (.ipt/.iam) and the entries of Fusion design archives (.f3d,
+# read through zip's raw entries, ZIP CRC-32 checked); pure Rust (MIT), no hash feature
+ruzstd = { version = "0.9", default-features = false, features = ["std"] }
 # SketchUp 3-2020 files (classic MFC container): the Rust port of OpenSKP (MIT),
 # vendored unchanged because it is not on crates.io – see vendor/README.md
 openskp = { path = "vendor/openskp", version = "1.5.0" }
@@ -57,6 +62,9 @@ pdf_oxide = { version = "0.3", default-features = false, features = ["legacy-cry
 truck-meshalgo = { version = "0.4", default-features = false, features = ["analyzers", "filters", "tessellation"] }
 rand = "0.8"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# Signature check of OIDC back-channel logout tokens (RS256, ES256); already
+# in the tree through rustls
+ring = "0.17"
 rpassword = "7"
 # BOM comparison export and .xlsx files for the import tests (MIT / Apache-2.0)
 rust_xlsxwriter = { version = "0.102", default-features = false }

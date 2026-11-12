@@ -176,3 +176,45 @@ elements. The element type names a class of the table: a point (3 ×
   preview instead of the stored PNG. An assembly none of whose parts are in
   TeamCraft keeps the stored image.
 * Later, if needed: design views, weld beads and the ShapeManager geometry.
+
+## Addendum 2026-11-12: Zstandard segments (#271)
+
+A user's 44 Inventor parts all failed with *damaged compressed data*. The
+files were intact, but every `M<id>` and `B<id>` stream below `RSeStorage`
+held a **Zstandard** frame (magic `28 B5 2F FD`, RFC 8878) instead of zlib
+(`78 5E`). Which Inventor version started writing Zstandard is not known:
+the version could not be read from those files, and every file we have is
+zlib – the Autodesk samples (Inventor 2019 and 2022), NIST 2021 and the
+NIST STC set saved with Inventor 2024. No openly licensed Inventor file
+with Zstandard segments was found.
+
+What changed in `src/invpart.rs`:
+
+* the body of a meta or data stream is Zstandard when the magic stands
+  where the zlib body would start (after the `u8` of the meta stream, after
+  the 18-byte header of the data stream), zlib when a valid zlib header
+  stands there (RFC 1950 check bits), and otherwise the first Zstandard
+  magic within 64 bytes before or after that offset;
+* the search is there because the header length in front of a Zstandard
+  frame could not be checked against real bytes: if newer files changed the
+  `u8` flag or the 18-byte header, the frame is still found;
+* frames that follow each other directly are read one after the other;
+* the output is capped like the zlib output, and the window a frame asks
+  for (which the decoder allocates up front) is capped at 32 MiB;
+* the decoder is the pure-Rust `ruzstd` (MIT), the same crate the Fusion
+  archives use.
+
+Tests repack a NIST part with Zstandard (every segment, the frame also a
+few bytes off) and check that every segment unpacks to the same bytes as
+from the zlib original, and that a Zstandard part gives the same preview
+mesh as with zlib; damaged Zstandard streams are errors, never panics. The fuzz
+target `invpart` gets a small synthetic seed with Zstandard segments
+(`fuzz/seeds/invpart/zstd-segments.ipt`).
+
+Failed conversions are cached, so the preview cache (3), the thumbnail
+cache (7) and the shape signatures (3) got new versions: the parts that
+failed before are converted again.
+
+Known gap: no real Zstandard file is in the tests. If one turns up under an
+open licence, it belongs in `tests/fixtures/cad` with a fixture test, and
+the header bytes in front of the frame should be checked against it.

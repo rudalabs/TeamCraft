@@ -33,8 +33,9 @@ use crate::{
 
 /// Bump to invalidate every cached preview (reader fixes, new format).
 /// Bump `shape::VERSION` with it: the shape signatures stored in the
-/// database are computed from these meshes.
-pub const CACHE_VERSION: u32 = 2;
+/// database are computed from these meshes. 3: Inventor files with
+/// Zstandard segments (#271), cached as failed before.
+pub const CACHE_VERSION: u32 = 3;
 
 /// Conversions that run at the same time.
 pub const MAX_PARALLEL: usize = 2;
@@ -168,7 +169,8 @@ pub enum PreviewFormat {
     Step,
     /// Siemens NX parts: the lightweight (JT) representation they store.
     NxPart,
-    /// Standalone JT visualisation files (JT 9).
+    /// Standalone JT visualisation files: JT 10 with its scene graph (parts
+    /// and assemblies), JT 9 as NX writes it.
     Jt,
     /// SOLIDWORKS parts: the display tessellation they store.
     SwPart,
@@ -180,10 +182,14 @@ pub enum PreviewFormat {
     InvPart,
     /// Inventor assemblies: put together from the previews of their parts.
     InvAssembly,
+    /// CATIA V5 parts: the visualisation (CGR) data they store.
+    CatiaPart,
     /// SketchUp models: their faces triangulated, components placed.
     SketchUp,
     /// PTC Creo parts: tessellated from the B-rep they store.
     CreoPart,
+    /// Autodesk Fusion designs: the display scene they store.
+    FusionDesign,
     Pts,
     Xyz,
     Las,
@@ -195,7 +201,7 @@ pub enum PreviewFormat {
 }
 
 impl PreviewFormat {
-    pub const ALL: [PreviewFormat; 26] = [
+    pub const ALL: [PreviewFormat; 28] = [
         PreviewFormat::Stl,
         PreviewFormat::Obj,
         PreviewFormat::Ply,
@@ -213,8 +219,10 @@ impl PreviewFormat {
         PreviewFormat::Rhino,
         PreviewFormat::InvPart,
         PreviewFormat::InvAssembly,
+        PreviewFormat::CatiaPart,
         PreviewFormat::SketchUp,
         PreviewFormat::CreoPart,
+        PreviewFormat::FusionDesign,
         PreviewFormat::Pts,
         PreviewFormat::Xyz,
         PreviewFormat::Las,
@@ -254,8 +262,10 @@ impl PreviewFormat {
             PreviewFormat::Rhino => "rhino",
             PreviewFormat::InvPart => "inventor-part",
             PreviewFormat::InvAssembly => "inventor-assembly",
+            PreviewFormat::CatiaPart => "catia-part",
             PreviewFormat::SketchUp => "sketchup",
             PreviewFormat::CreoPart => "creo-part",
+            PreviewFormat::FusionDesign => "fusion-design",
             PreviewFormat::Pts => "pts",
             PreviewFormat::Xyz => "xyz",
             PreviewFormat::Las => "las",

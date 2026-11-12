@@ -230,7 +230,7 @@ fn build(faces: &[&Face]) -> Result<Mesh> {
             normals.extend(&face.normals);
         }
     }
-    let level = super::jt::refine_level(triangles.len());
+    let level = super::pn::refine_level(triangles.len());
     let (points, triangles) = if level > 1 {
         super::pn::refine(&points, &triangles, &normals, &normal_triangles, level)
     } else {
@@ -481,5 +481,18 @@ mod tests {
         for cut in 0..payload.len() {
             let _ = read_part(&part(vec![body(true), (2, payload[..cut].to_vec())]));
         }
+    }
+
+    /// A part whose segments are Zstandard (issue #271) gives the same
+    /// preview as with zlib. The NIST parts repacked with Zstandard are
+    /// compared segment by segment in `invpart` (fast: no mesh is built).
+    #[test]
+    fn zstandard_parts_give_the_same_preview_as_zlib_ones() {
+        let zlib = part(cube());
+        let zstd = crate::invpart::tests::as_zstd(&zlib, 0);
+        let (a, b) = (read_part(&zlib).unwrap(), read_part(&zstd).unwrap());
+        assert_eq!(a.positions, b.positions);
+        assert_eq!(a.indices, b.indices);
+        assert!(edges_used_twice(&b), "closed");
     }
 }
