@@ -2171,6 +2171,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
 
 [[package]]
+name = "openskp"
+version = "1.5.0"
+
+[[package]]
 name = "parking"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3555,6 +3559,7 @@ dependencies = [
  "lettre",
  "lzma-rs",
  "minijinja",
+ "openskp",
  "pdf_oxide",
  "proptest",
  "qrcode",

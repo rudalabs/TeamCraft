@@ -83,6 +83,7 @@ has the same notes under `/api/v1/file-versions/{id}/annotations`.
 | B-rep (tessellated) | STEP (`.step`, `.stp`, `.p21`)                                                                                                |
 | Native CAD          | NX parts (`.prt`), SOLIDWORKS parts (`.sldprt`, 2015+), Inventor parts (`.ipt`) – the tessellation stored in the file; their assemblies from the parts |
 | Native CAD          | Rhino models (`.3dm`) – the meshes stored in the file, SubD objects refined from their control net                            |
+| Native CAD          | SketchUp models (`.skp`, SketchUp 3 to today) – their faces, components and groups in place                                   |
 | Visualisation       | JT (`.jt`): JT 10 parts and whole assemblies, placed; JT 9 as NX writes it                                                    |
 | Meshes              | STL, OBJ, PLY, OFF, 3MF (incl. components), AMF, glTF / GLB, 3DS                                                              |
 | Point clouds        | PTS, XYZ, LAS (uncompressed), PLY and OBJ without faces                                                                       |
@@ -141,6 +142,14 @@ model saved without render meshes (*Save Small*, or very old files) has
 no 3D preview and shows the picture Rhino stored instead (see
 [Research: 3D preview of Rhino models](../research/rhino-3dm-preview.md)).
 
+**SketchUp** models (`.skp`, SketchUp 3 to the current version) open in the
+3D viewer as well: SketchUp stores plain polygons, so TeamCraft triangulates
+the faces (holes included) and places every component and group, nested ones
+too, in millimetres. Hidden faces, hidden components and everything on a
+hidden tag (layer) are left out; colours and textures are not shown. A file
+with only edges and no faces keeps its stored picture (see
+[Research: 3D preview of SketchUp models](../research/sketchup-preview.md)).
+
 For the rest TeamCraft shows what other PLM systems show:
 
 * **JT files** (`.jt`, version 10) carry parts and assembly in one file:
@@ -148,7 +157,7 @@ For the rest TeamCraft shows what other PLM systems show:
   is rendered from it (see
   [Research: 3D preview of stand-alone JT files](../research/jt10-preview.md)).
 * **A picture of the 3D preview** for NX, SOLIDWORKS and Inventor parts and
-  assemblies and for Rhino models. It replaces the image stored in the file and is a 512 × 512
+  assemblies and for Rhino and SketchUp models. It replaces the image stored in the file and is a 512 × 512
   PNG with a transparent background, drawn once and cached. An assembly's
   picture is drawn again when one of its parts changes. Drawings, and
   assemblies none of whose parts are in TeamCraft, keep the stored image.

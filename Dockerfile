@@ -14,6 +14,8 @@ WORKDIR /src
 # Dependencies first, in their own layer: it is rebuilt only when Cargo.toml
 # or Cargo.lock change. The dummy sources are replaced below.
 COPY Cargo.toml Cargo.lock build.rs ./
+# vendored crates are path dependencies (vendor/README.md)
+COPY vendor vendor
 RUN mkdir src \
  && echo 'fn main() {}' > src/main.rs \
  && touch src/lib.rs \
