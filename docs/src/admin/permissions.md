@@ -113,7 +113,8 @@ Nothing is set by default.
   web session, and for tokens, the desktop app and notifications the user's
   last sign-in. A person removed at the identity provider (or from the
   group's IdP group) therefore loses the group at the latest then, even with
-  a session that is still running (F7 in the threat model).
+  a session that is still running (F7 in the threat model) – or at once, when
+  the provider sends a [back-channel logout](users.md#single-sign-on-openid-connect).
 
 Claims and the sign-in age are part of the SQL that builds a user's hidden
 groups (`access::hidden_of_user`), so they apply to every channel, to change

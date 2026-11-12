@@ -30,6 +30,26 @@
 * **Subagents** Only create subagents when explicitly specified.
 * **Branch** You do not have permissions to push to the `main` branch. Create feature branches instead, push there and
   open merge requests to `main` with the `gh` tool instead.
+* **ALWAYS UPDATE THE DOCUMENTATION WHEN YOU IMPLEMENT A TASK.** A task is not
+  done – and is not committed or pushed – until the documentation describes it,
+  in the **same commit or pull request** as the code, never "in a follow-up".
+  Before every commit go through this list and update everything the change
+  touches:
+  * `CHANGELOG.md` – an entry under `## [Unreleased]` (after a merge, check it
+    did not land under an already released version);
+  * `README.md` – *Features*, *Enterprise management*, *Planned* and the licence
+    table (every new crate);
+  * `docs/src/**` – user guide (`guide/`), admin guide (`admin/`, incl.
+    `configuration.md` for variables, `permissions.md`, `users.md`), REST routes
+    in `reference/api.md`, formats in `reference/formats.md`, security-relevant
+    changes in `dev/threat-model.md`, new pages in `SUMMARY.md`;
+  * `docs/OPEN_WORK.md` – tick the work item, name what is left;
+  * desktop changes also in `desktop/README.md` and `docs/src/guide/desktop.md`;
+  * `platforms/*.md`, `CONTRIBUTING.md`, `SECURITY.md`, `deploy/` and the
+    *Architecture* map in this file when they are affected.
+
+  When you notice merged work of other contributors that is missing from the
+  documentation, document it too. The final report names the documents updated.
 * **Building and testing** Prefer to build and test using `cargo` as background processes. Those should not be blocking you from 
   continuing your work. Prefer not to build and test in multiple processes at the same time. If you do that, you seem to rapidly
   fill up the RAM and CPU. When that happens the whole computer slows and then it gets significantly harder to do other tasks in
@@ -70,7 +90,11 @@ src/services/      business logic – the only code that writes to the database
                     imports.rs: BOM import – one plan for preview and import, one transaction; staged_imports for the web flow;
                     insights.rs: read-only BOM health check and duplicate files;
                     attributes.rs: custom attribute definitions (admins), values per revision in revisions.attributes;
-                    mass_properties.rs: material library, mass settings of revisions/files, mass/CG/inertia roll-up)
+                    mass_properties.rs: material library, mass settings of revisions/files, mass/CG/inertia roll-up;
+                    offboarding (#173): offboarding.rs = holdings report per user + idle SSO users, checkouts.rs =
+                    check in all / release_held, deactivation.rs = *Offboard and deactivate* (hand-over, token
+                    revocation, releases), ownership.rs = item owner + hand_over, manager_gaps.rs = groups without an
+                    active manager, season.rs = season handover per group)
 src/web/           HTML handlers (cookie sessions, flash messages, CSRF origin check, error pages,
                    explorer.rs = /vault, auth_pages.rs incl. first-start /setup, imports.rs = BOM import)
 src/api/           JSON REST API (bearer tokens only, never cookies)
@@ -79,7 +103,9 @@ src/mcp/           MCP server at POST /api/v1/mcp (stateless JSON-RPC, bearer PA
                    writes only draft changes); tests/mcp_contract.rs snapshots the tool list, schemas and prompts
                    (tests/fixtures/mcp/contract.json); `teamcraft mcp` = stdio bridge in main.rs
 src/auth.rs        Argon2 passwords, tokens, cookies, WebUser/ApiUser extractors
-src/oidc.rs        OIDC authorization code + PKCE (any provider), group → role mapping
+src/oidc.rs        OIDC authorization code + PKCE (any provider), group → role mapping; back-channel logout tokens
+                   checked against the provider's jwks_uri (RS256/ES256 via ring) for POST /auth/oidc/backchannel-logout
+                   (mounted in lib.rs outside the web CSRF guard)
 src/llm/           provider-neutral LLM layer (no TeamCraft types): Turn/ToolCall/Reply/Usage/LlmError, pure Provider trait
                    (encode/decode/error table), Transport trait; http.rs = the one reqwest client (no redirects),
                    anthropic.rs = Messages API, openai.rs = Chat Completions (OpenAI, Azure, Mistral, Ollama, vLLM …)
@@ -94,7 +120,8 @@ src/httprange.rs   Range / If-Range of file downloads (ETag = SHA-256, 206 / 416
 src/mesh.rs        pure-Rust 3D readers (STL, OBJ, PLY, OFF, 3MF, AMF, glTF, 3DS, PTS/XYZ/LAS, STEP via truck, NX parts via their JT stream: mesh/jt.rs, SOLIDWORKS parts via their display lists: mesh/sw.rs, Inventor parts via their graphics segment: mesh/inventor.rs, CATIA V5 parts via their CGR data: mesh/catia.rs, all + PN refinement mesh/pn.rs,
                    Rhino .3dm: stored meshes, SubD subdivided, blocks placed: mesh/rhino.rs,
                    SketchUp .skp: faces triangulated (mesh/earcut.rs), components placed: mesh/sketchup.rs, 3–2020 files via vendor/openskp,
-                   stand-alone JT 10 files with their scene graph: mesh/jt10.rs) → TCMESH01;
+                   stand-alone JT 10 files with their scene graph: mesh/jt10.rs, JT 9.5 assemblies through the same
+                   scene graph; STEP: mesh/step.rs, mesh/p21.rs, mesh/tessellated.rs) → TCMESH01;
                    mesh.rs = read() dispatch only; mesh/model.rs = Mesh, fields, TCMESH01 encode/decode;
                    mesh/helpers.rs = bounded byte access and limits; one file per simple format with its own tests
                    (stl, obj, ply, off, three_mf = 3MF+AMF, gltf, three_ds, points = PTS/XYZ/LAS)
@@ -119,7 +146,8 @@ src/swpart.rs      SOLIDWORKS 2015+ section container: Deflate sections (bounded
                    referenced files and placements (assembly previews, also via services/assemblies.rs)
 src/invpart.rs     Inventor files: OLE storage RSeStorage, zlib or Zstandard segments (meta stream: section lengths + class UUID table),
                    sections, typed arrays; src/invplace.rs: assembly components (UFRxDoc: files, visibility) + placements
-                   (AmRxSegment), composed by services/assemblies.rs
+                   (AmRxSegment), composed by services/assemblies.rs; src/invasm.rs: occurrence counts per referenced
+                   file (BOM quantities, suppressed occurrences left out)
 src/thumbnail.rs   preview images stored in Inventor / Solid Edge / SolidWorks / NX files (OLE via cfb, PNG, DIB → BMP, JPEG), cached in previews/;
                    NX, SOLIDWORKS and Inventor parts/assemblies, CATIA parts, Rhino and SketchUp models: a PNG rendered from the 3D preview instead (mesh/render.rs, software z-buffer)
 src/bomtable.rs    BOM tables exported by CAD programs (CSV/TSV, Excel, ODS): header synonyms, levels, units – heuristic
@@ -145,7 +173,10 @@ deploy/            production Docker install: docker-compose.yml (teamcraft + po
 .github/workflows/ ci.yml (fmt, clippy, tests on PostgreSQL 16/18, macOS/Windows builds), docs.yml, desktop.yml, scale.yml (manual/weekly scale check, tests/scale.rs),
                    mutants.yml (cargo-mutants: PR diff report-only, weekly sharded full run; .cargo/mutants.toml),
                    release.yml (binaries, installers, image + Docker install smoke test)
-desktop/           TeamCraft Desktop (Tauri 2, own Cargo project – never part of the server build)
+desktop/           TeamCraft Desktop (Tauri 2, own Cargo project – never part of the server build); UI in desktop/ui/js
+                   (plain ES modules, no build step): graph.js = the *Graph* tab (navigable BOM/reference graph, SVG +
+                   HTML card layer, checked by scripts/desktop-graph-check.mjs), files-view.js = Home *Files* view,
+                   crash.js = crash reports; desktop/src/workspace.rs + layout.rs = working folder, park, local changes
 ```
 
 ## Conventions
@@ -170,12 +201,15 @@ desktop/           TeamCraft Desktop (Tauri 2, own Cargo project – never part 
   immediately (no confirmation for one's own actions).
 * **Pure Rust:** no Node.js, no downloaded engines; 3D conversion stays in `mesh.rs`.
 * **Config:** a new variable goes into `config.rs` and `docs/src/admin/configuration.md`.
-* **Docs to keep in sync:** `README.md`, `docs/src/**`, `platforms/*.md`,
-  `desktop/README.md`, `docker-compose.yml`, `CONTRIBUTING.md` (repeats the
-  conventions and commands for outside contributors), `SECURITY.md`.
+* **Docs to keep in sync:** `README.md`, `CHANGELOG.md`, `docs/src/**`,
+  `docs/OPEN_WORK.md`, `platforms/*.md`, `desktop/README.md`,
+  `docker-compose.yml`, `CONTRIBUTING.md` (repeats the conventions and
+  commands for outside contributors), `SECURITY.md` – with every task, see
+  the hard rule *ALWAYS UPDATE THE DOCUMENTATION* above.
 * **What to work on:** `docs/OPEN_WORK.md`, section *Direction* – proofing (tests,
   fuzzing, CI gates) and structure (module splits, guard tests) before new features;
   without a request from the user, pick the next task from its sections 1 and 2.
-* **Project status:** no release yet (version `0.1.0`). Keep the
-  work-in-progress / no-warranty notices in the README, `docs/src/index.md`,
-  the web footer and the desktop *About* dialog until the user asks for a release.
+* **Project status:** no stable release yet – only `0.x` pre-releases
+  (`Cargo.toml` is at `0.2.7`). Keep the work-in-progress / no-warranty notices
+  in the README, `docs/src/index.md`, the web footer and the desktop *About*
+  dialog until the user asks for a stable release.

@@ -28,7 +28,10 @@ widens the user's rights. Choose it on the account page, with
 A refused request answers `403` and changes nothing. A `write` token cannot
 create a `full` token. `GET /api/v1/me` shows the `token_scope`. A token
 with an idle lifetime (the desktop app's) expires after that many days
-without use.
+without use. With `TEAMCRAFT_OIDC_TOKEN_IDLE_DAYS`, `POST /api/v1/tokens`
+gives a single sign-on user a token with that idle lifetime when
+`expires_in_days` is missing or longer (the answer's `expires_at` and
+`idle_days` show it).
 
 ## Read permissions
 

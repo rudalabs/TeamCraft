@@ -62,19 +62,26 @@ check-outs and reviews, and a **local working folder**:
   quantity the CAD file does not tell never replaces an existing one;
 * the *Graph* tab draws a navigable reference and BOM graph around the
   revision: the focused item in the middle, its BOM children and references
-  below, the assemblies that use it above. Node colour is the lifecycle state,
+  below (*ref*), the assemblies that use it above (*uses*). Every node is a
+  card with the item's preview image, file name and number. Node colour is
+  the lifecycle state (the legend names them),
   node size (and the ⚙ badge) the item's own BOM complexity; the small ×n in
   the top-left corner of a child is how many instances of it the assembly
-  contains (summed over its BOM lines). Click a node to go to it: the tab
+  contains (summed over its BOM lines, ×1 included). Click a node to go to it: the tab
   becomes that item – a sub-assembly shows its own graph, anything else its
   overview – and *← Back*, always in the same place (left of the tab row),
   leads back the way you came, one step per click; clicking the assembly you
   came from is the same step back. A click on the item in the middle opens
   its own overview. `Ctrl`+click (`⌘`+click on macOS) opens a node in a tab
-  of its own instead. The mouse wheel zooms on the cursor, dragging pans and
-  a double-click on the background fits the graph again. Large assemblies are
-  laid out in rows, and only the first 48 neighbours get a preview and their
-  complexity;
+  of its own instead. The mouse wheel zooms on the cursor, dragging pans –
+  also when the drag starts on a card, which then does not open – and a
+  double-click on the background fits the graph again; while previews are
+  still loading the view fits itself until you zoom or pan. Large
+  assemblies (more than 8 neighbours on a side) are laid out in rows, and
+  only the first 48 neighbours get a preview and their complexity (one
+  request each), the rest keep a basic card. The graph is drawn by the app
+  itself (SVG with an HTML layer for the cards, no external engine), in the
+  colours of the chosen skin;
 * the *Workspace* tab shows per file where it is, whether it is up to date,
   modified, outdated, in conflict, new, missing or a name clash, whether it
   is read-only, and who holds the lock for how long; opening an outdated

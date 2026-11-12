@@ -40,6 +40,31 @@ Keycloak, Entra ID, Google, …). Register the redirect URI
 | `TEAMCRAFT_OIDC_ADMIN_GROUP`                  | `teamcraft-admins`     | members become admins              |
 | `TEAMCRAFT_OIDC_EDITOR_GROUP`                 | `teamcraft-editors`    | members become CAD editors         |
 | `TEAMCRAFT_OIDC_VIEWER_GROUP`                 | –                      | if set, required to sign in at all |
+| `TEAMCRAFT_OIDC_TOKEN_IDLE_DAYS`              | `0` (off)              | idle lifetime of SSO users' tokens |
+
+`TEAMCRAFT_OIDC_TOKEN_IDLE_DAYS` (1 to 3650) caps the API and desktop
+tokens that single sign-on users create from then on: a token without an
+expiry, or with a longer one, expires after that many days without use
+instead (every use renews it); a shorter fixed expiry stays. A leaver who is
+removed only at the identity provider then loses their tokens after that
+many idle days. Existing tokens keep their lifetime. The *API tokens* card of
+*My account* tells SSO users about the limit.
+
+**Back-channel logout.** Register
+`<TEAMCRAFT_PUBLIC_URL>/auth/oidc/backchannel-logout` as the client's
+back-channel logout URI (OpenID Connect Back-Channel Logout 1.0). When the
+provider ends a user's session – or the user is removed there – it posts a
+signed logout token; TeamCraft checks it against the provider's published
+keys (`jwks_uri`, RS256 or ES256), ends all of that user's browser sessions,
+audits it (`user.idp_logout`) and notes the time, which the report of *SSO
+users without sign-in* shows (see [Leavers removed only at the identity
+provider](#leavers-removed-only-at-the-identity-provider)). The token must
+name the user (`sub`); tokens with only a session id (`sid`) are refused,
+and so is a token more than five minutes old. A refused token is answered
+with 400 and logged; an unknown subject with 200. Keys the cache does not
+know yet are fetched again (key rotation), at most once a minute. API and
+desktop tokens are not touched, and the account stays active – deactivate
+the user (*Offboard and deactivate*) for that.
 
 Accounts are created at the first sign-in; the role follows the groups at
 every sign-in. A project group bound to an IdP group (*Projects → group →
@@ -179,11 +204,36 @@ Or work through these steps by hand, in this order:
    them once per group when that happens.
 8. **Revoke their tokens** on the user page.
 9. **Deactivate the user.** For SSO users both are needed: remove them at
-   the identity provider **and** deactivate them in TeamCraft. A synchronised
+   the identity provider **and** deactivate them in TeamCraft (*SSO users
+   without sign-in* on *Users* finds those who were only removed at the
+   provider, see below). A synchronised
    membership of a deactivated user can then be removed by the group's
    managers (SSO refuses deactivated users, so it cannot come back); an
    active user's synchronised membership still can only end at the identity
    provider.
+
+### Leavers removed only at the identity provider
+
+Removing someone at the identity provider does not deactivate them in
+TeamCraft: their account, memberships, check-outs and tokens stay until an
+administrator offboards them. Three things help when the IdP is where people
+leave:
+
+* **The report.** *Users* lists, under **SSO users without sign-in**, every
+  active single sign-on user who has neither signed in nor used an API or
+  desktop token for 90 days and still holds memberships, tokens or
+  check-outs, with the last sign-in, the last activity and when the IdP last
+  logged them out. Each row links to the user (*Offboard and deactivate*)
+  and to what they hold. Administrators only; shown when SSO is configured.
+* **Tokens that expire on their own.** With
+  `TEAMCRAFT_OIDC_TOKEN_IDLE_DAYS` (for example `30`), new API and desktop
+  tokens of SSO users stop working after that many days without use.
+* **Back-channel logout.** Registered at the provider (see [Single sign-on](#single-sign-on-openid-connect)),
+  it ends the leaver's browser sessions the moment the provider logs them out
+  or removes them, instead of after `TEAMCRAFT_SESSION_TTL_HOURS`.
+
+Automatic deactivation through SCIM is not supported; see the research note
+[Deprovisioning through the identity provider](../research/scim-deprovisioning.md).
 
 ### The end of a season
 

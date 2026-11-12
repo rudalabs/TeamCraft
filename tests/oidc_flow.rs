@@ -15,6 +15,13 @@
 //! ID token signatures are not verified by design: the token comes straight
 //! from the token endpoint (OpenID Connect Core 1.0, 3.1.3.7 step 6, see
 //! `src/oidc.rs`); a test pins that behaviour.
+//!
+//! Offboarding driven by the identity provider (issue #173, step 9): the
+//! provider signs back-channel logout tokens with an ES256 key it publishes at
+//! `jwks_uri`; a forged, unsigned or broken token ends no session. With
+//! `TEAMCRAFT_OIDC_TOKEN_IDLE_DAYS` the tokens of SSO users get an idle
+//! lifetime, and SSO users who stopped signing in are reported to the
+//! administrators.
 
 mod common;
 
@@ -30,6 +37,7 @@ use axum::{
     Form, Json, Router,
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use ring::signature::{EcdsaKeyPair, KeyPair};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use teamcraft::domain::Role;
@@ -60,6 +68,38 @@ struct Provider {
     base: String,
     codes: Mutex<HashMap<String, Grant>>,
     next_code: Mutex<u32>,
+    /// The key the provider signs back-channel logout tokens with; its public
+    /// half is served at `jwks_uri`.
+    key: EcdsaKeyPair,
+}
+
+/// The key id of the provider's signing key.
+const KEY_ID: &str = "provider-key-1";
+
+/// A new ES256 (P-256) key pair.
+fn es256_key_pair() -> EcdsaKeyPair {
+    let rng = ring::rand::SystemRandom::new();
+    let alg = &ring::signature::ECDSA_P256_SHA256_FIXED_SIGNING;
+    let pkcs8 = EcdsaKeyPair::generate_pkcs8(alg, &rng).unwrap();
+    EcdsaKeyPair::from_pkcs8(alg, pkcs8.as_ref(), &rng).unwrap()
+}
+
+/// A JWS (compact form) of `claims`, signed with `key` under [`KEY_ID`].
+fn sign_es256(key: &EcdsaKeyPair, claims: &Value) -> String {
+    let header = json!({ "alg": "ES256", "kid": KEY_ID, "typ": "logout+jwt" });
+    let message = format!("{}.{}", b64(&header), b64(claims));
+    let rng = ring::rand::SystemRandom::new();
+    let signature = key.sign(&rng, message.as_bytes()).unwrap();
+    format!("{message}.{}", URL_SAFE_NO_PAD.encode(signature.as_ref()))
+}
+
+/// The claims of a back-channel logout token of `issuer` for `sub`.
+fn logout_claims(issuer: &str, sub: &str) -> Value {
+    let now = chrono::Utc::now().timestamp();
+    json!({
+        "iss": issuer, "aud": CLIENT_ID, "iat": now, "jti": format!("logout-{sub}-{now}"),
+        "sub": sub, "events": { "http://schemas.openid.net/event/backchannel-logout": {} },
+    })
 }
 
 impl Provider {
@@ -70,14 +110,22 @@ impl Provider {
             base,
             codes: Mutex::new(HashMap::new()),
             next_code: Mutex::new(0),
+            key: es256_key_pair(),
         });
         let router = Router::new()
             .route("/.well-known/openid-configuration", get(discovery))
             .route("/token", post(token))
             .route("/userinfo", get(userinfo))
+            .route("/jwks", get(jwks))
             .with_state(provider.clone());
         tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
         provider
+    }
+
+    /// A back-channel logout token for `sub`, signed by the provider – what
+    /// it posts when the user's session ends or the user is removed there.
+    fn logout_token(&self, sub: &str) -> String {
+        sign_es256(&self.key, &logout_claims(&self.base, sub))
     }
 
     /// What the provider does when the user signs in at the authorization
@@ -104,7 +152,19 @@ async fn discovery(State(p): State<Arc<Provider>>) -> Json<Value> {
         "authorization_endpoint": format!("{}/authorize", p.base),
         "token_endpoint": format!("{}/token", p.base),
         "userinfo_endpoint": format!("{}/userinfo", p.base),
+        "jwks_uri": format!("{}/jwks", p.base),
     }))
+}
+
+/// The provider's public signing key (RFC 7517).
+async fn jwks(State(p): State<Arc<Provider>>) -> Json<Value> {
+    // SEC 1 uncompressed point: 0x04 ‖ x ‖ y
+    let point = p.key.public_key().as_ref().to_vec();
+    Json(json!({ "keys": [{
+        "kty": "EC", "crv": "P-256", "kid": KEY_ID, "alg": "ES256", "use": "sig",
+        "x": URL_SAFE_NO_PAD.encode(&point[1..33]),
+        "y": URL_SAFE_NO_PAD.encode(&point[33..65]),
+    }] }))
 }
 
 fn b64(value: &Value) -> String {
@@ -757,5 +817,222 @@ async fn an_sso_reviewer_signs_in_again_to_approve() {
             .await
             .unwrap();
     assert_eq!(method.as_deref(), Some("sso"));
+    app.teardown().await;
+}
+
+/// The SSO user signs in through the fake provider; returns the session cookie.
+async fn sso_sign_in(app: &common::TestApp, provider: &Provider) -> String {
+    let login = start_login(app).await;
+    let code = provider.authorize(&login.nonce, &login.challenge, Tweak::None);
+    session_cookie(&callback(app, &code, &login.state).await).expect("signed in")
+}
+
+/// What the identity provider does: a server-to-server form post without a
+/// cookie or an `Origin` header.
+async fn backchannel_logout(app: &common::TestApp, token: &str) -> common::Response {
+    app.post_form(
+        "/auth/oidc/backchannel-logout",
+        None,
+        None,
+        &[("logout_token", token)],
+    )
+    .await
+}
+
+/// OpenID Connect Back-Channel Logout (#173 step 9): a token signed by the
+/// provider ends every browser session of that user and nothing else; a
+/// forged, unsigned or broken token is refused with 400 and ends nothing.
+#[tokio::test]
+async fn the_identity_provider_ends_the_sessions_over_the_back_channel() {
+    let provider = Provider::start().await;
+    let Some(app) = app_with(&provider).await else {
+        return;
+    };
+    // the SSO user in two browsers, a local user in one
+    let first = sso_sign_in(&app, &provider).await;
+    let second = sso_sign_in(&app, &provider).await;
+    app.user_in("max", Role::Editor, &["ROCKET"]).await;
+    let max = app.login("max").await;
+    assert_eq!(sessions(&app).await, 3);
+
+    // signed with another key under the provider's key id, unsigned, garbage
+    let claims = logout_claims(&provider.base, "u-4711");
+    let forged = sign_es256(&es256_key_pair(), &claims);
+    let parts: Vec<&str> = forged.split('.').collect();
+    let none = URL_SAFE_NO_PAD.encode(br#"{"alg":"none","kid":"provider-key-1"}"#);
+    let unsigned = format!("{none}.{}.", parts[1]);
+    // the provider's own signature, but another issuer
+    let evil = logout_claims("https://evil.example.org", "u-4711");
+    let other_issuer = sign_es256(&provider.key, &evil);
+    let refused = [
+        forged.as_str(),
+        unsigned.as_str(),
+        other_issuer.as_str(),
+        "not.a.token",
+        "",
+    ];
+    for token in refused {
+        let r = backchannel_logout(&app, token).await;
+        assert_eq!(r.status, StatusCode::BAD_REQUEST, "{token}: {}", r.text());
+        assert_eq!(r.header("cache-control").as_deref(), Some("no-store"));
+    }
+    assert_eq!(sessions(&app).await, 3, "no session ended");
+
+    // a subject TeamCraft does not know: accepted, nothing happens
+    let r = backchannel_logout(&app, &provider.logout_token("u-unknown")).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(sessions(&app).await, 3);
+
+    // the provider logs the SSO user out: both sessions end, the local user stays
+    let r = backchannel_logout(&app, &provider.logout_token("u-4711")).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    assert_eq!(sessions(&app).await, 1);
+    for cookie in [&first, &second] {
+        let page = app.get_page("/", Some(cookie)).await;
+        assert!(page.status.is_redirection(), "signed out: {}", page.status);
+    }
+    assert_eq!(app.get_page("/", Some(&max)).await.status, StatusCode::OK);
+
+    // noted and audited; the account itself stays active (deactivating is the
+    // administrator's offboarding step)
+    let (logged_out, active): (Option<chrono::DateTime<chrono::Utc>>, bool) =
+        sqlx::query_as("SELECT idp_logout_at, active FROM users WHERE oidc_subject = 'u-4711'")
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+    assert!(logged_out.is_some(), "the time of the logout is noted");
+    assert!(active);
+    let details: Value =
+        sqlx::query_scalar("SELECT details FROM audit_log WHERE action = 'user.idp_logout'")
+            .fetch_one(&app.pool)
+            .await
+            .unwrap();
+    assert_eq!(details["sessions"], 2, "{details}");
+    app.teardown().await;
+}
+
+/// Without single sign-on the endpoint does not exist.
+#[tokio::test]
+async fn backchannel_logout_needs_single_sign_on() {
+    let app = app_or_skip!();
+    let r = backchannel_logout(&app, "a.b.c").await;
+    assert_eq!(r.status, StatusCode::NOT_FOUND, "{}", r.text());
+    app.teardown().await;
+}
+
+/// `TEAMCRAFT_OIDC_TOKEN_IDLE_DAYS` caps the tokens SSO users create, and an
+/// SSO user without a sign-in for 90 days who still holds tokens shows up
+/// on the administrators' *Users* page (#173 step 9).
+#[tokio::test]
+async fn sso_tokens_get_an_idle_lifetime_and_idle_sso_users_are_reported() {
+    let provider = Provider::start().await;
+    let issuer: &'static str = Box::leak(provider.base.clone().into_boxed_str());
+    let extra: &'static [(&'static str, &'static str)] = Box::leak(
+        vec![
+            ("TEAMCRAFT_OIDC_ISSUER_URL", issuer),
+            ("TEAMCRAFT_OIDC_CLIENT_ID", CLIENT_ID),
+            ("TEAMCRAFT_OIDC_CLIENT_SECRET", "secret"),
+            ("TEAMCRAFT_OIDC_TOKEN_IDLE_DAYS", "30"),
+        ]
+        .into_boxed_slice(),
+    );
+    let Some(app) = common::setup_with(extra).await else {
+        return;
+    };
+    let sso = sso_sign_in(&app, &provider).await;
+    app.user("root", Role::Admin).await;
+    let create = |cookie: String, name: &'static str, days: &'static str| {
+        let app = &app;
+        async move {
+            let r = app
+                .post_form(
+                    "/account/tokens",
+                    Some(&cookie),
+                    Some("http://localhost:8080"),
+                    &[
+                        ("name", name),
+                        ("expires_days", days),
+                        ("scope", "read_only"),
+                    ],
+                )
+                .await;
+            assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+            sqlx::query_as::<_, (Option<i32>, bool)>(
+                "SELECT idle_days, expires_at IS NULL FROM api_tokens WHERE name = $1",
+            )
+            .bind(name)
+            .fetch_one(&app.pool)
+            .await
+            .unwrap()
+        }
+    };
+
+    // an SSO user's "never expires" and "1 year" become 30 idle days,
+    // a shorter fixed lifetime stays
+    assert_eq!(
+        create(sso.clone(), "sso-never", "never").await,
+        (Some(30), false)
+    );
+    assert_eq!(
+        create(sso.clone(), "sso-year", "365").await,
+        (Some(30), false)
+    );
+    assert_eq!(create(sso.clone(), "sso-week", "7").await.0, None);
+    let account = app.get_page("/account", Some(&sso)).await;
+    assert!(
+        account.text().contains("30 days without use"),
+        "{}",
+        account.text()
+    );
+    // a local account is not capped
+    let root = app.login("root").await;
+    assert_eq!(
+        create(root.clone(), "local-never", "never").await,
+        (None, true)
+    );
+
+    // nobody is idle yet
+    let page = app.get_page("/admin/users", Some(&root)).await;
+    assert_eq!(page.status, StatusCode::OK);
+    assert!(!page.text().contains("SSO users without sign-in"));
+
+    // 100 days later the SSO user has neither signed in nor used a token
+    sqlx::query(
+        "UPDATE users SET last_login_at = now() - interval '100 days',
+                          created_at = now() - interval '100 days'
+         WHERE oidc_subject = 'u-4711'",
+    )
+    .execute(&app.pool)
+    .await
+    .unwrap();
+    let page = app.get_page("/admin/users", Some(&root)).await;
+    let text = page.text();
+    assert!(text.contains("SSO users without sign-in"), "{text}");
+    assert!(
+        text.contains("sso-erika") && text.contains("/holdings\""),
+        "{text}"
+    );
+    let admin = app.actor("root").await;
+    let idle = teamcraft::services::offboarding::idle_sso_users(&app.pool, &admin)
+        .await
+        .unwrap();
+    assert_eq!(idle.len(), 1);
+    assert_eq!(idle[0].username, "sso-erika");
+    assert_eq!(idle[0].tokens, 3, "{:?}", idle[0]);
+
+    // only administrators see it; a token used recently counts as activity
+    let erika = app.actor("sso-erika").await;
+    let err = teamcraft::services::offboarding::idle_sso_users(&app.pool, &erika)
+        .await
+        .unwrap_err();
+    assert_eq!(err.status(), StatusCode::FORBIDDEN);
+    sqlx::query("UPDATE api_tokens SET last_used_at = now() WHERE name = 'sso-week'")
+        .execute(&app.pool)
+        .await
+        .unwrap();
+    let idle = teamcraft::services::offboarding::idle_sso_users(&app.pool, &admin)
+        .await
+        .unwrap();
+    assert!(idle.is_empty(), "{idle:?}");
     app.teardown().await;
 }
