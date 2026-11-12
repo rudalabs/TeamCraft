@@ -140,7 +140,7 @@ versions are pre-releases (see the warning above):
 - **Checksums:** `sha256sum -c --ignore-missing SHA256SUMS.txt`.
 - **Not code-signed yet:** macOS asks to confirm the first start
   (*right-click → Open*); Windows SmartScreen shows *More info → Run anyway*.
-- **Newest `main` build:** attached as artifacts to the latest run of the
+- **Newest `main` build:** built every night; attached as artifacts to the latest run of the
   [Release workflow](https://github.com/rudalabs/TeamCraft/actions/workflows/release.yml)
   (kept 14 days, for signed-in GitHub users).
 

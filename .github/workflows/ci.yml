@@ -12,8 +12,14 @@ on:
   push:
     branches: [main]
     paths-ignore: ["**.md", "docs/**", "platforms/**"]
+  # Every pull request, also one that changes only documentation: the job
+  # "CI result" is the required check of main and must report on each of them.
+  # The changes job below skips the Rust jobs for documentation-only changes.
   pull_request:
-    paths-ignore: ["**.md", "docs/**", "platforms/**"]
+  # a merge queue (Settings → Rules) tests every pull request against the
+  # main it lands on; the required checks must run here too, so no path
+  # filter (a merge_group event has none anyway)
+  merge_group:
   # new security advisories appear without a code change
   schedule:
     - cron: "17 5 * * 1"
@@ -22,8 +28,13 @@ on:
 permissions:
   contents: read
 
+# A newer push to a pull request replaces its running checks. Everything else
+# – each commit on main, each merge-queue entry – gets its own group and is
+# never cancelled: with one group for main, a third push within one run
+# cancelled the waiting run of the second ("Canceling since a higher priority
+# waiting request exists"), and its commit showed a red ✗ (#275).
 concurrency:
-  group: ci-${{ github.ref }}-${{ github.event_name }}
+  group: ci-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -31,9 +42,38 @@ env:
   CARGO_INCREMENTAL: 0
 
 jobs:
+  # Whether the Rust jobs have anything to check: not for a pull request
+  # that changes only documentation (*.md, docs/, platforms/ – the paths the
+  # push trigger ignores) and not for the weekly advisory run.
+  changes:
+    name: changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.c.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 2
+      - id: c
+        shell: bash
+        run: |
+          set -euo pipefail
+          code=true
+          if [ "$GITHUB_EVENT_NAME" = "schedule" ]; then code=false; fi
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            # the merge commit of the pull request: HEAD^1 is the base
+            changed=$(git diff --name-only HEAD^1 HEAD)
+            echo "$changed"
+            grep -qvE '.md$|^docs/|^platforms/' <<<"$changed" || code=false
+          fi
+          echo "code=$code" | tee -a "$GITHUB_OUTPUT"
+
   lint:
     name: fmt and clippy
-    if: github.event_name != 'schedule'
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -60,7 +100,8 @@ jobs:
     # cargo llvm-cov with the coverage report and floor
     # (docs/src/dev/coverage.md).
     name: tests (Linux, PostgreSQL ${{ matrix.postgres }})
-    if: github.event_name != 'schedule'
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
@@ -178,7 +219,8 @@ jobs:
     # main and by hand. The test targets are type-checked, not linked: the
     # database tests do not run here.
     name: build (${{ matrix.os }})
-    if: github.event_name != 'schedule'
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -214,3 +256,29 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           manifest-path: ${{ matrix.manifest }}
+
+  # The one check that branch protection or the merge queue requires (see
+  # CONTRIBUTING.md, "Merging"): green when every job above passed or was
+  # skipped on purpose, red when one failed or was cancelled. One name instead
+  # of the job list keeps the rule valid when a job or a matrix entry changes,
+  # and a skipped matrix job reports under its unexpanded name, which a
+  # required check of that name would wait for forever.
+  result:
+    name: CI result
+    if: always()
+    needs: [changes, lint, test, build, dependencies]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: All jobs passed or were skipped
+        shell: bash
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          echo "results: $RESULTS"
+          for r in $RESULTS; do
+            case "$r" in
+              success|skipped) ;;
+              *) echo "::error::a CI job ended with '$r'"; exit 1 ;;
+            esac
+          done

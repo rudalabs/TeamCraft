@@ -337,7 +337,28 @@ describe compatibility, for example "reads SolidWorks files".
    [docs/OPEN_WORK.md](docs/OPEN_WORK.md).
 5. Open the pull request against `main`, describe what changed and how you
    tested it, and link the issue. CI has to pass before the pull request is
-   merged.
+   merged (see below).
+
+### Merging
+
+Several pull requests land on `main` on a busy day, and one that was green
+against yesterday's `main` can break today's: a shared fixture, a test that
+another pull request changed, formatting after a conflict resolution.
+
+* Merge only with a green **CI result** against the *current* `main`. If
+  `main` moved since the last run, update the branch (merge `main` into it)
+  and wait for CI again – or let the merge queue do it, where it is enabled.
+* A red `main` comes first: fix it (or revert the commit that broke it)
+  before anything else is merged, so that every red ✗ on `main` points to
+  one real failure.
+* **CI result** is the one check that sums up the CI workflow: it is green
+  when every job passed or was skipped on purpose (a pull request that only
+  changes `*.md`, `docs/` or `platforms/` skips the Rust jobs), red when
+  one failed or was cancelled. CI also runs on `merge_group`, so a merge
+  queue (Settings → Rules) tests each pull request against the `main` it
+  lands on.
+* Release builds do not run per push to `main` (see "Releases and
+  versions"), so a cancelled build no longer shows up as a failure there.
 
 **Never commit secrets:** no passwords, tokens, private keys, `.env` files,
 database dumps or vault data. If it happens anyway, tell the maintainers
@@ -357,17 +378,22 @@ rest of the project.
 [Semantic Versioning](https://semver.org); while the version is `0.x`, any
 release may contain breaking changes.
 
-**Build artifacts.** Every push to `main` runs
-`.github/workflows/release.yml`, which builds the server binaries (Linux
-x86_64/ARM64, Windows x64) and the desktop installers (AppImage, `.deb`,
-`.rpm` and Flatpak bundles for x86_64/aarch64, `.dmg`, and for Windows x64
-and ARM64 `.msi`, NSIS `-setup.exe` and a portable `.zip`) and keeps them
-as workflow artifacts for 14 days. *Run workflow* on the Actions page builds
-any branch the same way.
+**Build artifacts.** `.github/workflows/release.yml` builds the server
+binaries (Linux x86_64/ARM64, Windows x64) and the desktop installers
+(AppImage, `.deb`, `.rpm` and Flatpak bundles for x86_64/aarch64, `.dmg`,
+and for Windows x64 and ARM64 `.msi`, NSIS `-setup.exe` and a portable
+`.zip`) and keeps them as workflow artifacts for 14 days. It builds `main`
+every night (01:07 UTC) when `main` has changed outside the documentation
+since its last successful build, not on every push: with several merges a
+day, each push cancelled the build of the one before and left a red ✗ on
+that commit. *Run workflow* on the Actions page builds any branch at once
+the same way. A pull request that changes the workflow, `packaging/` or
+`desktop/tauri.conf.json` builds everything before it is merged.
 
 **Container image.** The same workflow builds `ghcr.io/rudalabs/teamcraft`
 from the `Dockerfile` on an amd64 and an arm64 runner and publishes it:
-`:edge` for every push to `main`, `:<version>`, `:<major>.<minor>` and
+`:edge` from `main` (the nightly build, or *Run workflow* on `main` for a
+fresh one at once), `:<version>`, `:<major>.<minor>` and
 `:latest` for a tag (`latest` also for 0.x, but not for suffixed versions
 such as `-rc.1`). A pull request that changes the `Dockerfile` or `deploy/`
 builds the image without publishing it. Before anything is published, a
