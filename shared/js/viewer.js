@@ -12,7 +12,8 @@
 //
 // Mouse: drag = rotate, wheel = zoom, double-click = reset. Touch: one finger
 // rotates, pinch zooms. Keyboard (canvas focused): arrows rotate, +/- zoom,
-// 0 resets.
+// 0 resets. Below the canvas a section plane (X, Y or Z, position, side)
+// cuts the model open.
 (function () {
   "use strict";
 
@@ -224,15 +225,19 @@
 
     // Flat shading from screen-space derivatives: no normals have to be
     // transferred, and every face is lit from the viewer's side.
+    // Section plane (model coordinates): fragments on its positive side are
+    // cut away, so the inside shows; cut faces seen from behind stay dark.
     var VERT = "#version 300 es\nin vec3 aPos; in vec3 aCol; uniform mat4 uMvp; uniform mat4 uMv; uniform float uSize;\n" +
-      "out vec3 vView; out vec3 vCol;\n" +
-      "void main() { vCol = aCol; vView = (uMv * vec4(aPos, 1.0)).xyz; gl_Position = uMvp * vec4(aPos, 1.0); gl_PointSize = uSize; }";
-    var FRAG = "#version 300 es\nprecision highp float; in vec3 vView; in vec3 vCol; uniform bool uPoints; out vec4 frag;\n" +
-      "void main() { if (uPoints) { frag = vec4(vCol, 1.0); return; }\n" +
+      "out vec3 vView; out vec3 vCol; out vec3 vModel;\n" +
+      "void main() { vCol = aCol; vModel = aPos; vView = (uMv * vec4(aPos, 1.0)).xyz; gl_Position = uMvp * vec4(aPos, 1.0); gl_PointSize = uSize; }";
+    var FRAG = "#version 300 es\nprecision highp float; in vec3 vView; in vec3 vCol; in vec3 vModel;\n" +
+      "uniform bool uPoints; uniform bool uClipOn; uniform vec4 uClip; uniform float uAlpha; out vec4 frag;\n" +
+      "void main() { if (uClipOn && dot(vModel, uClip.xyz) > uClip.w) discard;\n" +
+      "  if (uPoints) { frag = vec4(vCol, 1.0); return; }\n" +
       "  vec3 n = normalize(cross(dFdx(vView), dFdy(vView)));\n" +
       "  float d = max(dot(n, normalize(vec3(0.35, 0.55, 1.0))), 0.0);\n" +
       "  float rim = pow(1.0 - max(n.z, 0.0), 3.0) * 0.18;\n" +
-      "  frag = vec4(vCol * (0.25 + 0.75 * d) + rim, 1.0); }";
+      "  frag = vec4(vCol * (0.25 + 0.75 * d) + rim, uAlpha); }";
 
     function shader(type, source) {
       var s = gl.createShader(type);
@@ -252,8 +257,89 @@
       mvp: gl.getUniformLocation(program, "uMvp"),
       mv: gl.getUniformLocation(program, "uMv"),
       size: gl.getUniformLocation(program, "uSize"),
-      points: gl.getUniformLocation(program, "uPoints")
+      points: gl.getUniformLocation(program, "uPoints"),
+      clipOn: gl.getUniformLocation(program, "uClipOn"),
+      clip: gl.getUniformLocation(program, "uClip"),
+      alpha: gl.getUniformLocation(program, "uAlpha")
     };
+    // Graphical comparison: another version drawn as a translucent red ghost
+    // over the model, in the same model coordinates.
+    var ghost = null;
+    // axis: -1 = off, 0/1/2 = X/Y/Z; at: 0..1 of the model's extent on it
+    var section = { axis: -1, at: 0.5, flip: false };
+    // Point-to-point measurement: picked model points (0–2) and the decimals
+    // shown (remembered per browser).
+    var measure = { on: false, points: [], decimals: 2 };
+    // 3D notes of the shown version (options.notes: list/add/remove)
+    var notes = [];
+    var noting = false;
+    var notesApi = options.notes || null;
+    try {
+      var savedDecimals = Number(window.localStorage.getItem("teamcraft-viewer-decimals"));
+      if (savedDecimals >= 0 && savedDecimals <= 6) measure.decimals = savedDecimals;
+    } catch (e) { /* storage blocked: the default */ }
+    // what the last frame used, for picking: rotation, projection scale, aspect
+    var lastFrame = null;
+    var markerBuffer = gl.createBuffer();
+    var markerVao = gl.createVertexArray();
+    gl.bindVertexArray(markerVao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, markerBuffer);
+    gl.enableVertexAttribArray(loc.pos);
+    gl.vertexAttribPointer(loc.pos, 3, gl.FLOAT, false, 0, 0);
+    gl.disableVertexAttribArray(loc.col);
+    gl.bindVertexArray(null);
+
+    // The model point under canvas pixel (x, y), or null: the nearest
+    // triangle the view ray hits (Möller–Trumbore), not cut away by the
+    // section plane. Points of a point cloud are not picked.
+    function pick(x, y) {
+      if (!loaded || !loaded.indices || !lastFrame) return null;
+      var ndcX = 2 * x / canvas.clientWidth - 1, ndcY = 1 - 2 * y / canvas.clientHeight;
+      var R = lastFrame.rot, c = view.center;
+      // R^T · v: back from view to model orientation
+      function back(v) {
+        return [0, 1, 2].map(function (i) { return R[i * 4] * v[0] + R[i * 4 + 1] * v[1] + R[i * 4 + 2] * v[2]; });
+      }
+      var o = back([0, 0, view.dist]);
+      o = [o[0] + c[0], o[1] + c[1], o[2] + c[2]];
+      var d = back([ndcX * lastFrame.aspect / lastFrame.f, ndcY / lastFrame.f, -1]);
+      var plane = clipPlane();
+      var p = loaded.positions, idx = loaded.indices, best = Infinity;
+      for (var t = 0; t < idx.length; t += 3) {
+        var a = idx[t] * 3, b = idx[t + 1] * 3, e = idx[t + 2] * 3;
+        var e1x = p[b] - p[a], e1y = p[b + 1] - p[a + 1], e1z = p[b + 2] - p[a + 2];
+        var e2x = p[e] - p[a], e2y = p[e + 1] - p[a + 1], e2z = p[e + 2] - p[a + 2];
+        var px = d[1] * e2z - d[2] * e2y, py = d[2] * e2x - d[0] * e2z, pz = d[0] * e2y - d[1] * e2x;
+        var det = e1x * px + e1y * py + e1z * pz;
+        if (Math.abs(det) < 1e-12) continue;
+        var inv = 1 / det;
+        var sx = o[0] - p[a], sy = o[1] - p[a + 1], sz = o[2] - p[a + 2];
+        var u = (sx * px + sy * py + sz * pz) * inv;
+        if (u < 0 || u > 1) continue;
+        var qx = sy * e1z - sz * e1y, qy = sz * e1x - sx * e1z, qz = sx * e1y - sy * e1x;
+        var v = (d[0] * qx + d[1] * qy + d[2] * qz) * inv;
+        if (v < 0 || u + v > 1) continue;
+        var dist = (e2x * qx + e2y * qy + e2z * qz) * inv;
+        if (dist <= 0 || dist >= best) continue;
+        var hit = [o[0] + d[0] * dist, o[1] + d[1] * dist, o[2] + d[2] * dist];
+        if (plane && hit[0] * plane[0] + hit[1] * plane[1] + hit[2] * plane[2] > plane[3]) continue;
+        best = dist;
+        var found = hit;
+      }
+      return best < Infinity ? found : null;
+    }
+
+    function fixed(v) { return v.toFixed(measure.decimals); }
+
+    // [nx, ny, nz, d] of the section plane, or null when it is off.
+    function clipPlane() {
+      if (section.axis < 0 || !loaded) return null;
+      var b = loaded.bounds, a = section.axis;
+      var pos = b[a] + section.at * (b[a + 3] - b[a]);
+      var n = [0, 0, 0];
+      n[a] = section.flip ? -1 : 1;
+      return [n[0], n[1], n[2], section.flip ? -pos : pos];
+    }
 
     var drawable = null;
     // zUp: CAD convention (NX, CATIA, FreeCAD, 3D printing); toggle for Y-up exports.
@@ -314,6 +400,175 @@
     }
     var legendView = null;
 
+    // Section controls below the canvas: axis (off/X/Y/Z), position, side.
+    function sectionControls() {
+      var el = document.createElement("div");
+      el.className = "viewer-legend viewer-section";
+      el.setAttribute("role", "group");
+      el.setAttribute("aria-label", "Section plane");
+      var axis = document.createElement("select");
+      axis.className = "small";
+      axis.setAttribute("aria-label", "Section plane");
+      [["-1", "No section"], ["0", "Section X"], ["1", "Section Y"], ["2", "Section Z"]].forEach(function (o) {
+        var opt = document.createElement("option");
+        opt.value = o[0];
+        opt.textContent = o[1];
+        axis.appendChild(opt);
+      });
+      var at = document.createElement("input");
+      at.type = "range";
+      at.min = "0";
+      at.max = "1000";
+      at.value = "500";
+      at.disabled = true;
+      at.setAttribute("aria-label", "Section position");
+      var flipLabel = document.createElement("label");
+      flipLabel.className = "small";
+      var flip = document.createElement("input");
+      flip.type = "checkbox";
+      flip.disabled = true;
+      flipLabel.appendChild(flip);
+      flipLabel.appendChild(document.createTextNode(" flip"));
+      var where = document.createElement("span");
+      where.className = "viewer-legend-value";
+      function update() {
+        section.axis = Number(axis.value);
+        section.at = Number(at.value) / 1000;
+        section.flip = flip.checked;
+        at.disabled = flip.disabled = section.axis < 0;
+        var plane = clipPlane();
+        where.textContent = plane
+          ? "XYZ".charAt(section.axis) + " = " + fixed(section.flip ? -plane[3] : plane[3])
+          : "";
+        redraw();
+      }
+      axis.addEventListener("change", update);
+      at.addEventListener("input", update);
+      flip.addEventListener("change", update);
+      el.appendChild(axis);
+      el.appendChild(at);
+      el.appendChild(where);
+      el.appendChild(flipLabel);
+
+      // Measure: click two points on the model; decimals of every length shown.
+      var measureBtn = document.createElement("button");
+      measureBtn.type = "button";
+      measureBtn.className = "small";
+      measureBtn.textContent = "Measure";
+      measureBtn.setAttribute("aria-pressed", "false");
+      var decimals = document.createElement("select");
+      decimals.className = "small";
+      decimals.setAttribute("aria-label", "Decimal places");
+      for (var dp = 0; dp <= 6; dp++) {
+        var opt = document.createElement("option");
+        opt.value = String(dp);
+        opt.textContent = dp + (dp === 1 ? " decimal" : " decimals");
+        decimals.appendChild(opt);
+      }
+      decimals.value = String(measure.decimals);
+      var result = document.createElement("span");
+      result.className = "viewer-legend-value";
+      result.setAttribute("aria-live", "polite");
+      measureView = {
+        show: function () {
+          var q = measure.points;
+          if (!measure.on) result.textContent = "";
+          else if (q.length === 0) result.textContent = "Click a point on the model.";
+          else if (q.length === 1) result.textContent = "Click a second point.";
+          else {
+            var dx = q[1][0] - q[0][0], dy = q[1][1] - q[0][1], dz = q[1][2] - q[0][2];
+            result.textContent = "Distance " + fixed(Math.hypot(dx, dy, dz)) +
+              " (ΔX " + fixed(Math.abs(dx)) + ", ΔY " + fixed(Math.abs(dy)) + ", ΔZ " + fixed(Math.abs(dz)) + ", model units)";
+          }
+        }
+      };
+      measureBtn.addEventListener("click", function () {
+        measure.on = !measure.on;
+        measure.points = [];
+        measureBtn.setAttribute("aria-pressed", String(measure.on));
+        canvas.classList.toggle("viewer-measuring", measure.on);
+        measureView.show();
+        redraw();
+      });
+      decimals.addEventListener("change", function () {
+        measure.decimals = Number(decimals.value);
+        try { window.localStorage.setItem("teamcraft-viewer-decimals", decimals.value); } catch (e) { /* blocked */ }
+        measureView.show();
+        update();
+      });
+      el.appendChild(measureBtn);
+      el.appendChild(decimals);
+      el.appendChild(result);
+
+      // Notes pinned to the model (design review), when the page offers them.
+      if (notesApi) {
+        var noteBtn = document.createElement("button");
+        noteBtn.type = "button";
+        noteBtn.className = "small";
+        noteBtn.textContent = "Add note";
+        noteBtn.setAttribute("aria-pressed", "false");
+        noteBtn.addEventListener("click", function () {
+          noting = !noting;
+          if (noting && measure.on) measureBtn.click();
+          noteBtn.setAttribute("aria-pressed", String(noting));
+          canvas.classList.toggle("viewer-measuring", noting);
+          result.textContent = noting ? "Click the point the note is about." : "";
+        });
+        measureBtn.addEventListener("click", function () {
+          if (measure.on && noting) noteBtn.click();
+        });
+        notesList = document.createElement("ol");
+        notesList.className = "viewer-notes small";
+        notesList.setAttribute("aria-label", "Notes on the model (blue points)");
+        el.appendChild(noteBtn);
+        el.appendChild(notesList);
+        refreshNotes();
+      }
+      return el;
+    }
+    var notesList = null;
+
+    function showNotes() {
+      if (!notesList) return;
+      notesList.textContent = "";
+      notes.forEach(function (n) {
+        var li = document.createElement("li");
+        var text = document.createElement("span");
+        text.textContent = n.body;
+        var meta = document.createElement("span");
+        meta.className = "dim";
+        meta.textContent = " – " + n.author_name + ", " + new Date(n.created_at).toLocaleDateString();
+        li.appendChild(text);
+        li.appendChild(meta);
+        if (n.removable) {
+          var remove = document.createElement("button");
+          remove.type = "button";
+          remove.className = "small";
+          remove.textContent = "Remove";
+          remove.setAttribute("aria-label", "Remove the note " + n.body.slice(0, 40));
+          remove.addEventListener("click", function () {
+            notesApi.remove(n.id).then(refreshNotes, noteError);
+          });
+          li.appendChild(document.createTextNode(" "));
+          li.appendChild(remove);
+        }
+        notesList.appendChild(li);
+      });
+    }
+
+    function noteError(err) { setStatus((err && err.message) || String(err), true); }
+
+    function refreshNotes() {
+      if (!notesApi) return;
+      notesApi.list().then(function (list) {
+        notes = list || [];
+        showNotes();
+        redraw();
+      }, noteError);
+    }
+    var measureView = null;
+    var sectionEl = null;
+
     function frame(mesh) {
       var b = mesh.bounds;
       var size = [b[3] - b[0], b[4] - b[1], b[5] - b[2]];
@@ -347,15 +602,53 @@
       var model = multiply(rot, translation(-c[0], -c[1], -c[2]));
       var viewM = multiply(translation(0, 0, -view.dist), model);
       var proj = perspective(Math.PI / 4, w / h, Math.max(view.dist - view.radius * 4, view.radius / 100), view.dist + view.radius * 4);
+      lastFrame = { rot: rot, f: 1 / Math.tan(Math.PI / 8), aspect: w / h };
       gl.useProgram(program);
       gl.uniformMatrix4fv(loc.mvp, false, multiply(proj, viewM));
       gl.uniformMatrix4fv(loc.mv, false, viewM);
       gl.uniform1f(loc.size, Math.max(1, Math.round(1.5 * dpr)));
       gl.uniform1i(loc.points, drawable.points ? 1 : 0);
+      var plane = clipPlane();
+      gl.uniform1i(loc.clipOn, plane ? 1 : 0);
+      if (plane) gl.uniform4f(loc.clip, plane[0], plane[1], plane[2], plane[3]);
       gl.bindVertexArray(drawable.vao);
+      gl.uniform1f(loc.alpha, 1);
       if (!drawable.colored) gl.vertexAttrib3f(loc.col, baseColor[0], baseColor[1], baseColor[2]);
       if (drawable.points) gl.drawArrays(gl.POINTS, 0, drawable.count);
       else gl.drawElements(gl.TRIANGLES, drawable.count, gl.UNSIGNED_INT, 0);
+      // the compared model on top: where it sticks out of the model, it is
+      // red; where it lies inside, the model hides it
+      if (ghost) {
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+        gl.depthMask(false);
+        gl.uniform1f(loc.alpha, 0.45);
+        gl.bindVertexArray(ghost.vao);
+        gl.vertexAttrib3f(loc.col, 0.9, 0.25, 0.2);
+        gl.drawElements(gl.TRIANGLES, ghost.count, gl.UNSIGNED_INT, 0);
+        gl.depthMask(true);
+        gl.disable(gl.BLEND);
+        gl.uniform1f(loc.alpha, 1);
+      }
+      // notes (blue) and measured points with their line (red), always on top
+      function markers(points, color, line) {
+        if (!points.length) return;
+        var flat = [];
+        points.forEach(function (q) { flat.push(q[0], q[1], q[2]); });
+        gl.bindVertexArray(markerVao);
+        gl.bindBuffer(gl.ARRAY_BUFFER, markerBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(flat), gl.DYNAMIC_DRAW);
+        gl.disable(gl.DEPTH_TEST);
+        gl.uniform1i(loc.clipOn, 0);
+        gl.uniform1i(loc.points, 1);
+        gl.uniform1f(loc.size, Math.max(4, Math.round(7 * dpr)));
+        gl.vertexAttrib3f(loc.col, color[0], color[1], color[2]);
+        if (line && points.length === 2) gl.drawArrays(gl.LINES, 0, 2);
+        gl.drawArrays(gl.POINTS, 0, points.length);
+        gl.enable(gl.DEPTH_TEST);
+      }
+      markers(notes.map(function (n) { return [n.x, n.y, n.z]; }), [0.15, 0.45, 0.9], false);
+      markers(measure.points, [0.85, 0.2, 0.15], true);
       gl.bindVertexArray(null);
     }
 
@@ -387,9 +680,29 @@
 
     var pointers = {};
     var pinch = null;
+    var downAt = null;
     canvas.addEventListener("pointerdown", function (e) {
       canvas.setPointerCapture(e.pointerId);
       pointers[e.pointerId] = { x: e.clientX, y: e.clientY };
+      downAt = { x: e.clientX, y: e.clientY };
+    });
+    // a click (not a drag) in measure mode picks a point
+    canvas.addEventListener("pointerup", function (e) {
+      if (!(measure.on || noting) || !downAt || Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 4) return;
+      var rect = canvas.getBoundingClientRect();
+      var hit = pick(e.clientX - rect.left, e.clientY - rect.top);
+      if (!hit) return;
+      if (noting) {
+        var text = window.prompt("Note at this point:");
+        if (text && text.trim()) {
+          notesApi.add(hit, text.trim()).then(refreshNotes, noteError);
+        }
+        return;
+      }
+      if (measure.points.length === 2) measure.points = [];
+      measure.points.push(hit);
+      if (measureView) measureView.show();
+      redraw();
     });
     canvas.addEventListener("pointermove", function (e) {
       var prev = pointers[e.pointerId];
@@ -458,6 +771,8 @@
           legendView.show(mesh.fields[0]);
           canvas.insertAdjacentElement("beforebegin", legendView.el);
         }
+        sectionEl = sectionControls();
+        canvas.insertAdjacentElement("afterend", sectionEl);
         canvas.setAttribute("data-ready", "true");
         if (options.onReady) options.onReady();
         redraw();
@@ -496,12 +811,26 @@
       return buffer;
     }
 
+    // Shows another model (a TCMESH01 buffer) as a red ghost over this one,
+    // or removes it (null). Point clouds are not compared.
+    function compare(buffer) {
+      ghost = null;
+      if (buffer) {
+        var other = parseMesh(buffer);
+        if (!other.indices) throw new Error("Only triangle models can be compared.");
+        ghost = upload({ positions: other.positions, indices: other.indices, fields: [], colors: null });
+      }
+      redraw();
+    }
+
     return {
       exportStl: exportStl,
+      compare: compare,
       dispose: function () {
         disposed = true;
         if (scheme && scheme.removeEventListener) scheme.removeEventListener("change", onScheme);
         if (legendView) legendView.el.remove();
+        if (sectionEl) sectionEl.remove();
         windowListeners.forEach(function (l) { window.removeEventListener(l[0], l[1]); });
         var lose = gl.getExtension("WEBGL_lose_context");
         if (lose) lose.loseContext();
@@ -516,7 +845,27 @@
   if (canvas && canvas.getAttribute("data-src")) {
     var src = canvas.getAttribute("data-src");
     var stlBtn = document.getElementById("viewer-stl");
+    // 3D notes: <canvas data-notes="/file-versions/{id}/annotations">
+    var notesUrl = canvas.getAttribute("data-notes");
+    function notesRequest(method, url, body) {
+      return fetch(url, {
+        method: method,
+        credentials: "same-origin",
+        headers: { "Accept": "application/json", "Content-Type": "application/json" },
+        body: body ? JSON.stringify(body) : undefined
+      }).then(function (r) {
+        return r.json().then(function (json) {
+          if (!r.ok) throw new Error((json && json.error && json.error.message) || "The note could not be saved (" + r.status + ").");
+          return json;
+        });
+      });
+    }
     var viewer = mount(canvas, {
+      notes: notesUrl ? {
+        list: function () { return notesRequest("GET", notesUrl); },
+        add: function (p, body) { return notesRequest("POST", notesUrl, { x: p[0], y: p[1], z: p[2], body: body }); },
+        remove: function (id) { return notesRequest("POST", "/annotations/" + encodeURIComponent(id) + "/delete", {}); }
+      } : null,
       statusEl: document.getElementById("viewer-status"),
       resetBtn: document.getElementById("viewer-reset"),
       upBtn: document.getElementById("viewer-up"),
@@ -531,6 +880,27 @@
         });
       }
     });
+    // Graphical comparison with another revision/version (shown in red).
+    var compareSel = document.getElementById("viewer-compare");
+    if (compareSel) {
+      compareSel.addEventListener("change", function () {
+        var status = document.getElementById("viewer-status");
+        if (!compareSel.value) { viewer.compare(null); return; }
+        var label = compareSel.options[compareSel.selectedIndex].textContent;
+        fetch(compareSel.value, { credentials: "same-origin" })
+          .then(function (r) {
+            if (!r.ok) throw new Error("The preview of " + label + " failed (" + r.status + ").");
+            return r.arrayBuffer();
+          })
+          .then(function (buffer) {
+            viewer.compare(buffer);
+            if (status) status.textContent = "Red: " + label + " – where it sticks out of the shown model.";
+          })
+          .catch(function (err) {
+            if (status) { status.textContent = err.message || String(err); status.className = "flash flash-error"; }
+          });
+      });
+    }
     // STL export of a STEP/3MF/… model, e.g. for 3D printing.
     if (stlBtn) {
       stlBtn.addEventListener("click", function () {

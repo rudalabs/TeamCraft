@@ -99,26 +99,33 @@ pub fn user_sees_project(u: &str, p: &str) -> String {
 /// * administrators: only the restricted groups whose need-to-know policy
 ///   (`project_policies.admin_read`) shuts them out, they are no member of,
 ///   and for which they hold no running elevation. Without a policy row an
-///   administrator reads everything, as before.
+///   administrator reads everything, as before;
+/// * everybody, members and administrators alike: the restricted groups
+///   whose conditions on membership (identity-provider claims, maximum
+///   sign-in age) the user does not meet
+///   (`services::membership_conditions::unmet_sql`). The conditions that
+///   depend on the request (networks, the session's age) are applied to the
+///   actor afterwards (`membership_conditions::apply`).
 pub fn hidden_of_user(u: &str) -> String {
     format!(
-        "(CASE WHEN {u}.role = 'admin' THEN
-           COALESCE((SELECT array_agg(hp.id) FROM projects hp
-                     JOIN project_policies hpp ON hpp.project_id = hp.id
-                     WHERE hp.visibility = 'restricted' AND hpp.admin_read <> 'implicit'
-                       AND NOT EXISTS (SELECT 1 FROM project_members hpm
-                                       WHERE hpm.project_id = hp.id AND hpm.user_id = {u}.id)
-                       AND NOT (hpp.admin_read = 'with_reason' AND EXISTS (
-                                SELECT 1 FROM project_elevations hpe
-                                WHERE hpe.project_id = hp.id AND hpe.user_id = {u}.id
-                                  AND hpe.ended_at IS NULL AND hpe.expires_at > now()))),
-                    '{{}}'::uuid[])
-         ELSE
-           COALESCE((SELECT array_agg(hp.id) FROM projects hp
-                     WHERE hp.visibility = 'restricted'
-                       AND NOT EXISTS (SELECT 1 FROM project_members hpm
-                                       WHERE hpm.project_id = hp.id AND hpm.user_id = {u}.id)),
-                    '{{}}'::uuid[]) END)"
+        "COALESCE((SELECT array_agg(hp.id) FROM projects hp
+                   LEFT JOIN project_policies hpp ON hpp.project_id = hp.id
+                   WHERE hp.visibility = 'restricted'
+                     AND ((CASE WHEN {u}.role = 'admin' THEN
+                             COALESCE(hpp.admin_read, 'implicit') <> 'implicit'
+                             AND NOT EXISTS (SELECT 1 FROM project_members hpm
+                                             WHERE hpm.project_id = hp.id AND hpm.user_id = {u}.id)
+                             AND NOT (hpp.admin_read = 'with_reason' AND EXISTS (
+                                      SELECT 1 FROM project_elevations hpe
+                                      WHERE hpe.project_id = hp.id AND hpe.user_id = {u}.id
+                                        AND hpe.ended_at IS NULL AND hpe.expires_at > now()))
+                           ELSE
+                             NOT EXISTS (SELECT 1 FROM project_members hpm
+                                         WHERE hpm.project_id = hp.id AND hpm.user_id = {u}.id)
+                           END)
+                          OR {unmet})),
+                  '{{}}'::uuid[])",
+        unmet = crate::services::membership_conditions::unmet_sql(u, "hpp")
     )
 }
 

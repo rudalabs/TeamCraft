@@ -6,11 +6,11 @@ TeamCraft's import do? Investigated on 2026-11-04.
 
 ## How other systems do it
 
-| System | Tool | What it does |
-|---|---|---|
-| Autodesk Vault | **Autoloader**, or *Check In Project* in Inventor | scans the folder with the Inventor project file (`.ipj`), reports missing references, uploads in batches (up to 20 000–30 000 Inventor files), keeps the folder structure, works on a copy – the source files stay untouched; DWF creation can be switched off for speed |
-| SolidWorks PDM | copy/paste of folders, scan tools, VAR import programs | migration guides: scan first, map folders and properties, fix broken references and duplicates before the import, decide whether files come in at their existing revision |
-| Teamcenter with Solid Edge | SEEC *Data Preparation*: *Analyze*, then *Add to Teamcenter* (with dry run) | expects a flat source folder **without duplicate file names**; *Analyze* reports duplicate names, duplicate document numbers and broken links; item IDs are generated when the document number is empty; Design Manager can flatten folders and rename duplicates |
+| System                     | Tool                                                                        | What it does                                                                                                                                                                                                                                                             |
+|----------------------------|-----------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Autodesk Vault             | **Autoloader**, or *Check In Project* in Inventor                           | scans the folder with the Inventor project file (`.ipj`), reports missing references, uploads in batches (up to 20 000–30 000 Inventor files), keeps the folder structure, works on a copy – the source files stay untouched; DWF creation can be switched off for speed |
+| SolidWorks PDM             | copy/paste of folders, scan tools, VAR import programs                      | migration guides: scan first, map folders and properties, fix broken references and duplicates before the import, decide whether files come in at their existing revision                                                                                                |
+| Teamcenter with Solid Edge | SEEC *Data Preparation*: *Analyze*, then *Add to Teamcenter* (with dry run) | expects a flat source folder **without duplicate file names**; *Analyze* reports duplicate names, duplicate document numbers and broken links; item IDs are generated when the document number is empty; Design Manager can flatten folders and rename duplicates        |
 
 The common pattern:
 
@@ -27,8 +27,7 @@ The common pattern:
 ## Decision for TeamCraft
 
 TeamCraft matches CAD references by **file name**, like Teamcenter – so file
-names must be unique within an import. The desktop app gets an
-**Import folder…** wizard:
+names must be unique within an import. The desktop app gets an **Import folder…** wizard:
 
 * **Scan (dry run):** walks the folder, skips lock/backup files and
   `OldVersions` folders, sorts the files into models (parts, assemblies),
@@ -39,12 +38,15 @@ names must be unique within an import. The desktop app gets an
   datasets); project files and other documents can go into one document
   item named after the folder. Numbers are generated, or taken from the file
   names when they are valid item numbers.
-* **Import:** item by item with progress and stop, from the original files
-  (read only); every new item is checked in at the end, so nothing stays
+* **Import:** item by item with progress and stop, from the original files (read only); every new item is checked in at
+  the end, so nothing stays
   locked; the server scans the assemblies for the files they reference.
 * **Structure:** optionally BOM lines from the references found in the
-  assemblies (quantity 1, to be checked) – exact quantities come from the
-  BOM export of the CAD program (*Import BOM…*).
+  assemblies, with the instance count the server read from the assembly (`instances` of `GET …/references`: SOLIDWORKS
+  2015+ component tree, NX
+  structure); where the format does not tell (Inventor, Solid Edge, …)
+  quantity 1, to be checked – exact quantities come from the BOM export of
+  the CAD program (*Import BOM…*).
 * **Release** afterwards with one change order, like every other release in
   TeamCraft (no import "as released" past the lifecycle).
 
@@ -75,7 +77,7 @@ check afterwards.
   `desktop/ui/app.js`) and the tutorial *Help → How to Import a CAD Folder*.
   Imported items are remembered per folder (browser storage of the app), so
   an interrupted import continues where it stopped.
-* Tested: the folder scan (unit test) and the planning with a sample tree
-  (items, duplicates, Creo iterations, project files). **Not yet tried with a
+* Tested: the folder scan (unit test) and the planning with a sample tree (items, duplicates, Creo iterations, project
+  files). **Not yet tried with a
   real Inventor or Solid Edge project of hundreds of files** – the BOM lines
   depend on the heuristic reference scan of the server.

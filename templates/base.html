@@ -11,7 +11,7 @@
   <meta name="theme-color" media="(prefers-color-scheme: light)" content="#ffffff">
   <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#101216">
   {%- endif %}
-  <title>{% block title %}{% endblock %} · {{ instance_name }}</title>
+  <title>{% block title %}{% endblock %} · {{ (branding.display_name if branding and branding.display_name else instance_name) }}</title>
   {%- if branding and branding.square %}
   <link rel="icon" href="/branding/square?v={{ branding.square }}">
   {%- else %}
@@ -25,17 +25,19 @@
   <script src="/static/app.js?v={{ assets }}" defer></script>
 </head>
 <body>
+<a class="skip-link" href="#main">Skip to the main content</a>
 <div class="app-glow" aria-hidden="true"></div>
 {% if me %}
 <header class="topbar">
   <div class="topbar-inner">
     <a class="brand" href="/" title="Dashboard">
       {%- if branding and branding.wide %}
-      <img class="brand-wide" src="/branding/wide?v={{ branding.wide }}" alt="{{ instance_name }}">
+      <img class="brand-wide" src="/branding/wide?v={{ branding.wide }}" alt="{{ (branding.display_name if branding and branding.display_name else instance_name) }}">
       {%- else %}
       <img src="/static/media/logos/TeamCraft_Icon.svg?v={{ assets }}" alt="">
-      <span class="brand-name">{{ instance_name }}</span>
-      <span class="brand-sub">PLM</span>
+      <span class="brand-name">{{ (branding.display_name if branding and branding.display_name else instance_name) }}</span>
+      {%- set sub = branding.subtitle if branding and branding.subtitle is defined else "PLM" %}
+      {%- if sub %}<span class="brand-sub">{{ sub }}</span>{% endif %}
       {%- endif %}
     </a>
     <nav class="nav" aria-label="Main">
@@ -52,6 +54,7 @@
       <div class="menu-pop">
         <a href="/admin/users" class="{% block nav_users %}{% endblock %}">Users</a>
         <a href="/admin/attributes" class="{% block nav_attributes %}{% endblock %}" title="Custom attributes of items">Attributes</a>
+        <a href="/materials" class="{% block nav_materials %}{% endblock %}" title="Material library: densities for the mass properties">Materials</a>
         <a href="/admin/webhooks" class="{% block nav_webhooks %}{% endblock %}" title="Send events to CI, ERP or chat">Webhooks</a>
         <a href="/admin/ai" class="{% block nav_ai %}{% endblock %}" title="Company AI: the assistant and local agents">AI</a>
         <a href="/admin/branding" class="{% block nav_branding %}{% endblock %}" title="Replace the logos">Branding</a>

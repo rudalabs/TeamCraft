@@ -12,13 +12,17 @@ roll-up and three **revision rules**:
 | Latest released | its newest released revision                                                      |
 | As released     | the exact revision the parent was released with (e.g. the as-built configuration) |
 
+The roll-up adds the entered masses. The centre of gravity and the inertia
+tensor of the structure, computed from the 3D files of the parts, are on the **Mass properties** page –
+see [Mass properties](mass-properties.md).
+
 ### Working with a large structure
 
 For a big product (hundreds or thousands of lines across several project
 groups) the BOM page offers:
 
-* **Fold and unfold** – every line that has lines below it has a ▾ / ▸ button
-  (keyboard operable, `aria-expanded`); *Collapse all* and *Expand all* sit
+* **Fold and unfold** – every line that has lines below it has a ▾ / ▸ button (keyboard operable, `aria-expanded`);
+  *Collapse all* and *Expand all* sit
   above the table. This needs JavaScript; without it every line stays
   visible.
 * **Levels** – *Levels: 1, 2, 3, 4, 5, All* (`?depth=n`) lists only the first
@@ -43,10 +47,42 @@ these controls yet.
 Where-used shows the parents of an item; *All levels* on the revision page
 opens the where-used page, which walks up through the sub-assemblies (1, 2,
 3, 5 or all levels). Cycles are rejected. The BOM
-exports as CSV and as Excel workbook (which the BOM import reads back), and
-**Pack and Go** downloads a revision with the files of its whole structure
+exports as CSV and as Excel workbook (which the BOM import reads back), and **Pack and Go** downloads a revision with
+the files of its whole structure
 as ZIP (`<item>_<revision>/`, `bom.csv`, `manifest.json` with SHA-256 per
-file).
+file). For every released revision the manifest also names the change order
+that released it and who approved it when (`released_by`: change, title,
+release time, approvals); a change order the downloader may not see is only
+marked `restricted`.
+
+## Creating a BOM from the CAD references
+
+An assembly uploaded as a file has no BOM, although the server already knows
+which part files it uses (the *References* tab). **Create BOM from CAD
+references…** on the BOM card of the revision (also offered as a hint while
+the BOM is empty) shows what the BOM would be, one row per child:
+
+* item, name, **quantity** and where it comes from – *CAD instances* (NX:
+  the placed instances of the component, hidden layers left out; SOLIDWORKS:
+  the instances in the component tree without *exclude from BOM*; STEP
+  assemblies with external part files: the assembly occurrences of each
+  file) or *assumed 1* (the file does not tell; the line gets the note *quantity not
+  known from the CAD file – check it*);
+* the CAD file that references it;
+* a status: *new line* (ticked), *already in the BOM*, *differs* (BOM 2, CAD
+  4 – changed only when you tick it and *Also change the quantity*), or *circular* (refused, as when adding a line by
+  hand).
+
+Only assembly files count (NX files only when they have component
+instances, STEP files only when their occurrences lead to external part
+files); a drawing's link to its model stays a *drawing of* reference.
+Referenced files TeamCraft does not have are listed as *not in TeamCraft* and
+never created; parts in project groups you cannot see are only counted. *Add the ticked lines* needs the revision
+checked out by you (the page
+offers *Check out and create*) and adds all lines in one transaction. The
+REST API has the same two steps: `GET …/bom/from-references` returns the
+plan, `POST …/bom/from-references` with
+`{"children": ["PRT-000004"], "update_quantities": false}` applies it.
 
 ## Comparing BOMs
 
@@ -59,8 +95,8 @@ chosen, and the API also compares by code (`GET …/revisions/B/bom/compare?with
 with the chosen revision rule, the children of two matched lines are
 compared the same way, and an added or removed sub-assembly brings its
 whole sub-tree. A child that now resolves to another revision counts as
-changed. When one of the two revisions is released, the default rule is
-*As released*: a released parent uses the child revisions it was released
+changed. When one of the two revisions is released, the default rule is *As released*: a released parent uses the child
+revisions it was released
 with, an in-work one the newest released children, so comparing two
 revisions shows exactly which parts went into the new one; otherwise the
 default is *Latest*. *Latest* and *Latest released* resolve a child by its
@@ -93,19 +129,19 @@ default the successor, otherwise an alternate) in place of this one. The
 preview lists every assembly whose *latest* revision uses the item directly
 and what will happen to it:
 
-| Latest revision of the assembly                      | Result                                                       |
-|------------------------------------------------------|--------------------------------------------------------------|
-| in work, not checked out or checked out by you       | the line is replaced (quantity, find number and notes stay)  |
-| in work, checked out by somebody else                | left alone – ask them, or replace it there yourself later     |
-| in work, in a group you cannot edit                  | left alone                                                   |
-| in review                                            | left alone until the review is finished or rejected          |
-| released                                             | needs a new revision – revise it (usually in a change order)  |
-| would contain itself through the replacement         | left alone (circular BOM)                                    |
+| Latest revision of the assembly                | Result                                                       |
+|------------------------------------------------|--------------------------------------------------------------|
+| in work, not checked out or checked out by you | the line is replaced (quantity, find number and notes stay)  |
+| in work, checked out by somebody else          | left alone – ask them, or replace it there yourself later    |
+| in work, in a group you cannot edit            | left alone                                                   |
+| in review                                      | left alone until the review is finished or rejected          |
+| released                                       | needs a new revision – revise it (usually in a change order) |
+| would contain itself through the replacement   | left alone (circular BOM)                                    |
 
 A revision that was not checked out is changed directly, like check out,
 edit, check in; one checked out by you stays checked out. Older revisions keep
-their BOM. Every replaced line is recorded in the history of the assembly
-(`bom.replace`). Assemblies in groups you cannot see are only counted.
+their BOM. Every replaced line is recorded in the history of the assembly (`bom.replace`). Assemblies in groups you
+cannot see are only counted.
 
 ## References
 
@@ -116,7 +152,11 @@ written by SolidWorks, Inventor, Solid Edge, CATIA, …; NX parts and
 SOLIDWORKS 2015+ files through their containers, see
 [Formats](../reference/formats.md)) and matched against
 the vault: referenced files that are *not in TeamCraft* are flagged and the
-missing BOM lines are suggested.
+missing BOM lines are suggested. The other direction warns before damage:
+removing a file that CAD files of other items still reference names them (up to three, then a count) in the
+confirmation, so a part still used in an
+assembly or drawing is not deleted by accident. Deleting an item is refused
+while it is used in a BOM.
 
 ## Change propagation
 
@@ -129,8 +169,8 @@ the check and propagates one level further. Every change shows this **impact ana
 
 *Dependents to check* on the dashboard (and in the desktop app) groups the
 open checks by the dependent revision: one header per assembly, drawing or
-simulation (*ASM-000002/A Electronics enclosure – 4 changes to check*) with
-**Open**, **Revise** and **Acknowledge all…**, and one compact row per source
+simulation (*ASM-000002/A Electronics enclosure – 4 changes to check*) with **Open**, **Revise** and **Acknowledge
+all…**, and one compact row per source
 below it – the item that changed, *released* or *obsolete* via which change,
 and the link (BOM line, CAD file reference, drawing, specification, reference,
 simulation basis) – each with its own **Acknowledge…**. **Acknowledge all…**

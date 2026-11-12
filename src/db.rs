@@ -131,10 +131,20 @@ pub async fn migrate(pool: &PgPool) -> Result<()> {
     accept_edits_before_release(pool)
         .await
         .context("updating the checksums of edited migrations failed")?;
-    MIGRATOR
-        .run(pool)
+    // sqlx takes a session advisory lock and returns early on a refused
+    // migration (changed checksum, dirty version) without releasing it: on a
+    // pooled connection the lock would outlive the error and the next
+    // migrate() would wait for it for ever. One dedicated connection, closed
+    // on error, ends the session and its lock.
+    let mut conn = pool
+        .acquire()
         .await
-        .context("running database migrations failed")
+        .context("connecting for the migrations failed")?;
+    let result = MIGRATOR.run(&mut *conn).await;
+    if result.is_err() {
+        let _ = conn.detach().close().await;
+    }
+    result.context("running database migrations failed")
 }
 
 async fn accept_edits_before_release(pool: &PgPool) -> Result<()> {
@@ -170,6 +180,22 @@ async fn accept_edits_before_release(pool: &PgPool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// sqlx records a migration by the number before the `_`: two files with
+    /// the same number make every migration run fail ("duplicate key …
+    /// _sqlx_migrations_pkey"). Parallel pull requests must renumber.
+    #[test]
+    fn migration_numbers_are_unique() {
+        let mut seen = std::collections::HashMap::new();
+        for m in MIGRATOR.iter() {
+            if let Some(other) = seen.insert(m.version, m.description.clone()) {
+                panic!(
+                    "migration number {:04} is used twice: '{}' and '{}' – renumber the newer one",
+                    m.version, other, m.description
+                );
+            }
+        }
+    }
 
     #[test]
     fn supported_postgres_versions() {

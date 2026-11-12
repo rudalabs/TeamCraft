@@ -16,8 +16,8 @@ use crate::{
     error::{AppError, AppResult},
     resultscan::TemplateInput,
     services::{
-        access_log, access_review, audit, ownership, project_policy, projects, result_templates,
-        users, Page,
+        access_log, access_review, audit, checkouts, ownership, project_policy, projects,
+        result_templates, users, Page,
     },
     util, AppState,
 };
@@ -32,11 +32,26 @@ fn roles() -> Value {
 
 pub async fn projects(State(st): State<AppState>, ctx: WebCtx) -> AppResult<Response> {
     let list = projects::list_managed(&st.db, &ctx.me).await?;
+    // groups whose access review is due, among those the user manages
+    let review_due = access_review::due_for(&st.db, &ctx.me).await?;
+    // administrators: groups without a present manager (#173)
+    let gaps = if ctx.me.is_admin() {
+        crate::services::manager_gaps::list(&st.db, &ctx.me).await?
+    } else {
+        Vec::new()
+    };
     render(
         &st,
         &ctx,
         "projects/list.html",
-        json!({ "projects": list, "my_projects": ctx.me.projects }),
+        json!({
+            "projects": list,
+            "my_projects": ctx.me.projects,
+            "review_due": review_due,
+            "manager_gaps": crate::services::manager_gaps::to_json(&gaps),
+            "manager_gap_ids": gaps.iter().map(|g| g.project_id).collect::<Vec<_>>(),
+            "stale_days": crate::services::manager_gaps::STALE_DAYS,
+        }),
     )
 }
 
@@ -49,6 +64,7 @@ pub struct ProjectQuery {
 pub async fn project_show(
     State(st): State<AppState>,
     ctx: WebCtx,
+    origin: crate::auth::Origin,
     Path(id): Path<Uuid>,
     Query(q): Query<ProjectQuery>,
 ) -> AppResult<Response> {
@@ -92,6 +108,10 @@ pub async fn project_show(
             .collect(),
         None => Vec::new(),
     };
+    let review_schedule = match &policy {
+        Some(_) => Some(access_review::schedule(&st.db, id).await?),
+        None => None,
+    };
     let access_entries = match &policy {
         Some(_) if readable => {
             let filter = access_log::Filter {
@@ -120,6 +140,11 @@ pub async fn project_show(
     } else {
         Vec::new()
     };
+    let former_holders = if can_manage {
+        projects::former_holders(&st.db, &ctx.me, id).await?
+    } else {
+        Vec::new()
+    };
     render(
         &st,
         &ctx,
@@ -127,6 +152,7 @@ pub async fn project_show(
         json!({
             "project": project,
             "members": members,
+            "former_holders": former_holders,
             "candidates": all_users,
             "is_member": ctx.me.projects.contains(&id),
             "can_edit": ctx.me.can_edit_project(Some(id)),
@@ -137,6 +163,11 @@ pub async fn project_show(
             "admin_modes": admin_modes,
             "interface_rows": interface_rows,
             "access_entries": access_entries,
+            "review_schedule": review_schedule,
+            "claim_lines": policy.as_ref().map(|p| {
+                crate::services::membership_conditions::claim_lines(&p.conditions.required_claims)
+            }),
+            "my_address": origin.client.map(|ip| ip.to_string()),
             "elevation_minutes": project_policy::ELEVATION_MINUTES,
             "result_templates": templates,
             "oidc_enabled": st.config.oidc.is_some(),
@@ -294,9 +325,28 @@ pub struct AccessForm {
     #[serde(default)]
     packages: Option<String>,
     #[serde(default)]
+    notification_content: Option<String>,
+    #[serde(default)]
+    external_llm: Option<String>,
+    #[serde(default)]
+    desktop_sync: Option<String>,
+    #[serde(default)]
     read_log: Option<String>,
     #[serde(default)]
     retention_days: String,
+    #[serde(default)]
+    review_interval_days: String,
+}
+
+/// An optional number of days from a form field (empty = none).
+fn optional_days(raw: &str, what: &str) -> AppResult<Option<i32>> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return Ok(None);
+    }
+    raw.parse::<i32>()
+        .map(Some)
+        .map_err(|_| AppError::BadRequest(format!("The {what} is a number of days (or empty).")))
 }
 
 /// `POST /projects/{id}/access` – managers of the group, admins: interface
@@ -309,16 +359,14 @@ pub async fn update_access(
 ) -> AppResult<Response> {
     use project_policy::Interface;
     let back = format!("/projects/{id}");
-    let retention = form.retention_days.trim();
-    let days = if retention.is_empty() {
-        Ok(None)
-    } else {
-        retention.parse::<i32>().map(Some).map_err(|_| {
-            AppError::BadRequest("The retention is a number of days (or empty).".into())
-        })
-    };
+    let days = optional_days(&form.retention_days, "retention").and_then(|days| {
+        Ok((
+            days,
+            optional_days(&form.review_interval_days, "review interval")?,
+        ))
+    });
     let result = match days {
-        Ok(days) => {
+        Ok((days, review_days)) => {
             let update = project_policy::AccessUpdate {
                 interfaces: vec![
                     (Interface::ApiTokens, form.api_tokens.is_some()),
@@ -326,9 +374,16 @@ pub async fn update_access(
                     (Interface::Assistant, form.assistant.is_some()),
                     (Interface::Webhooks, form.webhooks.is_some()),
                     (Interface::Packages, form.packages.is_some()),
+                    (
+                        Interface::NotificationContent,
+                        form.notification_content.is_some(),
+                    ),
+                    (Interface::ExternalLlm, form.external_llm.is_some()),
+                    (Interface::DesktopSync, form.desktop_sync.is_some()),
                 ],
                 read_log: Some(form.read_log.is_some()),
                 log_retention_days: Some(days),
+                review_interval_days: Some(review_days),
             };
             project_policy::set_access(&st.db, &ctx.me, id, update).await
         }
@@ -340,6 +395,64 @@ pub async fn update_access(
 }
 
 #[derive(Deserialize)]
+pub struct ConditionsForm {
+    /// One claim condition per line: `claim = value, value`.
+    #[serde(default)]
+    required_claims: String,
+    /// One address range per line (or separated by commas).
+    #[serde(default)]
+    allowed_networks: String,
+    #[serde(default)]
+    max_signin_age_hours: String,
+}
+
+/// The conditions update of the form; a malformed field is a 400.
+fn conditions_update(
+    form: &ConditionsForm,
+) -> AppResult<crate::services::membership_conditions::ConditionsUpdate> {
+    use crate::services::membership_conditions as mc;
+    let hours = match form.max_signin_age_hours.trim() {
+        "" => None,
+        raw => Some(raw.parse::<i32>().map_err(|_| {
+            AppError::BadRequest("The maximum sign-in age is a number of hours (or empty).".into())
+        })?),
+    };
+    Ok(mc::ConditionsUpdate {
+        required_claims: Some(mc::parse_claim_lines(&form.required_claims)?),
+        allowed_networks: Some(
+            form.allowed_networks
+                .split(['\n', ','])
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(str::to_string)
+                .collect(),
+        ),
+        max_signin_age_hours: Some(hours),
+    })
+}
+
+/// `POST /projects/{id}/conditions` – managers of the group, admins: the
+/// conditions on membership (#151, step 2).
+pub async fn update_conditions(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    origin: crate::auth::Origin,
+    Path(id): Path<Uuid>,
+    Form(form): Form<ConditionsForm>,
+) -> AppResult<Response> {
+    let back = format!("/projects/{id}");
+    let result = match conditions_update(&form) {
+        Ok(update) => {
+            crate::services::membership_conditions::set(&st.db, &ctx.me, id, update, &origin).await
+        }
+        Err(e) => Err(e),
+    };
+    finish(&st, result, &back, |_| {
+        (back.clone(), "Conditions on membership saved.".to_string())
+    })
+}
+
+#[derive(Deserialize)]
 pub struct ReviewPolicyForm {
     #[serde(default)]
     min_approvals: String,
@@ -347,6 +460,12 @@ pub struct ReviewPolicyForm {
     required_reviewers: String,
     #[serde(default)]
     role_group: String,
+    #[serde(default)]
+    obsolete_requires_change: Option<String>,
+    #[serde(default)]
+    requester_cannot_decide: Option<String>,
+    #[serde(default)]
+    concessions_need_review: Option<String>,
 }
 
 /// `POST /projects/{id}/review-policy` – managers of the group, admins.
@@ -375,6 +494,9 @@ pub async fn update_review_policy(
                     .map(str::to_string)
                     .collect(),
                 role_group_code: Some(form.role_group),
+                obsolete_requires_change: Some(form.obsolete_requires_change.is_some()),
+                requester_cannot_decide: Some(form.requester_cannot_decide.is_some()),
+                concessions_need_review: Some(form.concessions_need_review.is_some()),
             };
             project_policy::set_review_policy(&st.db, &ctx.me, id, &input).await
         }
@@ -475,6 +597,71 @@ pub async fn remove_member(
         };
         (target, message)
     })
+}
+
+/// `POST /projects/{id}/members/{user_id}/demote` – managers of the group, admins.
+pub async fn demote_member(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path((id, user_id)): Path<(Uuid, Uuid)>,
+) -> AppResult<Response> {
+    let back = format!("/projects/{id}");
+    let result = projects::demote_manager(&st.db, &ctx.me, id, user_id).await;
+    finish(&st, result, &back, |()| {
+        (
+            back.clone(),
+            "The member is no longer a manager".to_string(),
+        )
+    })
+}
+
+/// `POST /projects/{id}/members/{user_id}/release-checkouts` – managers of
+/// the group (for deactivated and former members), admins.
+pub async fn release_member_checkouts(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path((id, user_id)): Path<(Uuid, Uuid)>,
+) -> AppResult<Response> {
+    let back = format!("/projects/{id}");
+    let result = checkouts::release_held(&st.db, &ctx.me, user_id, Some(id)).await;
+    finish(&st, result, &back, |outcomes| {
+        (back.clone(), checkouts::release_summary(&outcomes))
+    })
+}
+
+/// `POST /admin/users/{id}/release-checkouts` – administrators: every
+/// check-out the user holds in groups the administrator can read.
+pub async fn release_user_checkouts(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+) -> AppResult<Response> {
+    let back = format!("/admin/users/{id}");
+    let result = async {
+        ctx.me.require(Role::Admin)?;
+        checkouts::release_held(&st.db, &ctx.me, id, None).await
+    }
+    .await;
+    finish(&st, result, &back, |outcomes| {
+        (back.clone(), checkouts::release_summary(&outcomes))
+    })
+}
+
+/// `GET /users/{id}/holdings` – what a user still holds (issue #173):
+/// administrators, and managers for the groups they manage.
+pub async fn user_holdings(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+) -> AppResult<Response> {
+    let holdings = crate::services::offboarding::holdings(&st.db, &ctx.me, id).await?;
+    let nothing = holdings.blocks_nothing();
+    render(
+        &st,
+        &ctx,
+        "admin/holdings.html",
+        json!({ "h": holdings, "nothing": nothing }),
+    )
 }
 
 #[derive(Deserialize)]
@@ -606,11 +793,16 @@ pub async fn user_edit(
         .filter(|u| u.id != id)
         .collect();
     let memberships = projects::memberships_of(&st.db, id).await?;
+    let held_checkouts = checkouts::held_count(&st.db, &ctx.me, id).await?;
+    let sole_manager_of =
+        crate::services::deactivation::sole_manager_codes(&st.db, &ctx.me, id).await?;
     render(
         &st,
         &ctx,
         "admin/user_edit.html",
         json!({
+            "held_checkouts": held_checkouts,
+            "sole_manager_of": sole_manager_of,
             "handover_targets": handover_targets,
             "user": user,
             "tokens": tokens,
@@ -744,6 +936,88 @@ pub async fn audit(
 }
 
 #[derive(Deserialize)]
+pub struct AuditExportQuery {
+    entity_type: Option<String>,
+    username: Option<String>,
+    action: Option<String>,
+    /// `csv` (default) or `json`.
+    format: Option<String>,
+}
+
+/// The audit filter of a query: empty values mean "any".
+pub(crate) fn audit_filter(
+    entity_type: &Option<String>,
+    username: &Option<String>,
+    action: &Option<String>,
+) -> audit::AuditFilter {
+    let clean = |v: &Option<String>| {
+        v.as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+    };
+    audit::AuditFilter {
+        entity_type: clean(entity_type),
+        username: clean(username),
+        action: clean(action),
+    }
+}
+
+/// An audit log export as a download (CSV or JSON).
+pub(crate) fn audit_download(
+    entries: &[crate::models::AuditEntry],
+    truncated: bool,
+    json: bool,
+) -> AppResult<Response> {
+    let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+    let (content_type, filename, body) = if json {
+        (
+            "application/json",
+            format!("teamcraft-audit-{stamp}.json"),
+            serde_json::to_string_pretty(&json!({
+                "exported_at": chrono::Utc::now(),
+                "truncated": truncated,
+                "entries": entries,
+            }))
+            .map_err(|e| AppError::Other(e.into()))?,
+        )
+    } else {
+        (
+            "text/csv; charset=utf-8",
+            format!("teamcraft-audit-{stamp}.csv"),
+            audit::to_csv(entries),
+        )
+    };
+    Ok((
+        [
+            (header::CONTENT_TYPE, content_type.to_string()),
+            (
+                header::CONTENT_DISPOSITION,
+                util::content_disposition(&filename),
+            ),
+            (
+                header::HeaderName::from_static("x-truncated"),
+                truncated.to_string(),
+            ),
+        ],
+        body,
+    )
+        .into_response())
+}
+
+/// `GET /admin/audit/export?format=csv|json` – the filtered audit log as a
+/// download (administrators; at most `audit::EXPORT_MAX` entries).
+pub async fn audit_export(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Query(q): Query<AuditExportQuery>,
+) -> AppResult<Response> {
+    let filter = audit_filter(&q.entity_type, &q.username, &q.action);
+    let (entries, truncated) = audit::export(&st.db, &ctx.me, &filter).await?;
+    audit_download(&entries, truncated, q.format.as_deref() == Some("json"))
+}
+
+#[derive(Deserialize)]
 pub struct TemplateForm {
     #[serde(default)]
     name: String,
@@ -848,6 +1122,115 @@ pub async fn access_review(
     )
 }
 
+/// `GET /projects/{id}/access-log` – the read and download log of a group
+/// with filters and paging (managers and administrators who read it).
+pub async fn access_log_page(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Query(q): Query<access_log::FilterQuery>,
+) -> AppResult<Response> {
+    let project = projects::get_for_management(&st.db, &ctx.me, id).await?;
+    let (page, error) = match q.parse() {
+        Ok(filter) => (
+            Some(
+                access_log::page(
+                    &st.db,
+                    &ctx.me,
+                    id,
+                    &access_log::Filter {
+                        limit: Some(100),
+                        ..filter
+                    },
+                )
+                .await?,
+            ),
+            None,
+        ),
+        // a bad field is shown next to the form, the rights are still checked
+        Err(AppError::BadRequest(msg)) => {
+            access_log::list(
+                &st.db,
+                &ctx.me,
+                id,
+                &access_log::Filter {
+                    limit: Some(1),
+                    ..Default::default()
+                },
+            )
+            .await?;
+            (None, Some(msg))
+        }
+        Err(e) => return Err(e),
+    };
+    // the filter as a query string, for the paging links
+    let fields: Vec<(&str, Option<String>)> = vec![
+        ("user", q.user.clone()),
+        ("kind", q.kind.clone()),
+        ("channel", q.channel.clone()),
+        ("object", q.object.clone()),
+        ("since", q.since.clone()),
+        ("until", q.until.clone()),
+    ];
+    let filtered = fields
+        .iter()
+        .any(|(_, v)| v.as_deref().is_some_and(|v| !v.trim().is_empty()));
+    let base: String = fields
+        .iter()
+        .filter_map(|(k, v)| {
+            v.as_deref()
+                .map(str::trim)
+                .filter(|v| !v.is_empty())
+                .map(|v| format!("{k}={}&", util::pct_encode(v)))
+        })
+        .collect();
+    let link = |before: Option<Uuid>| {
+        let query = match before {
+            Some(b) => format!("{base}before={b}"),
+            None => base.trim_end_matches('&').to_string(),
+        };
+        if query.is_empty() {
+            format!("/projects/{id}/access-log")
+        } else {
+            format!("/projects/{id}/access-log?{query}")
+        }
+    };
+    let read_log = {
+        let mut conn = st.db.acquire().await?;
+        project_policy::settings(&mut conn, id).await?.read_log
+    };
+    let kinds: Vec<Value> = access_log::Kind::ALL
+        .iter()
+        .map(|k| json!({ "value": k.as_str(), "label": k.label() }))
+        .collect();
+    let channels: Vec<Value> = access_log::Channel::ALL
+        .iter()
+        .map(|c| json!({ "value": c.as_str(), "label": c.label() }))
+        .collect();
+    let (entries, next) = match page {
+        Some(p) => (p.entries, p.next),
+        None => (Vec::new(), None),
+    };
+    render(
+        &st,
+        &ctx,
+        "projects/access_log.html",
+        json!({
+            "project": project,
+            "query": q,
+            "entries": entries,
+            "next_link": next.map(|n| link(Some(n))),
+            "first_page_link": q.before.map(|_| link(None)),
+            "filtered": filtered,
+            "read_log": read_log,
+            "error": error,
+            "kinds": kinds,
+            "channels": channels,
+            "collapse_minutes": access_log::COLLAPSE_MINUTES,
+        }),
+    )
+}
+
 #[derive(Deserialize)]
 pub struct ReviewForm {
     #[serde(default)]
@@ -895,6 +1278,50 @@ pub async fn access_review_csv(
 #[derive(Deserialize)]
 pub struct HandoverForm {
     to: Uuid,
+}
+
+#[derive(Deserialize)]
+pub struct OffboardForm {
+    /// A user id, or empty for nobody.
+    #[serde(default)]
+    hand_over_to: String,
+    release_checkouts: Option<String>,
+    revoke_tokens: Option<String>,
+    confirm_no_manager: Option<String>,
+}
+
+/// The successor field of the offboarding form: a user id or empty.
+fn successor(raw: &str) -> AppResult<Option<Uuid>> {
+    match raw.trim() {
+        "" => Ok(None),
+        id => Uuid::parse_str(id)
+            .map(Some)
+            .map_err(|_| AppError::BadRequest("Choose the successor from the list.".into())),
+    }
+}
+
+/// `POST /admin/users/{id}/offboard` – deactivates a leaver with the chosen
+/// offboarding steps (issue #173, step 4).
+pub async fn offboard(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<OffboardForm>,
+) -> AppResult<Response> {
+    let back = format!("/admin/users/{id}");
+    let result = async {
+        let opts = crate::services::deactivation::Offboarding {
+            release_checkouts: form.release_checkouts.is_some(),
+            hand_over_to: successor(&form.hand_over_to)?,
+            revoke_tokens: form.revoke_tokens.is_some(),
+            confirm_no_manager: form.confirm_no_manager.is_some(),
+        };
+        crate::services::deactivation::deactivate(&st.db, &ctx.me, id, &opts).await
+    }
+    .await;
+    finish(&st, result, &back, |report| {
+        (back.clone(), report.summary())
+    })
 }
 
 /// Moves the work of a user to another one and shows what was moved.

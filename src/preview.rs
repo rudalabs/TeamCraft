@@ -27,7 +27,7 @@ use tokio::sync::{Semaphore, SemaphorePermit};
 
 use crate::{
     error::{AppError, AppResult},
-    shape,
+    massprops, shape,
     vault::Vault,
 };
 
@@ -163,7 +163,15 @@ pub enum PreviewFormat {
     Step,
     /// Siemens NX parts: the lightweight (JT) representation they store.
     NxPart,
-    /// SketchUp 2021+ models: their faces triangulated, components placed.
+    /// Standalone JT visualisation files (JT 9).
+    Jt,
+    /// SOLIDWORKS parts: the display tessellation they store.
+    SwPart,
+    /// SOLIDWORKS assemblies: put together from the previews of their parts.
+    SwAssembly,
+    /// Rhino models: the meshes they store, SubD control nets refined.
+    Rhino,
+    /// SketchUp models: their faces triangulated, components placed.
     SketchUp,
     Pts,
     Xyz,
@@ -176,7 +184,7 @@ pub enum PreviewFormat {
 }
 
 impl PreviewFormat {
-    pub const ALL: [PreviewFormat; 19] = [
+    pub const ALL: [PreviewFormat; 23] = [
         PreviewFormat::Stl,
         PreviewFormat::Obj,
         PreviewFormat::Ply,
@@ -188,6 +196,10 @@ impl PreviewFormat {
         PreviewFormat::ThreeDs,
         PreviewFormat::Step,
         PreviewFormat::NxPart,
+        PreviewFormat::Jt,
+        PreviewFormat::SwPart,
+        PreviewFormat::SwAssembly,
+        PreviewFormat::Rhino,
         PreviewFormat::SketchUp,
         PreviewFormat::Pts,
         PreviewFormat::Xyz,
@@ -222,6 +234,10 @@ impl PreviewFormat {
             PreviewFormat::ThreeDs => "3ds",
             PreviewFormat::Step => "step",
             PreviewFormat::NxPart => "nx-part",
+            PreviewFormat::Jt => "jt",
+            PreviewFormat::SwPart => "solidworks-part",
+            PreviewFormat::SwAssembly => "solidworks-assembly",
+            PreviewFormat::Rhino => "rhino",
             PreviewFormat::SketchUp => "sketchup",
             PreviewFormat::Pts => "pts",
             PreviewFormat::Xyz => "xyz",
@@ -244,6 +260,13 @@ impl PreviewFormat {
     /// B-rep formats are tessellated (slower) – the rest is read as is.
     pub fn is_brep(self) -> bool {
         matches!(self, PreviewFormat::Step)
+    }
+
+    /// Assemblies whose preview is put together from their parts' previews
+    /// (`services::assemblies`): NX files without a lightweight
+    /// representation of their own, SOLIDWORKS assemblies.
+    pub fn may_be_assembly(self) -> bool {
+        matches!(self, PreviewFormat::NxPart | PreviewFormat::SwAssembly)
     }
 
     pub fn is_point_cloud(self) -> bool {
@@ -295,13 +318,15 @@ pub const CACHED_MESH: &str = "tcm";
 /// `input` into the preview mesh at `output` and/or writes the shape
 /// signature (a [`shape::Outcome`] as JSON) to `signature`. With
 /// [`CACHED_MESH`] as format, `input` is a cached preview mesh. A failed
-/// signature does not fail the conversion – the outcome records why.
-/// Returns the mesh (the CLI prints its size).
+/// signature does not fail the conversion – the outcome records why. The
+/// mass properties (a [`massprops::Outcome`] as JSON) go to `mass` the same
+/// way. Returns the mesh (the CLI prints its size).
 pub fn run_job(
     format: &str,
     input: &Path,
     output: Option<&Path>,
     signature: Option<&Path>,
+    mass: Option<&Path>,
     max_input_bytes: u64,
 ) -> anyhow::Result<crate::mesh::Mesh> {
     let mesh = if format == CACHED_MESH {
@@ -320,7 +345,22 @@ pub fn run_job(
     if let Some(path) = signature {
         std::fs::write(path, serde_json::to_vec(&signature_outcome(&mesh))?)?;
     }
+    if let Some(path) = mass {
+        std::fs::write(path, serde_json::to_vec(&mass_outcome(&mesh))?)?;
+    }
     Ok(mesh)
+}
+
+/// The mass properties of a preview mesh (per unit density, model units),
+/// or why there are none.
+fn mass_outcome(mesh: &crate::mesh::Mesh) -> massprops::Outcome {
+    let computed =
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| massprops::compute(mesh)));
+    match computed {
+        Ok(Ok(g)) => massprops::Outcome::Geometry(g),
+        Ok(Err(e)) => massprops::Outcome::Error(e.to_string()),
+        Err(_) => massprops::Outcome::Error("The mass properties could not be computed.".into()),
+    }
 }
 
 /// The shape signature of a preview mesh, or why there is none.
@@ -442,6 +482,79 @@ impl Previews {
         Ok(mesh.with_extension(format!("s{}.json", shape::VERSION)))
     }
 
+    /// The cached mass properties (or the reason why there are none).
+    fn mass_path(&self, sha256: &str) -> AppResult<PathBuf> {
+        let (mesh, _) = self.paths(sha256)?;
+        Ok(mesh.with_extension(format!("m{}.json", massprops::VERSION)))
+    }
+
+    /// The mass properties of a blob per unit density in model units (see
+    /// `massprops`): from the cache, or computed from the cached preview
+    /// mesh in the isolated preview process (converting the file first if
+    /// needed). Failures are cached like failed previews.
+    pub async fn mass_geometry(
+        &self,
+        vault: &Vault,
+        sha256: &str,
+        format: PreviewFormat,
+    ) -> AppResult<massprops::Geometry> {
+        if format.is_point_cloud() || format.is_result() {
+            return Err(AppError::BadRequest(
+                "Point clouds and result files have no volume.".into(),
+            ));
+        }
+        let path = self.mass_path(sha256)?;
+        if let Some(found) = read_mass(&path).await {
+            return found;
+        }
+        let mesh_path = self.mesh(vault, sha256, format).await?;
+        self.exclusive(format!("{sha256}.mass"), async {
+            if let Some(found) = read_mass(&path).await {
+                return found;
+            }
+            let _slot = self.slot().await?;
+            let dir = path.parent().unwrap_or(&self.dir);
+            let tmp = dir.join(format!(
+                "{sha256}.{}.mass.tmp",
+                uuid::Uuid::new_v4().simple()
+            ));
+            let job = Job {
+                format: CACHED_MESH,
+                input: mesh_path.clone(),
+                output: None,
+                signature: None,
+                mass: Some(tmp.clone()),
+                time_limit: Duration::from_secs(60),
+                max_input_bytes: u64::MAX,
+                memory_bytes: self.limits.max_memory_bytes,
+            };
+            let outcome = match &self.worker {
+                Some(exe) => run_worker(exe, &job).await,
+                None => run_in_process(&job).await,
+            };
+            match outcome {
+                Ok(()) => {
+                    tokio::fs::rename(&tmp, &path).await.map_err(|e| {
+                        AppError::Other(anyhow::anyhow!("cannot store the mass properties: {e}"))
+                    })?;
+                }
+                Err(message) => {
+                    let _ = tokio::fs::remove_file(&tmp).await;
+                    let failed = serde_json::to_vec(&massprops::Outcome::Error(message.clone()))
+                        .unwrap_or_default();
+                    let _ = tokio::fs::write(&path, failed).await;
+                    return Err(AppError::BadRequest(message));
+                }
+            }
+            read_mass(&path).await.unwrap_or_else(|| {
+                Err(AppError::Other(anyhow::anyhow!(
+                    "the mass properties could not be read back"
+                )))
+            })
+        })
+        .await
+    }
+
     /// Whether the preview mesh of a blob is already cached.
     pub async fn has_mesh(&self, sha256: &str) -> bool {
         match self.paths(sha256) {
@@ -515,6 +628,7 @@ impl Previews {
                 input: mesh_path.clone(),
                 output: None,
                 signature: Some(tmp.clone()),
+                mass: None,
                 time_limit: Duration::from_secs(60),
                 max_input_bytes: u64::MAX,
                 memory_bytes: self.limits.max_memory_bytes,
@@ -654,6 +768,7 @@ impl Previews {
             input,
             output: Some(tmp.clone()),
             signature: (!format.is_point_cloud()).then(|| sig_tmp.clone()),
+            mass: None,
             time_limit: format.time_limit(),
             max_input_bytes: self.limits.max_bytes(format),
             memory_bytes: self.limits.max_memory_bytes,
@@ -714,12 +829,23 @@ async fn read_signature(path: &Path) -> Option<AppResult<shape::Signature>> {
     }
 }
 
+/// The cached mass properties: `None` if not computed yet (or unreadable).
+async fn read_mass(path: &Path) -> Option<AppResult<massprops::Geometry>> {
+    let bytes = tokio::fs::read(path).await.ok()?;
+    match serde_json::from_slice::<massprops::Outcome>(&bytes).ok()? {
+        massprops::Outcome::Geometry(g) if g.is_valid() => Some(Ok(g)),
+        massprops::Outcome::Geometry(_) => None,
+        massprops::Outcome::Error(message) => Some(Err(AppError::BadRequest(message))),
+    }
+}
+
 /// One run of the preview process (see [`run_job`]).
 struct Job {
     format: &'static str,
     input: PathBuf,
     output: Option<PathBuf>,
     signature: Option<PathBuf>,
+    mass: Option<PathBuf>,
     time_limit: Duration,
     /// Largest input the process opens (the process checks it again).
     max_input_bytes: u64,
@@ -745,6 +871,9 @@ async fn run_worker(exe: &Path, job: &Job) -> Result<(), String> {
     }
     if let Some(signature) = &job.signature {
         command.arg("--signature").arg(signature);
+    }
+    if let Some(mass) = &job.mass {
+        command.arg("--mass-properties").arg(mass);
     }
     let child = command
         .env_clear()
@@ -775,11 +904,12 @@ async fn run_worker(exe: &Path, job: &Job) -> Result<(), String> {
 
 /// The job on a blocking thread (tests and unusual installations).
 async fn run_in_process(job: &Job) -> Result<(), String> {
-    let (format, input, output, signature, max_input) = (
+    let (format, input, output, signature, mass, max_input) = (
         job.format,
         job.input.clone(),
         job.output.clone(),
         job.signature.clone(),
+        job.mass.clone(),
         job.max_input_bytes,
     );
     let task = tokio::task::spawn_blocking(move || -> Result<(), String> {
@@ -788,6 +918,7 @@ async fn run_in_process(job: &Job) -> Result<(), String> {
             &input,
             output.as_deref(),
             signature.as_deref(),
+            mass.as_deref(),
             max_input,
         )
         .map(drop)
@@ -853,7 +984,12 @@ pub fn cache_entry(name: &str) -> CacheEntry<'_> {
     let mesh = format!("v{CACHE_VERSION}.");
     let thumb = format!("thumb.v{}.", crate::thumbnail::CACHE_VERSION);
     let current = match rest.strip_prefix(&mesh) {
-        Some(kind) => kind == "tcm" || kind == "err" || kind == format!("s{}.json", shape::VERSION),
+        Some(kind) => {
+            kind == "tcm"
+                || kind == "err"
+                || kind == format!("s{}.json", shape::VERSION)
+                || kind == format!("m{}.json", massprops::VERSION)
+        }
         None => rest
             .strip_prefix(&thumb)
             .is_some_and(|ext| matches!(ext, "png" | "bmp" | "jpg" | "none")),
@@ -949,7 +1085,15 @@ mod tests {
         assert_eq!(PreviewFormat::of("print.3mf"), Some(PreviewFormat::ThreeMf));
         assert_eq!(PreviewFormat::of("scene.GLB"), Some(PreviewFormat::Glb));
         assert_eq!(PreviewFormat::of("scan.las"), Some(PreviewFormat::Las));
-        assert_eq!(PreviewFormat::of("Bracket.SLDPRT"), None, "native CAD");
+        assert_eq!(
+            PreviewFormat::of("Bracket.SLDPRT"),
+            Some(PreviewFormat::SwPart)
+        );
+        assert_eq!(
+            PreviewFormat::of("Rover.sldasm"),
+            Some(PreviewFormat::SwAssembly)
+        );
+        assert_eq!(PreviewFormat::of("Bracket.ipt"), None, "native CAD");
         assert_eq!(
             PreviewFormat::of("plate.iges"),
             None,
@@ -960,6 +1104,7 @@ mod tests {
         assert_eq!(PreviewFormat::of(".stl"), None);
         assert!(PreviewFormat::Step.is_brep() && !PreviewFormat::Stl.is_brep());
         assert!(PreviewFormat::Las.is_point_cloud());
+        assert_eq!(PreviewFormat::of("chair.3dm"), Some(PreviewFormat::Rhino));
         assert_eq!(PreviewFormat::of("beam.vtu"), Some(PreviewFormat::Vtu));
         assert_eq!(
             PreviewFormat::of("beam.VTK"),
@@ -1051,6 +1196,7 @@ mod tests {
             &broken,
             None,
             Some(&root.join("x.json")),
+            None,
             u64::MAX
         )
         .is_err());
@@ -1071,7 +1217,8 @@ mod tests {
         let (mesh, err) = previews.paths(&sha).unwrap();
         let asm = previews.assembly_path(&sha, "0123abcd").unwrap();
         let sig = previews.signature_path(&sha).unwrap();
-        for path in [&mesh, &err, &sig, &asm] {
+        let mass = previews.mass_path(&sha).unwrap();
+        for path in [&mesh, &err, &sig, &asm, &mass] {
             let name = path.file_name().unwrap().to_str().unwrap();
             assert_eq!(cache_entry(name), CacheEntry::Current(&sha), "{name}");
         }
@@ -1084,6 +1231,7 @@ mod tests {
             format!("{sha}.v{old}.tcm"),
             format!("{sha}.v{old}.err"),
             format!("{sha}.v{CACHE_VERSION}.s{}.json", shape::VERSION + 7),
+            format!("{sha}.v{CACHE_VERSION}.m{}.json", massprops::VERSION + 7),
             format!("{sha}.thumb.v{old}.png"),
             format!("{sha}.asm-0123abcd.v{old}.tcm"),
         ] {

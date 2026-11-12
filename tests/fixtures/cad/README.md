@@ -33,6 +33,19 @@ NIST project *Design, Manufacturing, and Inspection Data for a Box Assembly*
 the TeamCraft format it must be recognised as and its path inside the NIST
 archive.
 
+## Rhino models (rhino3dm, MIT)
+
+`rhino3dm/` holds three unchanged test models of McNeel's
+[rhino3dm](https://github.com/mcneel/rhino3dm) library (`tests/models`,
+branch `main`, downloaded 2026-11-08), MIT licensed – the licence text
+is in [`rhino3dm/LICENSE`](rhino3dm/LICENSE) and must stay with the files:
+
+| File | Contents |
+|---|---|
+| `mesh.3dm` | a mesh object (Rhino 8) |
+| `sphereDecals.3dm` | a polysurface with its stored render mesh |
+| `subd_creases.3dm` | a SubD with crease edges and a corner (no stored mesh) |
+
 ## Files
 
 | Folder | CAD programs | Contents |
@@ -64,6 +77,7 @@ Fusion, FreeCAD or KiCad projects.
 * the Inventor files carry a preview image (PNG);
 * the NX assembly references all eight part files;
 * every STEP file (AP203 and AP242) gets a complete 3D preview; the PMI of the AP242 file is not shown as geometry.
+* every Rhino model gets a closed 3D preview in millimetres (mesh, B-rep render mesh, subdivided SubD).
 * every SketchUp file with faces (SketchUp 3 to 2026) gets a 3D preview with the triangle counts and boxes of the prototype, the same model saved by different versions gives the same triangles, files without faces say so; damaged SketchUp files never panic.
 
 Gaps found with these files are ignored tests in the same file – run them

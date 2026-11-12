@@ -49,7 +49,7 @@ pub struct Upload {
     /// Detected file format (see `cadformat`).
     pub format: Option<&'static CadFormat>,
     /// CAD files this file references (see `cadrefs`).
-    pub references: Vec<String>,
+    pub references: Vec<cadrefs::FileRef>,
     /// The name a STEP file was exported under, when it differs from
     /// `filename` (see `cadrefs::step_export_name`).
     pub export_name: Option<String>,
@@ -196,7 +196,9 @@ impl Upload {
                     (sum_head, sum_tail) = read_head_and_tail(&path, w, blob.size > w).await;
                 }
                 let references = match format {
-                    Some(f) if cadrefs::scans(f.id) => cadrefs::scan_file(&path, &filename).await,
+                    Some(f) if cadrefs::scans(f.id) => {
+                        cadrefs::scan_file(&path, &filename, f.id).await
+                    }
                     _ => Vec::new(),
                 };
                 if format.is_some_and(|f| f.id == "step") {
@@ -311,7 +313,7 @@ pub async fn scan_unscanned_references(pool: &PgPool, vault: &Vault) -> AppResul
     for row in rows {
         let (names, export_name) = match (row.format.as_deref(), vault.object_path(&row.sha256)) {
             (Some(format), Ok(path)) if cadrefs::scans(format) => (
-                cadrefs::scan_file(&path, &row.filename).await,
+                cadrefs::scan_file(&path, &row.filename, format).await,
                 export_name_of(format, &path, &row.filename).await,
             ),
             _ => (Vec::new(), None),
@@ -400,7 +402,7 @@ pub async fn rescan_references(pool: &PgPool, vault: &Vault, formats: &[String])
     for row in rows {
         let (names, export_name) = match vault.object_path(&row.sha256) {
             Ok(path) => (
-                cadrefs::scan_file(&path, &row.filename).await,
+                cadrefs::scan_file(&path, &row.filename, &row.format).await,
                 export_name_of(&row.format, &path, &row.filename).await,
             ),
             Err(_) => continue,
@@ -601,6 +603,45 @@ pub async fn get(pool: &PgPool, actor: &Actor, id: Uuid) -> AppResult<FileRecord
 pub async fn versions(pool: &PgPool, actor: &Actor, file_id: Uuid) -> AppResult<Vec<FileVersion>> {
     get(pool, actor, file_id).await?;
     versions_unchecked(pool, file_id).await
+}
+
+/// A model the 3D preview can be compared with: another version of the
+/// same file, or a version of the file of the same name in another revision
+/// of the item (graphical revision comparison).
+#[derive(Clone, Debug, serde::Serialize, sqlx::FromRow)]
+pub struct CompareCandidate {
+    pub version_id: Uuid,
+    pub code: String,
+    pub version: i32,
+    pub sha256: String,
+}
+
+/// The models a file version can be compared with, newest revision and
+/// version first (at most 50; versions with the same content as `shown`
+/// are left out). The file's item is readable, so are its other revisions.
+pub async fn compare_candidates(
+    pool: &PgPool,
+    actor: &Actor,
+    file_id: Uuid,
+    shown_sha256: &str,
+) -> AppResult<Vec<CompareCandidate>> {
+    let file = get(pool, actor, file_id).await?;
+    Ok(sqlx::query_as::<_, CompareCandidate>(
+        "SELECT v.id AS version_id, r.code, v.version, v.sha256
+         FROM file_versions v
+         JOIN files f ON f.id = v.file_id
+         JOIN revisions r ON r.id = f.revision_id
+         WHERE r.item_id = (SELECT item_id FROM revisions WHERE id = $1)
+           AND lower(f.filename) = lower($2)
+           AND v.sha256 <> $3
+         ORDER BY r.seq DESC, v.version DESC
+         LIMIT 50",
+    )
+    .bind(file.revision_id)
+    .bind(&file.filename)
+    .bind(shown_sha256)
+    .fetch_all(pool)
+    .await?)
 }
 
 /// A file version (with the file name) the actor may read.
@@ -864,6 +905,7 @@ pub(crate) async fn store_uploads(
     // iterations bracket.prt.6 and .7) share one base, which only the first
     // of them is checked against – the later ones build on it.
     let mut seen = std::collections::HashSet::new();
+    let mut added_versions = false;
     for upload in uploads {
         let filename = stored_name(&upload.filename);
         let first_of_name = seen.insert(filename.to_lowercase());
@@ -943,6 +985,7 @@ pub(crate) async fn store_uploads(
             }
         };
         if changed {
+            added_versions = true;
             let version_id = Uuid::new_v4();
             sqlx::query(
                 "INSERT INTO file_versions (id, file_id, version, sha256, size_bytes, content_type, comment,
@@ -990,6 +1033,11 @@ pub(crate) async fn store_uploads(
             version,
             changed,
         });
+    }
+    // Storage quotas (counted with the versions just inserted): over the
+    // limit, the caller's transaction is rolled back with a 413.
+    if added_versions {
+        crate::services::quotas::ensure_room(conn, actor.id, 0).await?;
     }
     sqlx::query("UPDATE revisions SET updated_at = now() WHERE id = $1")
         .bind(rev.id)
@@ -1352,8 +1400,8 @@ pub async fn restore_version(
     .await?;
     // The restored content references the same files.
     sqlx::query(
-        "INSERT INTO file_references (file_version_id, name)
-         SELECT $1, name FROM file_references WHERE file_version_id = $2",
+        "INSERT INTO file_references (file_version_id, name, instances)
+         SELECT $1, name, instances FROM file_references WHERE file_version_id = $2",
     )
     .bind(new_version_id)
     .bind(old.id)

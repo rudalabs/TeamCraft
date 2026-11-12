@@ -385,3 +385,33 @@ export function confirmDialog(title, text, okLabel, danger) {
 export function field(labelText, input, hint) {
   return h("label", null, [labelText, hint ? h("span.hint", { text: " " + hint }) : null, input]);
 }
+
+var materialListId = 0;
+
+/**
+ * The Material field: a text input that suggests the materials of the library
+ * (GET /materials, with the density) through a <datalist>; free text stays
+ * allowed, a name that is not in the library gets a hint.
+ * Returns { input, el } – read the value from `input`, put `el` into the form.
+ */
+export function materialField(value) {
+  var id = "material-options-" + (++materialListId);
+  var input = h("input", { type: "text", value: value || "", maxlength: "200", list: id, autocomplete: "off" });
+  var list = h("datalist", { id: id });
+  var hint = h("span.hint.hidden", { text: "Not in the material library – the mass properties will report a missing density." });
+  var names = [];
+  function update() {
+    var text = input.value.trim().toLowerCase();
+    // Without a loaded library nothing can be said about the name.
+    hint.classList.toggle("hidden", !names.length || text === "" || names.indexOf(text) !== -1);
+  }
+  input.addEventListener("input", update);
+  api("GET", "/materials").then(function (materials) {
+    (materials || []).forEach(function (m) {
+      names.push(m.name.trim().toLowerCase());
+      list.appendChild(h("option", { value: m.name, text: m.density_kg_m3 + " kg/m³" }));
+    });
+    update();
+  }, function () { /* the suggestions are optional */ });
+  return { input: input, el: h("label", null, ["Material", input, list, hint]) };
+}

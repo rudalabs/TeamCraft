@@ -264,6 +264,28 @@ pub async fn oidc_start(
     Ok(redirect(&url))
 }
 
+/// `GET /auth/oidc/reauth?next=…` – a signed-in single sign-on user signs
+/// in again at the identity provider to confirm a review decision
+/// (`TEAMCRAFT_APPROVAL_REAUTH`).
+pub async fn oidc_reauth(
+    State(st): State<AppState>,
+    ctx: super::WebCtx,
+    headers: HeaderMap,
+    Query(q): Query<LoginQuery>,
+) -> AppResult<Response> {
+    let oidc = st
+        .oidc
+        .as_ref()
+        .ok_or_else(|| AppError::NotFound("Single sign-on is not configured.".into()))?;
+    let token = auth::cookie_value(&headers, auth::SESSION_COOKIE).ok_or(AppError::Unauthorized)?;
+    let next = util::safe_redirect_target(q.next.as_deref());
+    tracing::info!(username = %ctx.me.username, "SSO sign-in again to confirm a decision");
+    let url = oidc
+        .start_reauth(&st.db, &next, &auth::hash_token(&token))
+        .await?;
+    Ok(redirect(&url))
+}
+
 #[derive(Deserialize)]
 pub struct CallbackQuery {
     code: Option<String>,
@@ -313,8 +335,27 @@ pub async fn oidc_callback(
             "Missing code or state parameter.".into(),
         ));
     };
+    // a fresh sign-in to confirm a decision marks the existing session
+    // instead of opening a new one
+    let finished = oidc.finish_login(&st.db, &code, &state).await;
+    if let Ok((identity, return_to, Some(session_hash))) = &finished {
+        let user = users::upsert_oidc_user(&st.db, identity.clone()).await?;
+        if !users::mark_session_reauthenticated(&st.db, user.id, session_hash).await? {
+            return Err(AppError::Forbidden(
+                "You signed in as another user than the one of this browser session.".into(),
+            ));
+        }
+        return Ok(redirect_flash(
+            &st,
+            return_to,
+            Flash::success(format!(
+                "Signed in again – confirm your decision within {} minutes.",
+                users::REAUTH_WINDOW_MINUTES
+            )),
+        ));
+    }
     let result = async {
-        let (identity, return_to) = oidc.finish_login(&st.db, &code, &state).await?;
+        let (identity, return_to, _) = finished?;
         let user = users::upsert_oidc_user(&st.db, identity).await?;
         let token =
             users::create_session(&st.db, user.id, st.config.session_ttl, users::SignIn::Sso)

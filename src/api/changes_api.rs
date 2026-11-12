@@ -90,8 +90,16 @@ pub(super) async fn get_change(
 pub(super) struct AddChangeItem {
     /// Item number.
     item: String,
-    /// Revision code; defaults to the item's in-work revision.
+    /// Revision code; defaults to the item's in-work revision (`release`) or its latest
+    /// revision (`obsolete`, `supersede`).
     revision: Option<String>,
+    /// `release` (default), `obsolete` or `supersede`: what the change does with the revision
+    /// when it is released.
+    #[serde(default)]
+    action: Option<String>,
+    /// Number of the successor item (`supersede` only).
+    #[serde(default)]
+    successor: Option<String>,
 }
 
 pub(super) async fn add_change_item(
@@ -101,6 +109,33 @@ pub(super) async fn add_change_item(
     ApiJson(body): ApiJson<AddChangeItem>,
 ) -> AppResult<Json<Value>> {
     let change = changes::get_by_number(&st.db, &me, &number).await?;
+    let action = match body
+        .action
+        .as_deref()
+        .map(str::trim)
+        .filter(|a| !a.is_empty())
+    {
+        None => LineAction::Release,
+        Some(raw) => LineAction::parse(raw).ok_or_else(|| {
+            AppError::BadRequest(format!(
+                "Unknown action '{raw}': use release, obsolete or supersede."
+            ))
+        })?,
+    };
+    if action != LineAction::Release {
+        let code = body.revision.as_deref().unwrap_or("latest");
+        let rev = revision_at(&st, &me, &body.item, code).await?;
+        changes::add_action(
+            &st.db,
+            &me,
+            change.id,
+            rev.id,
+            action,
+            body.successor.as_deref(),
+        )
+        .await?;
+        return Ok(Json(change_json(&st, &me, &number).await?));
+    }
     let rev = match body.revision.as_deref() {
         Some(code) => revision_at(&st, &me, &body.item, code).await?,
         None => {
@@ -227,6 +262,9 @@ pub(super) struct ReviewBody {
     decision: String,
     #[serde(default)]
     comment: String,
+    /// What the sign-off means, e.g. "approved as design owner".
+    #[serde(default)]
+    meaning: String,
 }
 
 pub(super) async fn review_change(
@@ -239,7 +277,19 @@ pub(super) async fn review_change(
     let decision = Decision::parse(&body.decision)
         .filter(|d| *d != Decision::Pending)
         .ok_or_else(|| AppError::BadRequest("decision must be approve or reject.".into()))?;
-    changes::review(&st.db, &me, change.id, decision, &body.comment).await?;
+    // a bearer token with the `approve` scope (checked before the handler)
+    // is the sign-off of the API
+    let sign_off = changes::SignOff::new(crate::domain::SignOffMethod::Token, &body.meaning);
+    changes::review(
+        &st.db,
+        &me,
+        change.id,
+        decision,
+        &body.comment,
+        &sign_off,
+        st.config.approval_reauth,
+    )
+    .await?;
     Ok(Json(change_json(&st, &me, &number).await?))
 }
 

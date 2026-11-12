@@ -2,12 +2,13 @@
 // TeamCraft Desktop – 3D viewer, workspace, check-out/in, edit, release, revise.
 // Part of the desktop UI (ES modules, no build step; js/main.js starts it).
 
-import { $, api, badge, call, clear, confirmDialog, dialog, enc, errorText, field, fmtDate, fmtSize, h, invoke, label, lockBadge, run, setStatus, state, toast, tool } from "./core.js";
+import { $, api, badge, call, clear, confirmDialog, dialog, enc, errorText, field, fmtDate, fmtSize, h, invoke, label, lockBadge, materialField, run, setStatus, state, toast, tool } from "./core.js";
 import { isCancelled, refreshWorklistCount, uploadLine } from "./shell.js";
 import { reloadActive, renderActive, table } from "./tabs.js";
 import { PROGRAM_LABEL, cadPrograms, dd, exportProgram, exportStep, openRevision, previewFormat, revisionAbilities } from "./revision.js";
 import { openChange } from "./change.js";
 import { requestChangeDialog } from "./requests.js";
+import { refreshStructure } from "./navigator.js";
 
 // ---------------------------------------------------------------- 3D viewer
 
@@ -344,8 +345,10 @@ export function doCheckout(tab) {
   run("Checking out " + rev.item_number + "/" + rev.code, function () {
     return getting(call("workspace_checkout", { project: rev.project_code, item: rev.item_number, code: rev.code }));
   }).then(function (r) {
-    toast("Checked out " + rev.item_number + "/" + rev.code + " – the files in " + r.dir + " are writable now");
-    if (r.kept.length || r.clashes.length || r.failed.length) reportDownload(r);
+    // with structure: the parts came read-only, local files were never overwritten
+    toast(r.summary || ("Checked out " + rev.item_number + "/" + rev.code + " – the files in " + r.dir + " are writable now"));
+    if (r.kept.length || r.clashes.length || r.failed.length || r.unresolved.length) reportDownload(r);
+    refreshStructure();
     tab.sub = "workspace";
     reloadActive();
     refreshWorklistCount();
@@ -472,7 +475,7 @@ export function checkinDialog(tab) {
 export function editDialog(tab) {
   var rev = tab.data.rev;
   var name = h("input", { type: "text", value: rev.name, maxlength: "200", required: true });
-  var material = h("input", { type: "text", value: rev.material, maxlength: "200" });
+  var materialF = materialField(rev.material), material = materialF.input;
   var mass = h("input", { type: "text", inputmode: "decimal", value: rev.mass_kg === null ? "" : String(rev.mass_kg) });
   var cost = h("input", { type: "text", inputmode: "decimal", value: rev.unit_cost === null ? "" : String(rev.unit_cost) });
   var desc = h("textarea", { maxlength: "10000" });
@@ -485,7 +488,7 @@ export function editDialog(tab) {
     return n;
   }
   dialog("Edit " + rev.item_number + "/" + rev.code, h("div.stack", null, [
-    field("Name", name), field("Material", material),
+    field("Name", name), materialF.el,
     h("div.grid-2", null, [field("Mass per unit (kg)", mass), field("Unit cost (€)", cost)]),
     field("Description", desc)
   ]), [
@@ -614,4 +617,83 @@ export function doObsolete(tab) {
       return api("POST", "/items/" + enc(rev.item_number) + "/revisions/" + enc(rev.code) + "/obsolete");
     }).then(function () { toast(rev.item_number + "/" + rev.code + " is now obsolete"); reloadActive(); }, function () {});
   });
+}
+
+// ---------------------------------------------------------------- add files
+
+/** What the Files section says about adding files, by state: { text, ok }.
+ * `ok` = Add files… works (it checks the revision out first if needed). */
+export function filesHint(d) {
+  var rev = d.rev, can = revisionAbilities(d), item = rev.item_number + "/" + rev.code;
+  if (can.edit) return { ok: true, text: "Add files… copies files into your workspace; or edit the files there, then check in." };
+  if (rev.state === "in_work" && rev.checked_out_by) {
+    return { ok: false, text: "Checked out by " + rev.checked_out_by_name + " since " + fmtDate(rev.checked_out_at) + " – files can be added after check-in." };
+  }
+  if (rev.state === "in_work" && can.checkout) return { ok: true, text: "To add or replace files, check out this revision – Add files… does that for you." };
+  if (rev.state === "released" || rev.state === "obsolete") {
+    return { ok: false, text: label(rev.state) + " revisions are frozen – Revise to add files to a new revision" + (can.revise ? "." : " (editors of the project group can do that).") };
+  }
+  if (rev.state === "in_review") return { ok: false, text: item + " is in review and frozen – files can be added once the change is decided, or to a new revision." };
+  return { ok: false, text: "Only editors of the project group can add files." };
+}
+
+/** "Add files…": pick files, copy them into the working folder of the
+ * revision (checking it out first if needed), optionally check in now.
+ * The originals stay where they are; a name that exists asks first. */
+export function addFilesDialog(tab) {
+  var rev = tab.data.rev, hint = filesHint(tab.data);
+  if (!hint.ok) { toast(hint.text, "error"); return; }
+  var mine = rev.checked_out_by === state.me.id;
+  var where = { project: rev.project_code, item: rev.item_number, code: rev.code };
+  call("pick_files").then(function (paths) {
+    if (!paths.length) return;
+    var subfolder = h("input", { type: "text", placeholder: "revision's main folder", spellcheck: "false" });
+    var checkNow = h("input", { type: "checkbox" });
+    var listing = h("div.stack");
+    var ticks = [];
+    function refresh() {
+      call("workspace_add_plan", Object.assign({ paths: paths, subfolder: subfolder.value.trim() }, where)).then(function (items) {
+        clear(listing);
+        ticks = [];
+        items.forEach(function (p) {
+          var tick = null;
+          if (p.new_version || p.exists_locally) {
+            tick = h("input", { type: "checkbox" });
+            ticks.push({ name: p.name, input: tick });
+          }
+          listing.appendChild(h("label.check", null, [tick, h("span", null, [p.name, " ",
+            h("span.dim.small", { text: "→ " + p.rel }),
+            p.new_version ? h("span.small", null, [" ", badge("modified", "new version"), " – replaces the copy in the working folder"]) :
+              p.exists_locally ? h("span.small", null, [" ", badge("clash", "exists"), " – replaces the file that is there"]) : null])]));
+        });
+        if (ticks.length) listing.appendChild(h("p.small.muted", { text: "Tick the files that may replace what is there; unticked ones are not added." }));
+      }, function (e) { clear(listing); listing.appendChild(h("p.error-text", { text: errorText(e) })); });
+    }
+    subfolder.addEventListener("change", refresh);
+    refresh();
+    dialog("Add files to " + rev.item_number + "/" + rev.code, h("div.stack", null, [
+      h("p.small.muted", { text: "The files are copied into your working folder – your originals are not moved or changed. Same name as an existing file means a new version." }),
+      mine ? null : h("p.notice", { text: "This revision is not checked out by you: it is checked out first." }),
+      listing,
+      field("Sub-folder", subfolder, "optional, below the revision's main folder; ignored for files that are new versions"),
+      h("label.check", null, [checkNow, "Check in now (otherwise they are listed as new files in Check in…)"])
+    ]), [
+      { label: "Cancel", onClick: function (d) { d.close(); } },
+      { label: "Add files", primary: true, submit: true, onClick: function (d) {
+        var confirmed = ticks.filter(function (t) { return t.input.checked; }).map(function (t) { return t.name; });
+        var start = mine ? Promise.resolve() : run("Checking out " + rev.item_number + "/" + rev.code, function () {
+          return getting(call("workspace_checkout", where));
+        });
+        start.then(function () {
+          return call("workspace_add_files", Object.assign({ paths: paths, subfolder: subfolder.value.trim(), confirmed: confirmed }, where));
+        }).then(function (r) {
+          d.close();
+          toast((r.copied.length ? "Added " + r.copied.join(", ") + " to the working folder" : "Nothing added") +
+            (r.skipped.length ? " – not replaced: " + r.skipped.join(", ") : ""), r.skipped.length ? "info" : null);
+          refreshWorklistCount();
+          if (checkNow.checked && r.copied.length) { reloadActive(); checkinDialog(tab); } else { tab.sub = "workspace"; reloadActive(); }
+        }, function (e) { d.fail(e); reloadActive(); });
+      } }
+    ], { wide: true });
+  }, function (e) { toast(errorText(e), "error"); });
 }

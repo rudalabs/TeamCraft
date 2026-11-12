@@ -257,6 +257,9 @@ tr.row-conflict td:first-child, tr.row-clash td:first-child { box-shadow: inset 
 .connect .notice { margin-top: 16px; }
 .token-login summary { cursor: pointer; color: var(--text-muted); margin-top: 4px; }
 .token-login form { margin-top: 8px; }
+/* native files of other CAD programs (preferred CAD program, GET /me) */
+.other-formats { margin-top: 8px; }
+.other-formats > summary { cursor: pointer; color: var(--text-muted); padding: 4px 0; }
 /* Which logo shows (blue on light, white on dark) is set in skins.css. */
 
 /* ---------------------------------------------------------------- shell */
@@ -384,6 +387,17 @@ tr.row-conflict td:first-child, tr.row-clash td:first-child { box-shadow: inset 
 .nav-head .row > button { flex: none; white-space: nowrap; }
 .nav-head .row > button.icon { width: var(--ctl-h-sm); height: var(--ctl-h-sm); }
 .nav-filter { display: flex; flex-wrap: wrap; gap: 4px; margin: 0 4px 8px 8px; }
+/* Home's file browser and the Projects page (issue #255) */
+.nav-sub { margin: -4px 4px 8px 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.nav-sort, .nav-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 4px 8px 8px; }
+.nav-sort .count { color: var(--text-muted); }
+/* rows that lead with the name (Files, All items): the name carries the row,
+   the number after it recedes */
+.node .label .fname { color: var(--text); }
+.node .label .dim.mono { font-weight: 400; }
+/* Files view (js/browser.js): the folder icon, and the line before the items without files */
+.node .ico svg { width: 13px; height: 13px; vertical-align: -2px; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+.tree-sep { margin: 8px 0 2px 22px; font-size: 11px; line-height: 14px; color: var(--text-dim); }
 .chip {
   height: 24px; font-size: 12px; padding: 0 8px; border-radius: var(--radius-sm);
   border: 1px solid var(--border-strong); background: none; color: var(--text-muted);
@@ -542,6 +556,15 @@ tr.row-conflict td:first-child, tr.row-clash td:first-child { box-shadow: inset 
   cursor: pointer;
   white-space: nowrap;
 }
+.tab:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+/* Reordering by pointer: the strip does not select text,
+   the dragged tab is dimmed and an insertion bar marks where it lands. */
+.tabs.reordering { user-select: none; cursor: grabbing; }
+.tabs.reordering .tab { cursor: grabbing; }
+.tab.dragging { opacity: 0.55; }
+.tab.drop-before { box-shadow: -3px 0 0 -1px var(--accent); }
+.tab.drop-after { box-shadow: 3px 0 0 -1px var(--accent); }
+.tab-menu { position: fixed; right: auto; top: auto; transform-origin: top left; }
 .tab .ico { color: var(--text-dim); font-size: 11px; }
 .tab .tab-label { overflow: hidden; text-overflow: ellipsis; }
 .tab.active { color: var(--text); background: var(--surface); border-color: var(--border); font-weight: 500; }
@@ -740,6 +763,12 @@ table.grid td.actions button { height: var(--ctl-h-sm); padding: 0 8px; font-siz
 .viewer-legend select { width: auto; max-width: 100%; }
 .viewer-legend-value { color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .viewer-legend-bar { width: min(16rem, 30vw); height: 0.6rem; border: 1px solid var(--border-strong); border-radius: 999px; }
+/* section plane and measuring (inserted by viewer.js below the canvas) */
+.viewer-section { margin: 8px 0 0; }
+.viewer-section input[type="range"] { width: min(14rem, 30vw); }
+canvas.viewer-measuring { cursor: crosshair; }
+.viewer-notes { flex-basis: 100%; margin: 0; padding-left: 20px; }
+.viewer-notes li { margin: 2px 0; }
 .flash { padding: 4px 8px; border-radius: var(--radius-sm); }
 .flash-error { color: var(--text); background: var(--surface); box-shadow: inset 3px 0 0 var(--st-danger-fg); }
 
@@ -997,6 +1026,7 @@ ul.file-picks li .mono { overflow: hidden; text-overflow: ellipsis; white-space:
 .agent-tool.status-in_progress .agent-tool-dot { background: var(--st-review-fg); }
 .agent-tool.status-completed .agent-tool-dot { background: var(--st-ok-fg); }
 .agent-tool.status-failed .agent-tool-dot { background: var(--st-danger-fg); }
+.agent-tool-auto { color: var(--text-muted); background: transparent; border-color: var(--border-strong); font-style: italic; }
 .agent-tool-out { flex-basis: 100%; }
 .agent-tool-out pre { max-height: 16rem; overflow: auto; margin: 4px 0 0; padding: 8px; border-radius: var(--radius-sm); background: var(--surface-sunken); white-space: pre-wrap; font-size: 12px; }
 .agent-permission { align-self: stretch; display: grid; gap: 8px; padding: 12px 12px 12px 15px; border-radius: var(--radius); border: 1px solid var(--border); background: var(--surface); box-shadow: inset 3px 0 0 var(--st-review-fg); }
@@ -1038,3 +1068,153 @@ ul.file-picks li .mono { overflow: hidden; text-overflow: ellipsis; white-space:
 
 /* progress dialogs (Pack and Go) */
 .dialog progress { width: 100%; height: 8px; accent-color: var(--primary); }
+
+/* structure view of the navigator */
+.node.twin { background: var(--selected); outline: 1px dashed var(--control-border); outline-offset: -1px; }
+.node.restricted { font-style: italic; }
+.node .lock-owner { display: inline-flex; align-items: center; gap: 2px; color: var(--text-dim); font-size: 12px; }
+
+/* ======================================================================
+   Assembly graph (js/graph.js): a navigable reference/BOM graph.
+   ====================================================================== */
+
+/* The fixed back control at the left of the sub-tab row (same place always). */
+.graph-back {
+  display: inline-flex; align-items: center; gap: 4px;
+  margin: 0 8px 6px 0; padding: 4px 10px;
+  font-size: var(--fs-body); font-weight: 600; color: var(--text);
+  background: var(--surface-2); border: 1px solid var(--control-border); border-radius: var(--radius-sm);
+}
+@media (hover: hover) { .graph-back:where(:enabled):hover { background: var(--surface-hover); border-color: var(--text-muted); } }
+.subtabs.has-back { align-items: center; }
+
+.graph-legend {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px;
+  margin-bottom: 10px; font-size: 12px; color: var(--text-muted);
+}
+.g-legend-label { color: var(--text-dim); }
+.g-legend-item { display: inline-flex; align-items: center; gap: 5px; }
+.g-legend-dot { width: 11px; height: 11px; border-radius: 50%; border: 2px solid var(--border-strong); background: var(--surface); }
+.g-legend-sep { width: 1px; height: 14px; background: var(--border); }
+
+.graph-pane {
+  position: relative; height: min(72vh, 760px); min-height: 360px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background: var(--surface-sunken);
+  background-image: radial-gradient(var(--border) 1px, transparent 1px);
+  background-size: 22px 22px; overflow: hidden; touch-action: none;
+}
+.g-empty {
+  position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%);
+  color: var(--text-muted); font-size: 13px; text-align: center; pointer-events: none;
+}
+.g-svg { width: 100%; height: 100%; display: block; cursor: grab; }
+.g-svg.grabbing { cursor: grabbing; }
+/* going from one item's graph to the next: the new graph fades in (opacity
+   only – the view transform belongs to graph.js) */
+.g-svg, .g-cards-layer { animation: g-arrive .18s ease-out; }
+@keyframes g-arrive { from { opacity: 0; } }
+
+/* edges */
+.g-edge { stroke: var(--border-strong); stroke-width: 1.5; fill: none; }
+.g-edge-reference { stroke-dasharray: 5 4; }
+.g-edge-used-by { stroke: var(--control-border); }
+.g-arrow { fill: var(--border-strong); }
+.g-arrow-used-by { fill: var(--control-border); }
+
+/* node cards: an HTML layer above the SVG with the same view transform
+   (graph.js apply()). Not foreignObject – WebKit (macOS, Linux) does not
+   move foreignObject HTML with its ancestors' SVG transforms. The layer lets
+   pointer events through to the SVG except on the cards themselves. */
+.g-cards-layer {
+  position: absolute; left: 0; top: 0; width: 0; height: 0;
+  transform-origin: 0 0; pointer-events: none;
+}
+.g-card { position: absolute; pointer-events: auto; }
+/* pressing on the graph pans it: no text selection, no native image drag */
+.graph-pane, .graph-pane * { -webkit-user-select: none; user-select: none; -webkit-user-drag: none; }
+.graph-pane.grabbing, .graph-pane.grabbing .g-node { cursor: grabbing; }
+.g-node {
+  position: relative; box-sizing: border-box; width: 100%; height: 100%;
+  border: 2px solid var(--border-strong); border-radius: var(--radius-sm);
+  background: var(--surface); overflow: hidden; cursor: pointer;
+  box-shadow: var(--shadow-pop); font-family: inherit;
+  transition: transform .08s ease, box-shadow .08s ease;
+}
+@media (hover: hover) { .g-node:hover { transform: translateY(-1px); } }
+.g-node:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.g-node.is-center { border-width: 3px; box-shadow: 0 0 0 4px var(--selected), var(--shadow-pop); }
+/* clicked, its revision is loading: the tab switches as soon as it is there */
+.g-node.is-busy { cursor: progress; animation: g-busy .9s ease-in-out infinite alternate; }
+@keyframes g-busy {
+  from { box-shadow: 0 0 0 2px var(--accent), var(--shadow-pop); }
+  to { box-shadow: 0 0 0 6px var(--selected), var(--shadow-pop); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .g-svg, .g-cards-layer { animation: none; }
+  .g-node.is-busy { animation: none; box-shadow: 0 0 0 3px var(--accent), var(--shadow-pop); }
+}
+
+.g-thumb {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  background: var(--surface-2); overflow: hidden;
+}
+.g-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; background: #fff; }
+.g-img.hidden { display: none; }
+.g-glyph { font-size: 30px; line-height: 1; color: var(--text-dim); }
+
+.g-cap {
+  position: absolute; left: 0; right: 0; bottom: 0; padding: 10px 6px 4px;
+  display: flex; flex-direction: column; gap: 1px;
+  background: linear-gradient(to top, var(--surface) 55%, transparent);
+}
+.g-name {
+  font-size: 12px; font-weight: 600; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.g-sub { display: flex; align-items: center; gap: 4px; min-width: 0; font-size: 10px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
+/* one line: a wrapped number would push the caption up into the quantity chip */
+.g-num { min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.g-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; background: var(--border-strong); }
+
+.g-badges { position: absolute; top: 4px; right: 4px; display: flex; flex-wrap: wrap; gap: 3px; justify-content: flex-end; max-width: 58%; }
+.g-badge {
+  font-size: 10px; line-height: 1; padding: 2px 4px; border-radius: var(--radius-xs);
+  color: var(--text); background: var(--surface); border: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+/* quantity of a BOM child in the centre assembly: a small, high-contrast chip
+   in the top-left corner, readable on any preview image */
+.g-qty {
+  position: absolute; top: 4px; left: 4px; z-index: 1;
+  font-size: 11px; font-weight: 700; line-height: 1; padding: 2px 5px;
+  border-radius: var(--radius-xs); color: var(--surface); background: var(--text);
+  font-variant-numeric: tabular-nums; pointer-events: none;
+}
+.g-badge.g-ref { color: var(--text-muted); }
+.g-badge.g-up { color: var(--st-wip-fg); background: var(--st-wip-bg); border-color: var(--st-wip-bd); }
+
+/* colour = lifecycle state (reuses the badge palette); the dot mirrors it */
+.g-node.state-released { border-color: var(--st-ok-fg); }
+.state-released .g-dot { background: var(--st-ok-fg); }
+.g-node.state-in_review { border-color: var(--st-review-fg); }
+.state-in_review .g-dot { background: var(--st-review-fg); }
+.g-node.state-in_work { border-color: var(--st-wip-bd); }
+.state-in_work .g-dot { background: var(--st-wip-fg); }
+.g-node.state-obsolete { border-color: var(--border-strong); border-style: dashed; }
+.state-obsolete .g-name { text-decoration: line-through; color: var(--text-muted); }
+.state-obsolete .g-dot { background: var(--text-dim); }
+.g-node.state-unknown { border-color: var(--border-strong); }
+
+/* legend swatches reuse the same colours */
+.g-legend-dot.state-released { border-color: var(--st-ok-fg); background: var(--st-ok-bg); }
+.g-legend-dot.state-in_review { border-color: var(--st-review-fg); background: var(--st-review-bg); }
+.g-legend-dot.state-in_work { border-color: var(--st-wip-bd); background: var(--st-wip-bg); }
+.g-legend-dot.state-obsolete { border-color: var(--border-strong); border-style: dashed; background: transparent; }
+
+/* crash report prompt (js/crash.js): the full, redacted report, read-only */
+.crash-text {
+  width: 100%; min-height: 14em; resize: vertical; box-sizing: border-box;
+  font-family: var(--mono); font-size: 12px; line-height: 1.45; white-space: pre;
+  overflow: auto;
+}

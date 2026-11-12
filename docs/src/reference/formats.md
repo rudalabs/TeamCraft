@@ -36,12 +36,12 @@ Files of SketchUp 3 to 2020 (one MFC object stream) are read by the Rust
 port of OpenSKP (MIT), vendored unchanged in `vendor/openskp`, and placed and
 triangulated the same way. The thumbnail is rendered from the 3D preview.
 
-NX parts (NX 1980 and later) are read through their stream container
-(`SPLMSSTR`, `src/nxpart.rs`): the referenced component files come only from
+NX parts (NX 1980 and later) are read through their stream container (`SPLMSSTR`, `src/nxpart.rs`): the referenced
+component files come only from
 its reference streams (not from the save history), the preview image from
 `/Root/images/preview`, and the 3D preview of parts from
-`/Root/FastLoad/JT`: a JT 9 file whose finest level of detail
-(topologically compressed tri-strip sets, `src/mesh/jt.rs`) is refined
+`/Root/FastLoad/JT`: a JT 9 file whose finest level of detail (topologically compressed tri-strip sets,
+`src/mesh/jt.rs`) is refined
 along its stored surface normals up to 3 × 3 (`src/mesh/pn.rs`, at most
 about 500 000 triangles) and shown in millimetres. Assemblies carry no
 such stream: their 3D preview is put together from the previews of their
@@ -52,15 +52,53 @@ assembly's revision first, otherwise in the latest revision of another
 item – and sub-assemblies are followed up to 8 levels deep; components
 that are not in TeamCraft are left out, and so are components on a layer
 the assembly's layer settings hide (read from `/Root/UG_PART/UG_PART`), as
-in NX. Drawings have no 3D preview;
-stand-alone `.jt` files (JT 10) are not previewed yet.
+in NX. Drawings have no 3D preview.
+
+Stand-alone `.jt` files (Teamcenter visualisation, exports of NX, CATIA,
+Creo) are previewed with the same reader when they are JT 9 with
+topologically compressed triangle LODs, as NX writes them; files of other JT
+versions (JT 10 with its other compression) report their version instead of a
+preview.
+
+SOLIDWORKS files from 2015 on are read through their section container (`src/swpart.rs`). The 3D preview of a part is
+the display tessellation
+SOLIDWORKS stores in `Contents/DisplayLists` (`src/mesh/sw.rs`):
+
+- each face is stored as triangle strips with a unit surface normal per
+  vertex;
+- the per-face vertices are welded on a 1 µm grid;
+- the result is refined along the normals like NX parts and shown in
+  millimetres.
+
+An assembly is put together from the previews of its part files. The
+placements come from the component tree `swXmlContents/COMPINSTANCETREE`
+(`swpart::placements`), using the configuration that was active when the
+file was saved, with sub-assemblies resolved. Suppressed, hidden and
+virtual components are left out, and components are found by the file
+name of their stored path. Files saved before 2015 (OLE compound files) and
+drawings have no 3D preview.
+
+Rhino models (`.3dm`, versions 1 to 8) are read as openNURBS archives (`src/mesh/rhino.rs`): nested chunks, the object,
+layer, block-definition
+and settings tables. The 3D preview shows what Rhino stored for display –
+mesh objects, the render meshes of polysurfaces (one per face, welded at
+1 µm), the mesh cache of extrusions (Rhino 6 and later) and the quantised
+meshes of Rhino 1 files – and refines SubD objects, which store only their
+control net, by Catmull-Clark subdivision (crease edges and corners kept,
+up to about 200 000 quads per SubD) onto the limit surface. Block
+instances place the objects of their definition with the stored 4 × 4
+transform (nested up to 8 levels). Hidden objects, objects on hidden layers
+and block-definition objects themselves are left out; coordinates are
+converted from the model unit to millimetres. Polysurfaces, extrusions and
+NURBS surfaces saved without render meshes, curves, points, annotations,
+linked blocks and colours are not shown; such a model keeps the preview
+bitmap Rhino stored as its thumbnail.
 
 SOLIDWORKS files from 2015 on are no OLE files any more but a sequence of
 Deflate-compressed sections (`src/swpart.rs`; verified with SOLIDWORKS 2018
 files). TeamCraft inflates only the sections it needs, with a hard size
 limit and a CRC check: the preview image from `PreviewPNG`, the component
-files of an assembly from its component tree
-(`swXmlContents/COMPINSTANCETREE`: direct components, without virtual
+files of an assembly from its component tree (`swXmlContents/COMPINSTANCETREE`: direct components, without virtual
 components and without the old names of renamed parts that the rest of the
 file still contains). Files without a component tree (drawings) use the
 names in the document manager's section (`SwDocContentMgr/SwDocContentMgrInfo`);
@@ -68,6 +106,27 @@ this was not verified with a real drawing. SOLIDWORKS 2014 and older files
 are OLE files and are read as before. Assemblies stored with an older
 TeamCraft keep the references found then until the next check-in – or run
 `teamcraft rescan-references` once (see [Operations](../admin/operations.md)).
+
+**Instance counts.** For SOLIDWORKS 2015+ assemblies (component tree,
+instances with *exclude from BOM* not counted), NX assemblies (placed
+components, hidden layers left out) and STEP assemblies with external part
+files (`NEXT_ASSEMBLY_USAGE_OCCURRENCE` per child whose definition is linked
+to a `DOCUMENT_FILE` – through `APPLIED_DOCUMENT_REFERENCE`,
+`PRODUCT_DEFINITION_WITH_ASSOCIATED_DOCUMENTS` or
+`DOCUMENT_PRODUCT_EQUIVALENCE`; sub-assemblies inside the file count with
+their own occurrences) and Inventor assemblies (the occurrences of each
+referenced file from the file descriptor table in `UFRxDoc`, suppressed
+occurrences left out – a file with only suppressed ones counts 0, see
+[the research note](../research/inventor-instance-counts.md))
+the scan also stores how often each referenced file is
+placed (`file_references.instances`, `instances` in `GET …/references`); the
+desktop folder import uses it as the BOM quantity, *Quantities from CAD…*
+corrects existing lines with it. Other formats – Solid Edge, Creo, CATIA, … –
+store no count (`null`): their references are found by name only. The current
+versions of SOLIDWORKS, NX and referencing STEP files stored before this are
+read again once at the next start; for Inventor assemblies stored before run
+`teamcraft rescan-references --format inventor-assembly` once (*Quantities
+from CAD…* reads the counts from the file and works without it).
 
 `.prt` and `.asm` are told apart by content (Creo's `#UGC:` header, Solid
 Edge's OLE container); `.sc` must be a SolidCraft ZIP or JSON design.
@@ -131,35 +190,35 @@ PDF, office documents, CSV, images and archives.
 
 ## Simulation models and results (FEA, CFD)
 
-Recognised and versioned (see [Simulations](../guide/simulation.md)).
-*Model* = setup or solver deck, *result* = solver output (kind *Simulation
+Recognised and versioned (see [Simulations](../guide/simulation.md)). *Model* = setup or solver deck, *result* = solver
+output (kind *Simulation
 result*). Legacy VTK (`.vtk`, unstructured grid and polydata), VTK XML
 unstructured grids and polydata (`.vtu`, `.vtp`) and CalculiX `.frd`
 (ASCII) are shown in the 3D viewer, coloured by their result fields; the
 other result formats are stored, not parsed.
 
-| Program / format      | Extensions                                                                                |
-|-----------------------|-------------------------------------------------------------------------------------------|
-| ANSYS                 | `.wbpj` (Workbench), `.db` (model), `.rst` `.rth` (results)                               |
-| Abaqus                | `.cae` `.inp` (model), `.odb` `.sta` `.msg` (results)                                     |
-| Nastran               | `.bdf` `.nas` `.dat` (input deck), `.op2` `.f06` `.f04` `.pch` (results)                  |
-| OptiStruct            | `.fem` (text input deck)                                                                  |
-| CalculiX              | `.inp` (Abaqus syntax), `.frd` (results)                                                  |
-| LS-DYNA               | `.k` (keyword deck), `d3plot`, `d3plot01`, … `.d3plot` (results)                          |
-| COMSOL                | `.mph`                                                                                    |
-| NX / Simcenter        | `.sim` `.fem` `.afm`                                                                      |
-| OpenFOAM              | `controlDict` (marks the case), `.foam` (ParaView marker file)                            |
+| Program / format      | Extensions                                                                                                                                                                                                              |
+|-----------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| ANSYS                 | `.wbpj` (Workbench), `.db` (model), `.rst` `.rth` (results)                                                                                                                                                             |
+| Abaqus                | `.cae` `.inp` (model), `.odb` `.sta` `.msg` (results)                                                                                                                                                                   |
+| Nastran               | `.bdf` `.nas` `.dat` (input deck), `.op2` `.f06` `.f04` `.pch` (results)                                                                                                                                                |
+| OptiStruct            | `.fem` (text input deck)                                                                                                                                                                                                |
+| CalculiX              | `.inp` (Abaqus syntax), `.frd` (results)                                                                                                                                                                                |
+| LS-DYNA               | `.k` (keyword deck), `d3plot`, `d3plot01`, … `.d3plot` (results)                                                                                                                                                        |
+| COMSOL                | `.mph`                                                                                                                                                                                                                  |
+| NX / Simcenter        | `.sim` `.fem` `.afm`                                                                                                                                                                                                    |
+| OpenFOAM              | `controlDict` (marks the case), `.foam` (ParaView marker file)                                                                                                                                                          |
 | Fluent                | `.cas` `.cas.gz` `.cas.h5` (case), `.dat` `.dat.gz` `.dat.h5` `.cdat` (data / results), `.msh` `.msh.gz` `.msh.h5` (mesh), `.flprj` (project), `.jou` (journal), `.trn` (transcript), `report-file-*.out` (report file) |
-| STAR-CCM+             | `.sim`, `.simh` (solution history), `.java` (macro)                                       |
-| VTK / ParaView        | `.vtk` (legacy), `.vtu` `.vtp` `.vts` `.vtr` `.vtm` (XML), `.pvd` (time-step collection)  |
-| CGNS, Exodus II, Gmsh | `.cgns`; `.exo` `.e`; `.msh`                                                              |
+| STAR-CCM+             | `.sim`, `.simh` (solution history), `.java` (macro)                                                                                                                                                                     |
+| VTK / ParaView        | `.vtk` (legacy), `.vtu` `.vtp` `.vts` `.vtr` `.vtm` (XML), `.pvd` (time-step collection)                                                                                                                                |
+| CGNS, Exodus II, Gmsh | `.cgns`; `.exo` `.e`; `.msh`                                                                                                                                                                                            |
 
 Extensions that other programs use too are decided by the file content:
 
 * `.sim`, `.fem` and `.afm` starting with NX's `SPLMSSTR` container are NX
   simulation files. Any other `.sim` is a STAR-CCM+ simulation when the
-  beginning of the file names STAR-CCM+, otherwise an NX simulation file
-  (older NX releases have no container signature). A text `.fem` is an
+  beginning of the file names STAR-CCM+, otherwise an NX simulation file (older NX releases have no container
+  signature). A text `.fem` is an
   OptiStruct/HyperMesh deck, another binary `.fem` and a non-NX `.afm`
   (Adobe font metrics) stay unclassified. The STAR-CCM+ marker is a
   heuristic; it was not verified with files of every STAR-CCM+ version.
@@ -203,8 +262,8 @@ one of two sources:
 * **Tessellated geometry** of AP242 (`TRIANGULATED_FACE`,
   `COMPLEX_TRIANGULATED_FACE`, `TRIANGULATED_SURFACE_SET`,
   `COMPLEX_TRIANGULATED_SURFACE_SET` with their `COORDINATES_LIST`) when
-  there is no B-rep or it is incomplete – no kernel needed. Tessellated PMI
-  (dimensions and notes drawn as triangles, used by an
+  there is no B-rep or it is incomplete – no kernel needed. Tessellated PMI (dimensions and notes drawn as triangles,
+  used by an
   `…ANNOTATION…OCCURRENCE`) is not shown.
 
 Each shell is tessellated on its own; when the kernel fails on a face – an

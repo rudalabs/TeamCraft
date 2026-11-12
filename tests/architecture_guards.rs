@@ -140,6 +140,18 @@ const NOT_AUDITED: &[(&str, &str)] = &[
         "the read log itself: one entry per read, separate from the audit log",
     ),
     (
+        "access_log::record_structure",
+        "the read log itself: one entry per group of a read structure, separate from the audit log",
+    ),
+    (
+        "access_log::record_tool_read",
+        "the read log itself: one entry per MCP or assistant tool read, separate from the audit log",
+    ),
+    (
+        "package::build",
+        "a read (Pack and Go); its only write is the read log entry (access_log::record_structure)",
+    ),
+    (
         "assistant_threads::append",
         "the user's own conversation; the question is audited by services::assistant",
     ),
@@ -193,11 +205,16 @@ const NOT_AUDITED: &[(&str, &str)] = &[
         "uploads::complete",
         "the user's own upload session; storing it (finish) is audited",
     ),
+    (
+        "uploads::complete_in",
+        "uploads::complete with a scope: the user's own upload session; storing it (finish) is audited",
+    ),
     ("uploads::create", "the user's own upload session"),
     ("uploads::forget", "removes finished upload sessions"),
     ("uploads::purge_expired", "housekeeping of upload sessions"),
     ("users::actor_for_api_token", "last-used time of a token"),
     ("users::purge_expired", "housekeeping of sessions"),
+    ("users::set_preferred_cad", "the user's own display preference"),
     ("users::set_skin", "the user's own display preference"),
     (
         "webhooks::emit",

@@ -8,13 +8,27 @@
       "Edit(./**)",
       "Write(./**)",
       "Read(../**)",
+      "Read(./.claude/**)",
       "Bash(ls *)",
       "Bash(grep *)",
       "Bash(cat *)",
       "Bash(tree *)",
-      "Bash(git *)",
+      "Bash(git branch)",
+      "Bash(git pull)",
+      "Bash(git add --all)",
+      "Bash(git commit -m *)",
+      "Bash(git push)",
+      "Bash(git status *)",
+      "Bash(git diff *)",
+      "Bash(git log *)",
+      "Bash(git show *)",
+      "Bash(git checkout *)",
       "Bash(gh *)",
       "Bash(rm -rf ./**)"
+    ],
+    "deny": [
+      "Bash(* 2>&1)",
+      "Bash(git checkout main*)"
     ]
   },
   "hooks": {

@@ -3,7 +3,7 @@
 use axum::{
     extract::{FromRequest, Multipart, Path, Query, Request, State},
     http::header,
-    response::Response,
+    response::{IntoResponse, Response},
     Form,
 };
 use serde::Deserialize;
@@ -16,7 +16,7 @@ use super::{
 use crate::{
     domain::{self, Classification, ItemType, LifecycleState, COMMON_UNITS},
     error::{AppError, AppResult},
-    services::{attributes, items, ownership, projects, Page},
+    services::{attributes, items, ownership, projects, revisions, simulations, Page},
     util, AppState,
 };
 
@@ -163,7 +163,7 @@ pub async fn list(
     )
 }
 
-#[derive(Deserialize, Default, serde::Serialize)]
+#[derive(Deserialize, Default, Clone, serde::Serialize)]
 pub struct NewItemForm {
     #[serde(default)]
     item_type: String,
@@ -185,6 +185,33 @@ pub struct NewItemForm {
     unit_cost: String,
     #[serde(default)]
     classification: String,
+    /// Id of the revision a new simulation is based on (empty: none).
+    #[serde(default)]
+    basis: String,
+    #[serde(default)]
+    basis_role: String,
+}
+
+fn basis_roles() -> Value {
+    json!(domain::BasisRole::ALL
+        .iter()
+        .map(|r| json!({ "value": r.as_str(), "label": r.label() }))
+        .collect::<Vec<_>>())
+}
+
+/// The basis revision of a form: `None` without one, a 404 when it is hidden or
+/// missing (nothing about it is echoed).
+async fn form_basis(
+    st: &AppState,
+    ctx: &WebCtx,
+    form: &NewItemForm,
+) -> AppResult<Option<simulations::BasisPrefill>> {
+    let Some(id) = parse_opt_uuid("Basis", Some(&form.basis))? else {
+        return Ok(None);
+    };
+    Ok(Some(
+        simulations::prefill_from_basis(&st.db, &ctx.me, id).await?,
+    ))
 }
 
 async fn render_new(
@@ -195,13 +222,46 @@ async fn render_new(
 ) -> AppResult<Response> {
     // Only the project groups the user may create items in.
     let projects = projects::editable_by(&st.db, &ctx.me).await?;
+    // A basis the user cannot read gives the plain form (nothing echoed).
+    let basis = match form_basis(st, ctx, form).await {
+        Ok(b) => b,
+        Err(AppError::NotFound(_)) => None,
+        Err(e) => return Err(e),
+    };
+    let mut form = form.clone();
+    let (mut other_group, mut number_hint) = (false, None);
+    if let Some(b) = &basis {
+        form.item_type = ItemType::Simulation.as_str().into();
+        if form.basis_role.is_empty() {
+            form.basis_role = domain::BasisRole::Geometry.as_str().into();
+        }
+        other_group = b
+            .project_id
+            .is_none_or(|p| !projects.iter().any(|g| g.id == p));
+        let selected = projects
+            .iter()
+            .find(|p| form.project_id == p.id.to_string());
+        if let Some(p) = selected {
+            let preview = projects::numbering_preview(&st.db, p, None).await?;
+            number_hint = preview
+                .next
+                .into_iter()
+                .find(|n| n.item_type == ItemType::Simulation)
+                .map(|n| n.number);
+        }
+    }
     render(
         st,
         ctx,
         "items/new.html",
         json!({
             "form": form,
+            "materials": super::mass::material_options(st).await?,
             "error": error,
+            "basis": basis,
+            "basis_roles": basis_roles(),
+            "basis_other_group": other_group,
+            "number_hint": number_hint,
             "projects": projects,
             "types": item_types(),
             "units": COMMON_UNITS,
@@ -215,6 +275,8 @@ pub struct NewQuery {
     #[serde(rename = "type")]
     item_type: Option<String>,
     project: Option<String>,
+    /// Revision id a new simulation is based on; unknown or hidden = ignored.
+    basis: Option<String>,
 }
 
 pub async fn new_form(
@@ -223,12 +285,32 @@ pub async fn new_form(
     Query(q): Query<NewQuery>,
 ) -> AppResult<Response> {
     ctx.me.require(domain::Role::Editor)?;
-    let form = NewItemForm {
+    let mut form = NewItemForm {
         item_type: q.item_type.unwrap_or_else(|| "part".into()),
         project_id: q.project.unwrap_or_default(),
         unit: "each".into(),
+        basis: q.basis.unwrap_or_default(),
         ..Default::default()
     };
+    match form_basis(&st, &ctx, &form).await {
+        Ok(Some(b)) => {
+            let editable = projects::editable_by(&st.db, &ctx.me).await?;
+            // The basis group when the user may create items there, else
+            // their first group (the form says so).
+            let group = b
+                .project_id
+                .filter(|p| editable.iter().any(|g| g.id == *p))
+                .or_else(|| editable.first().map(|g| g.id));
+            form.item_type = ItemType::Simulation.as_str().into();
+            form.project_id = group.map(|g| g.to_string()).unwrap_or_default();
+            form.name = b.default_name;
+            form.description = b.default_description;
+            form.unit.clear();
+        }
+        // unknown, malformed or hidden: the plain form
+        Ok(None) | Err(AppError::NotFound(_) | AppError::BadRequest(_)) => form.basis.clear(),
+        Err(e) => return Err(e),
+    }
     render_new(&st, &ctx, &form, None).await
 }
 
@@ -313,9 +395,10 @@ pub async fn create(State(st): State<AppState>, ctx: WebCtx, req: Request) -> Ap
             let message = e.public_message();
             if scripted {
                 let back = format!(
-                    "/items/new?type={}&project={}",
+                    "/items/new?type={}&project={}&basis={}",
                     util::pct_encode(&early_form.item_type),
-                    util::pct_encode(&early_form.project_id)
+                    util::pct_encode(&early_form.project_id),
+                    util::pct_encode(&early_form.basis)
                 );
                 return Ok(super::redirect_flash(
                     &st,
@@ -333,9 +416,37 @@ pub async fn create(State(st): State<AppState>, ctx: WebCtx, req: Request) -> Ap
             form.name = file_stem(&first.filename).to_string();
         }
     }
-    let result = match parse_new_item(&form) {
-        Ok(input) => items::create_with_files(&st.db, &ctx.me, input, &received.uploads).await,
-        Err(e) => Err(e),
+    // A basis the user may not read is a plain 404 (nothing is echoed).
+    let basis = match parse_opt_uuid("Basis", Some(&form.basis)) {
+        Ok(Some(id)) => Some(revisions::get(&st.db, &ctx.me, id).await?),
+        Ok(None) => None,
+        Err(e) => return Err(e),
+    };
+    let result = match (parse_new_item(&form), &basis) {
+        (Ok(input), Some(basis)) => match domain::BasisRole::parse(if form.basis_role.is_empty() {
+            "geometry"
+        } else {
+            &form.basis_role
+        }) {
+            Some(role) => {
+                simulations::create_with_basis(
+                    &st.db,
+                    &ctx.me,
+                    simulations::NewItemFor {
+                        item: input,
+                        uploads: &received.uploads,
+                        basis,
+                        role,
+                    },
+                )
+                .await
+            }
+            None => Err(AppError::BadRequest("Choose the role of the basis.".into())),
+        },
+        (Ok(input), None) => {
+            items::create_with_files(&st.db, &ctx.me, input, &received.uploads).await
+        }
+        (Err(e), _) => Err(e),
     };
     match result {
         Ok(rev) => {
@@ -346,11 +457,46 @@ pub async fn create(State(st): State<AppState>, ctx: WebCtx, req: Request) -> Ap
                 1 => " with 1 file".to_string(),
                 n => format!(" with {n} files"),
             };
+            if let Some(basis) = &basis {
+                return Ok(super::redirect_flash(
+                    &st,
+                    &format!("/revisions/{}#simulation-basis", rev.id),
+                    super::Flash::success(format!(
+                        "{} created, based on {}{files}; it is checked out to you.",
+                        rev.item_number,
+                        revisions::label(basis)
+                    )),
+                ));
+            }
+            // Likely duplicates by name: named in the message, so an existing
+            // part can still be reused (the new one can be deleted while in work).
+            let duplicates = crate::services::duplicates::likely_duplicates(
+                &st.db,
+                &ctx.me,
+                &rev.name,
+                ItemType::parse(&form.item_type),
+                Some(rev.item_id),
+                3,
+            )
+            .await
+            .unwrap_or_default();
+            let hint = if duplicates.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " Similar existing items: {} – check whether one of them can be reused.",
+                    duplicates
+                        .iter()
+                        .map(|d| format!("{} ({})", d.number, d.name))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
             Ok(super::redirect_flash(
                 &st,
                 &format!("/revisions/{}", rev.id),
                 super::Flash::success(format!(
-                    "Created {} – {}{files}; it is checked out to you.",
+                    "Created {} – {}{files}; it is checked out to you.{hint}",
                     rev.item_number, rev.name
                 )),
             ))
@@ -362,9 +508,10 @@ pub async fn create(State(st): State<AppState>, ctx: WebCtx, req: Request) -> Ap
             }
             if scripted {
                 let back = format!(
-                    "/items/new?type={}&project={}",
+                    "/items/new?type={}&project={}&basis={}",
                     util::pct_encode(&form.item_type),
-                    util::pct_encode(&form.project_id)
+                    util::pct_encode(&form.project_id),
+                    util::pct_encode(&form.basis)
                 );
                 return Ok(super::redirect_flash(
                     &st,
@@ -397,6 +544,60 @@ pub async fn by_number(
     let item = items::get_by_number(&st.db, &ctx.me, &number).await?;
     let latest = items::latest_revision(&st.db, &ctx.me, item.id).await?;
     Ok(redirect(&format!("/revisions/{}", latest.id)))
+}
+
+/// The address a label's QR code opens: the short link of the item.
+fn label_url(st: &AppState, number: &str) -> String {
+    format!(
+        "{}/i/{}",
+        st.config.public_url.trim_end_matches('/'),
+        util::pct_encode(number)
+    )
+}
+
+/// The QR code (SVG) of an item number, pointing at [`label_url`].
+pub fn qr_svg_of(url: &str) -> AppResult<String> {
+    let code = qrcode::QrCode::with_error_correction_level(url.as_bytes(), qrcode::EcLevel::M)
+        .map_err(|e| AppError::BadRequest(format!("No QR code for this address: {e}")))?;
+    Ok(code
+        .render::<qrcode::render::svg::Color>()
+        .min_dimensions(160, 160)
+        .quiet_zone(true)
+        .build())
+}
+
+/// `/items/{id}/label`: a printable label with the QR code of the item.
+pub async fn label(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+) -> AppResult<Response> {
+    let rev = items::latest_revision(&st.db, &ctx.me, id).await?;
+    let url = label_url(&st, &rev.item_number);
+    render(
+        &st,
+        &ctx,
+        "items/label.html",
+        json!({ "rev": rev, "url": url }),
+    )
+}
+
+/// `/items/{id}/qr.svg`: the QR code of the item's short link.
+pub async fn qr_svg(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+) -> AppResult<Response> {
+    let rev = items::latest_revision(&st.db, &ctx.me, id).await?;
+    let svg = qr_svg_of(&label_url(&st, &rev.item_number))?;
+    Ok((
+        [
+            (header::CONTENT_TYPE, "image/svg+xml"),
+            (header::CACHE_CONTROL, "private, max-age=3600"),
+        ],
+        svg,
+    )
+        .into_response())
 }
 
 #[derive(Deserialize)]
@@ -476,4 +677,18 @@ pub async fn set_owner(
             format!("{} is now owned by {}", item.number, item.owner_name),
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn labels_get_an_svg_qr_code() {
+        let svg = super::qr_svg_of("https://plm.example.org/i/PRT-000042").unwrap();
+        assert!(svg.contains("<svg") && svg.contains("</svg>"));
+        assert!(!svg.contains("style="), "no inline style (CSP)");
+        assert!(
+            super::qr_svg_of(&"x".repeat(5000)).is_err(),
+            "too long for a QR code"
+        );
+    }
 }

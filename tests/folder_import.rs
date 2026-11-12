@@ -329,8 +329,11 @@ async fn import_folder(
     failed
 }
 
-/// `bomFromReferences` of app.js: BOM lines (quantity 1) from the CAD
-/// references of the new items' files to other new items.
+/// `bomFromReferences` of folder-import.js: BOM lines from the CAD
+/// references of the new items' files to other new items – with the
+/// instance count the server read from the file (`instances`), otherwise
+/// quantity 1 to be checked; a part with only instances excluded from the
+/// BOM (`instances: 0`) gets no line.
 async fn bom_from_references(
     app: &common::TestApp,
     token: &str,
@@ -343,12 +346,16 @@ async fn bom_from_references(
             .api(Method::GET, &format!("{base}/references"), token, None)
             .await
             .json();
-        let mut children: Vec<String> = Vec::new();
+        let mut children: Vec<(String, Option<i64>)> = Vec::new();
         for f in refs["files"].as_array().unwrap() {
             if !matches!(f["format_kind"].as_str(), Some("assembly") | Some("model")) {
                 continue;
             }
             for r in f["references"].as_array().unwrap() {
+                let instances = r["instances"].as_i64();
+                if instances == Some(0) {
+                    continue;
+                }
                 if let Some(m) = r["matches"]
                     .as_array()
                     .unwrap()
@@ -356,8 +363,8 @@ async fn bom_from_references(
                     .find(|m| m["same_revision"] == false)
                 {
                     let child = m["item_number"].as_str().unwrap().to_string();
-                    if &child != number && !children.contains(&child) {
-                        children.push(child);
+                    if &child != number && !children.iter().any(|(c, _)| c == &child) {
+                        children.push((child, instances));
                     }
                 }
             }
@@ -369,14 +376,17 @@ async fn bom_from_references(
             .api(Method::POST, &format!("{base}/checkout"), token, None)
             .await;
         assert!(r.status.is_success(), "{}", r.text());
-        for child in children {
+        for (child, instances) in children {
+            let body = match instances {
+                Some(n) => {
+                    json!({ "child": child, "quantity": n, "notes": "From the CAD references (instances counted in the CAD file)" })
+                }
+                None => {
+                    json!({ "child": child, "quantity": 1, "notes": "From the CAD references – check the quantity" })
+                }
+            };
             let r = app
-                .api(
-                    Method::POST,
-                    &format!("{base}/bom"),
-                    token,
-                    Some(json!({ "child": child, "quantity": 1, "notes": "From the CAD references – check the quantity" })),
-                )
+                .api(Method::POST, &format!("{base}/bom"), token, Some(body))
                 .await;
             if r.status.is_success() {
                 lines += 1;
@@ -457,6 +467,22 @@ async fn the_nist_folders_import_with_structure_and_nothing_checked_out() {
         );
         let expected_type = if folder == "nx" { "part" } else { "assembly" };
         assert_eq!(parents[0].0, expected_type, "{folder}");
+        // the quantities are the instances the assembly places (#247): 10 hex
+        // nuts, 14 + 4 socket head cap screws, 4 flat-head screws, 4 × 1
+        let mut quantities: Vec<f64> = sqlx::query_scalar(
+            "SELECT bl.quantity FROM bom_lines bl JOIN revisions r ON r.id = bl.parent_revision_id
+             JOIN items i ON i.id = r.item_id JOIN projects p ON p.id = i.project_id WHERE p.code = $1",
+        )
+        .bind(project)
+        .fetch_all(&app.pool)
+        .await
+        .unwrap();
+        quantities.sort_by(f64::total_cmp);
+        assert_eq!(
+            quantities,
+            [1.0, 1.0, 1.0, 1.0, 4.0, 4.0, 10.0, 14.0],
+            "{folder}"
+        );
         assert_eq!(
             checked_out(&app, &eng).await,
             0,

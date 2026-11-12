@@ -23,7 +23,8 @@ use std::io::{Cursor, Read};
 use anyhow::{bail, Context, Result};
 
 use super::earcut::earcut;
-use super::{check_triangles, Mesh, Welder};
+use super::stl::Welder;
+use super::{check_triangles, Mesh};
 
 /// `FF FE FF 0E`, then "SketchUp Model" in UTF-16.
 const MAGIC: &[u8] = b"\xff\xfe\xff\x0e";

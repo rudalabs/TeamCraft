@@ -24,9 +24,9 @@ use crate::{
     error::{AppError, AppResult},
     models::{BomLine, Change, ChangeRequest, FileRecord, Impact, Revision},
     services::{
-        as_built, audit, bom, changes, files, impacts, insights, interchange, items, notifications,
-        projects, references, requests, result_proposals, reviewers, revisions, similar,
-        simulations, Page,
+        as_built, audit, bom, changes, files, impacts, insights, interchange, items,
+        mass_properties, notifications, projects, references, requests, result_proposals,
+        reviewers, revisions, similar, simulations, Page,
     },
     AppState,
 };
@@ -38,6 +38,7 @@ mod common;
 mod compare_tools;
 mod insight_tools;
 mod item_tools;
+mod preview_tools;
 mod prompts;
 mod request_tools;
 mod schemas;
@@ -52,6 +53,7 @@ use common::*;
 use compare_tools::*;
 use insight_tools::*;
 use item_tools::*;
+use preview_tools::*;
 use request_tools::*;
 use schemas::*;
 use simulation_tools::*;
@@ -59,6 +61,7 @@ use simulation_tools::*;
 pub use args::{parse_item_ref, Args};
 pub use compare_tools::{compare, FileState, LineState, Snapshot};
 pub use insight_tools::group_duplicates;
+pub use preview_tools::{checked_viewer_path, preview_action, viewer_path, MAX_PREVIEW_CANDIDATES};
 pub use prompts::{prompt, prompts};
 pub use request_tools::{request_reason, request_scope, request_status_filter};
 pub use simulation_tools::{diff_brief, group_based};
@@ -179,6 +182,22 @@ const TOOLS: &[Tool] = &[
         schema: schema_bom,
     },
     Tool {
+        name: "get_mass_properties",
+        title: "Mass, centre of gravity and inertia",
+        description: "Mass properties of the structure below a revision: total mass, centre of gravity \
+            (m), inertia tensor about the CG and about `reference` (kg·m², tensor form: off-diagonals are \
+            −∫xy dm), principal moments, and per BOM line its source – measured, computed (3D file × \
+            density from the material library or an override), entered mass on geometry, entered mass \
+            without position, sum of children, missing, geometry ambiguous (a part with files of several \
+            different parts and none chosen: nothing is added, the totals are incomplete; `geometry` lists \
+            the candidates, the likely whole assembly and whether a file was chosen automatically or by \
+            hand) – with warnings (open meshes, missing densities, \
+            copies stacked at one place). Every part is taken as exported in the common assembly frame. \
+            Revision rule as in get_bom.",
+        effect: READ,
+        schema: schema_mass_properties,
+    },
+    Tool {
         name: "where_used",
         title: "Where used",
         description: "The parent revisions whose BOM uses an item, with quantity and the revision they were \
@@ -271,6 +290,20 @@ const TOOLS: &[Tool] = &[
             `pending`: the signature is still being computed, call again shortly.",
         effect: READ,
         schema: schema_similar,
+    },
+    Tool {
+        name: "open_3d_preview",
+        title: "Open the 3D preview of an item",
+        description: "Use when the user wants to see an item in 3D (\"show me the bracket in 3D\"). Give \
+            `item` (number, optionally PRT-000012/B) or `q` (search text: a key word of the name such as \
+            `bracket`, optionally narrowed by `project`). Picks the revision's file the browser viewer can show \
+            (STEP first, then meshes and native lightweight models, then simulation results and point clouds; \
+            or `file`). Status `ok`: `url` is the TeamCraft 3D viewer page and `action` an open hint – give the \
+            user the link (TeamCraft's own assistant shows it as a button); nothing is opened by the tool. \
+            `choose`: several items match – list the candidates (`has_3d` tells which have a 3D file) and ask \
+            the user which one; never guess. `no_3d_file`: the revision has nothing to show in 3D – say so.",
+        effect: READ,
+        schema: schema_open_preview,
     },
     Tool {
         name: "compare_revisions",
@@ -504,6 +537,7 @@ pub async fn call(st: &AppState, me: &Actor, name: &str, args: &Value) -> Value 
         "read_file_text" => read_file_text(st, me, &a).await,
         "impact_summary" => impact_summary(st, me, &a).await,
         "get_bom" => get_bom(st, me, &a).await,
+        "get_mass_properties" => get_mass_properties(st, me, &a).await,
         "where_used" => where_used(st, me, &a).await,
         "replace_preview" => replace_preview(st, me, &a).await,
         "item_history" => item_history(st, me, &a).await,
@@ -514,6 +548,7 @@ pub async fn call(st: &AppState, me: &Actor, name: &str, args: &Value) -> Value 
         "bom_health" => bom_health(st, me, &a).await,
         "find_duplicate_files" => find_duplicate_files(st, me, &a).await,
         "find_similar_parts" => find_similar_parts(st, me, &a).await,
+        "open_3d_preview" => open_3d_preview(st, me, &a).await,
         "compare_revisions" => compare_revisions(st, me, &a).await,
         "create_change_draft" => create_change_draft(st, me, &a).await,
         "add_to_change" => add_to_change(st, me, &a).await,
@@ -529,6 +564,31 @@ pub async fn call(st: &AppState, me: &Actor, name: &str, args: &Value) -> Value 
     };
     match result {
         Ok(value) => success(value),
+        Err(e) => from_error(name, e),
+    }
+}
+
+/// [`call`] on behalf of a real user, with the read log of need-to-know
+/// groups (`services::access_log::record_tool_read`): a successful read tool
+/// that named an item of a group that logs reads leaves an entry with the
+/// channel of `log` (MCP client or assistant). A read that cannot be logged
+/// is not handed out, like a download.
+///
+/// Calls made only to compare results (the assistant's outsider check) use
+/// [`call`] and log nothing.
+pub async fn call_logged(
+    st: &AppState,
+    me: &Actor,
+    name: &str,
+    args: &Value,
+    log: &crate::services::access_log::AccessCtx,
+) -> Value {
+    let result = call(st, me, name, args).await;
+    if result["isError"] == true || !is_read_only(name) {
+        return result;
+    }
+    match crate::services::access_log::record_tool_read(&st.db, log, me, name, args).await {
+        Ok(()) => result,
         Err(e) => from_error(name, e),
     }
 }

@@ -85,7 +85,13 @@ pub(super) async fn list_items(
 #[derive(Deserialize)]
 pub(super) struct CreateItem {
     item_type: String,
+    /// Required, except for a simulation with a `basis` (default: `Simulation – <basis name>`).
+    #[serde(default)]
     name: String,
+    /// Only for `item_type` simulation: the revision it is based on; the item
+    /// is created with the basis link in one transaction. Not combinable with
+    /// `idempotency_key`.
+    basis: Option<NewItemBasis>,
     number: Option<String>,
     unit: Option<String>,
     /// Project code.
@@ -104,6 +110,17 @@ pub(super) struct CreateItem {
     /// Optional client-chosen key (per user): a repeated request returns the
     /// original item (200) instead of creating a second one.
     idempotency_key: Option<String>,
+}
+
+#[derive(Deserialize)]
+pub(super) struct NewItemBasis {
+    /// Item number of the basis.
+    item: String,
+    /// Revision code; empty = the latest revision.
+    #[serde(default)]
+    revision: String,
+    /// `geometry` (default), `mesh`, `material`, `load_case` or `other`.
+    role: Option<String>,
 }
 
 /// Custom attribute values of a request body as `key → text` changes.
@@ -161,6 +178,34 @@ pub(super) async fn create_item(
             .unwrap_or_default(),
         attributes: attribute_changes(&body.attributes)?,
     };
+    if let Some(basis) = &body.basis {
+        if body.idempotency_key.is_some() {
+            return Err(AppError::BadRequest(
+                "idempotency_key cannot be combined with basis.".into(),
+            ));
+        }
+        let role = domain::BasisRole::parse(basis.role.as_deref().unwrap_or("geometry"))
+            .ok_or_else(|| {
+                AppError::BadRequest(
+                    "role must be geometry, mesh, material, load_case or other.".into(),
+                )
+            })?;
+        let basis_rev =
+            crate::services::simulations::resolve_basis(&st.db, &me, &basis.item, &basis.revision)
+                .await?;
+        let rev = crate::services::simulations::create_with_basis(
+            &st.db,
+            &me,
+            crate::services::simulations::NewItemFor {
+                item: input,
+                uploads: &[],
+                basis: &basis_rev,
+                role,
+            },
+        )
+        .await?;
+        return Ok((StatusCode::CREATED, Json(json!(rev))).into_response());
+    }
     match body.idempotency_key {
         None => {
             let rev = items::create(&st.db, &me, input).await?;
@@ -295,6 +340,111 @@ pub(super) async fn update_attribute(
     )
     .await?;
     Ok(Json(json!(def)))
+}
+
+#[derive(Deserialize)]
+pub(super) struct NoteBody {
+    x: f64,
+    y: f64,
+    z: f64,
+    body: String,
+}
+
+/// `GET /file-versions/{id}/annotations`: notes pinned to the 3D preview.
+pub(super) async fn version_annotations(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<Json<Value>> {
+    Ok(Json(json!(
+        crate::services::annotations::list(&st.db, &me, id).await?
+    )))
+}
+
+/// `POST /file-versions/{id}/annotations` `{x, y, z, body}`.
+pub(super) async fn add_version_annotation(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(id): Path<Uuid>,
+    Json(body): Json<NoteBody>,
+) -> AppResult<(StatusCode, Json<Value>)> {
+    let note = crate::services::annotations::add(
+        &st.db,
+        &me,
+        id,
+        crate::services::annotations::NewAnnotation {
+            x: body.x,
+            y: body.y,
+            z: body.z,
+            body: body.body,
+        },
+    )
+    .await?;
+    Ok((StatusCode::CREATED, Json(json!(note))))
+}
+
+/// `DELETE /annotations/{id}`.
+pub(super) async fn delete_annotation(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Path(id): Path<Uuid>,
+) -> AppResult<StatusCode> {
+    crate::services::annotations::remove(&st.db, &me, id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+pub(super) struct BulkBody {
+    /// `revise` or `obsolete`.
+    action: String,
+    /// Item numbers; the latest revision of each is acted on.
+    items: Vec<String>,
+}
+
+/// `POST /items/bulk`: revise or obsolete the latest revision of many items,
+/// each in its own transaction; the outcome lists every item.
+pub(super) async fn items_bulk(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Json(body): Json<BulkBody>,
+) -> AppResult<Json<Value>> {
+    let action = crate::services::bulk::Action::parse(&body.action)
+        .ok_or_else(|| AppError::BadRequest("The action must be 'revise' or 'obsolete'.".into()))?;
+    let results = crate::services::bulk::apply(&st.db, &me, action, &body.items).await?;
+    let ok = results.iter().filter(|r| r.ok).count();
+    Ok(Json(
+        json!({ "results": results, "ok": ok, "failed": results.len() - ok }),
+    ))
+}
+
+#[derive(Deserialize)]
+pub(super) struct DuplicatesQuery {
+    name: String,
+    #[serde(rename = "type")]
+    item_type: Option<String>,
+    limit: Option<usize>,
+}
+
+/// `GET /items/duplicates?name=…&type=…`: readable items whose latest
+/// revision has a similar name – checked before an item is created.
+pub(super) async fn item_duplicates(
+    State(st): State<AppState>,
+    ApiUser(me): ApiUser,
+    Query(q): Query<DuplicatesQuery>,
+) -> AppResult<Json<Value>> {
+    let item_type = match q.item_type.as_deref().filter(|t| !t.is_empty()) {
+        Some(t) => Some(
+            ItemType::parse(t)
+                .ok_or_else(|| AppError::BadRequest(format!("Unknown item type '{t}'.")))?,
+        ),
+        None => None,
+    };
+    let limit = q.limit.unwrap_or(10).clamp(1, 50);
+    let found = crate::services::duplicates::likely_duplicates(
+        &st.db, &me, &q.name, item_type, None, limit,
+    )
+    .await?;
+    Ok(Json(json!(found)))
 }
 
 pub(super) async fn get_item(
@@ -488,14 +638,29 @@ pub(super) async fn checkin(
     Ok(Json(json!({ "revision": rev, "files": changed })))
 }
 
+#[derive(Deserialize)]
+pub(super) struct ReleaseBody {
+    reason: Option<String>,
+}
+
+/// Releases a check-out: `{reason}` (optional; required for a manager
+/// releasing an active member's lock), or an empty body.
 pub(super) async fn cancel_checkout(
     State(st): State<AppState>,
     ApiUser(me): ApiUser,
     Path((number, code)): Path<(String, String)>,
+    body: axum::body::Bytes,
 ) -> AppResult<Json<Value>> {
+    let reason = if body.iter().all(u8::is_ascii_whitespace) {
+        None
+    } else {
+        serde_json::from_slice::<ReleaseBody>(&body)
+            .map_err(|e| AppError::BadRequest(format!("Invalid JSON: {e}")))?
+            .reason
+    };
     let rev = revision_at(&st, &me, &number, &code).await?;
     Ok(Json(json!(
-        revisions::cancel_checkout(&st.db, &me, rev.id).await?
+        revisions::cancel_checkout(&st.db, &me, rev.id, reason.as_deref()).await?
     )))
 }
 

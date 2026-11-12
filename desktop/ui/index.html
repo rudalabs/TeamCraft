@@ -53,8 +53,8 @@
   <header class="titlebar">
     <div class="brand">
       <img src="/static/media/logos/TeamCraft_Icon.svg" alt="">
-      <span class="brand-name">TeamCraft</span>
-      <span class="brand-sub">PLM</span>
+      <span class="brand-name" id="brand-name">TeamCraft</span>
+      <span class="brand-sub" id="brand-sub">PLM</span>
     </div>
     <form id="search-form" class="global-search" role="search">
       <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="M20 20l-4-4"/></svg>
@@ -75,7 +75,7 @@
   </header>
 
   <nav class="rail" aria-label="Navigation">
-    <button type="button" data-view="home" title="Home – project groups (Ctrl+1)">
+    <button type="button" data-view="home" title="Home – the files of the active project group (Ctrl+1)">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/></svg>
       <span>Home</span>
     </button>
@@ -95,6 +95,10 @@
     <button type="button" data-view="agent" title="Agent – the company AI or your local agent, with TeamCraft's tools (Ctrl+4)">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.7 1.8 1.8.7-1.8.7-.7 1.8-.7-1.8-1.8-.7 1.8-.7z"/></svg>
       <span>Agent</span>
+    </button>
+    <button type="button" data-view="projects" title="Projects – choose the active project group, create one, import a CAD folder (Ctrl+5)">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+      <span>Projects</span>
     </button>
     <div class="rail-spacer"></div>
     <img class="rail-mark" src="/static/media/logos/TeamCraft_Icon.svg" alt="">

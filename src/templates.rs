@@ -20,11 +20,15 @@ pub const TEMPLATES: &[(&str, &str)] = embed![
     "explorer.html",
     "items/list.html",
     "items/new.html",
+    "items/label.html",
     "items/where_used.html",
     "revisions/show.html",
     "revisions/edit.html",
     "revisions/bom.html",
     "revisions/bom_compare.html",
+    "revisions/mass.html",
+    "materials.html",
+    "revisions/bom_from_references.html",
     "revisions/save_as.html",
     "revisions/simulation_compare.html",
     "changes/list.html",
@@ -36,9 +40,12 @@ pub const TEMPLATES: &[(&str, &str)] = embed![
     "projects/list.html",
     "projects/show.html",
     "projects/access_review.html",
+    "projects/access_log.html",
+    "projects/season.html",
     "files/preview.html",
     "admin/users.html",
     "admin/user_edit.html",
+    "admin/holdings.html",
     "admin/audit.html",
     "admin/attributes.html",
     "admin/attribute_edit.html",
@@ -63,6 +70,7 @@ pub fn environment(instance_name: &str) -> Result<Environment<'static>, minijinj
     env.add_filter("dt", filter_dt);
     env.add_filter("num", filter_num);
     env.add_filter("fixed", filter_fixed);
+    env.add_filter("sig", filter_sig);
     env.add_filter("filesize", filter_filesize);
     env.add_filter("label", filter_label);
     env.add_filter("urlencode", |value: String| util::pct_encode(&value));
@@ -120,6 +128,22 @@ fn filter_fixed(value: Option<f64>, decimals: Option<usize>) -> String {
     }
 }
 
+/// A physical value with six significant digits (mass properties span
+/// grams to tonnes and 10⁻⁹ to 10⁶ kg·m²); exponent form outside
+/// 10⁻³ … 10⁷; `—` when missing.
+fn filter_sig(value: Option<f64>) -> String {
+    match value {
+        None => "—".to_string(),
+        Some(v) if !v.is_finite() => "—".to_string(),
+        Some(0.0) => "0".to_string(),
+        Some(v) if (1e-3..1e7).contains(&v.abs()) => {
+            let decimals = (5 - v.abs().log10().floor() as i32).clamp(0, 9) as usize;
+            util::format_number(v, decimals)
+        }
+        Some(v) => format!("{v:.5e}"),
+    }
+}
+
 fn filter_filesize(value: i64) -> String {
     util::format_bytes(value)
 }
@@ -169,6 +193,12 @@ mod tests {
 
     fn me() -> Value {
         json!({ "id": ME, "username": "max", "display_name": "Max Muster", "initials": "MM", "avatar": 3, "role": "admin", "skin": "arch", "is_admin": true, "can_edit": true })
+    }
+
+    /// The Files card hint of `revisions/show.html` (`kind` as
+    /// `domain::FilesHint::as_str`), shaped like `web::revisions::show` sends it.
+    fn files_hint(kind: &str) -> Value {
+        json!({ "kind": kind, "can_revise": kind == "frozen", "type_hint": "STEP, drawings, <reports>" })
     }
 
     fn revision(state: &str, checked_out: bool) -> Value {
@@ -436,6 +466,7 @@ mod tests {
                 "folders": [{ "id": ROCKET, "code": "ROCKET", "name": "Sounding rocket", "items": 3, "locked": 1 }],
                 "folder": ROCKET, "entries": [entry], "limit": 500, "q": "",
                 "selected": { "rev": revision("in_work", true), "files": [file.clone()],
+                              "file_groups": [{ "files": [file.clone()], "collapsed": false }],
                               "can": { "checkout": false, "checkin": true, "cancel_checkout": true } },
                 "back": crate::util::pct_encode(&format!("/vault?folder={ROCKET}&rev={OTHER}")),
                 "max_upload_mb": 512,
@@ -609,10 +640,30 @@ mod tests {
             with_common(json!({
                 "form": { "item_type": "part", "number": "", "name": "", "description": "", "project_id": "",
                           "unit": "each", "material": "", "mass_kg": "", "unit_cost": "" },
-                "error": "Name must not be empty.", "projects": [project()],
+                "error": "Name must not be empty.", "projects": [project()], "materials": [],
                 "types": [{ "value": "part", "label": "Part" }], "units": units(),
             })),
         );
+        // new simulation based on a revision
+        let html = render(
+            &env,
+            "items/new.html",
+            with_common(json!({
+                "form": { "item_type": "simulation", "number": "", "name": "Simulation – Bracket",
+                          "description": "Analysis.", "project_id": "", "basis": OTHER,
+                          "basis_role": "geometry", "unit": "", "material": "", "mass_kg": "",
+                          "unit_cost": "" },
+                "error": null, "projects": [project()], "materials": [],
+                "types": [{ "value": "simulation", "label": "Simulation" }], "units": units(),
+                "basis": { "revision_id": OTHER, "item_number": "PRT-000002", "code": "A",
+                           "label": "PRT-000002/A", "name": "Bracket <1>" },
+                "basis_roles": [{ "value": "geometry", "label": "Geometry" }],
+                "basis_other_group": true, "number_hint": "SIM-000007",
+            })),
+        );
+        assert!(html.contains("PRT-000002") && html.contains("SIM-000007"));
+        assert!(html.contains("Bracket &lt;1&gt;"));
+        assert!(!html.contains("name=\"mass_kg\""));
 
         // alternates, supersession and replace in assemblies
         let linked = |number: &str, restricted: bool| {
@@ -633,6 +684,19 @@ mod tests {
                     "parent_name": "Frame <2>", "parent_state": "in_work", "checked_out_by_name": "Max",
                     "action": action, "action_label": label })
         };
+        let html = render(
+            &env,
+            "items/label.html",
+            with_common(json!({
+                "rev": revision("released", false),
+                "url": "https://plm.example.org/i/PRT-000001",
+            })),
+        );
+        // (MiniJinja escapes `/` in text as `&#x2f;`)
+        assert!(
+            html.contains("qr.svg") && html.contains("plm.example.org"),
+            "{html}"
+        );
         for (with_plan, restricted) in [(true, false), (false, true)] {
             let html = render(
                 &env,
@@ -678,13 +742,20 @@ mod tests {
                             "thumbnail_file_id": if state == "released" { json!(ME) } else { json!(null) },
                         }] })
             };
+            // a manager looking at an active member's lock: the reason form
+            let mut can_rev = can_all.clone();
+            can_rev["release_with_reason"] = json!(checked_out);
             let html = render(
                 &env,
                 "revisions/show.html",
                 with_common(json!({
+                    "files_hint": files_hint(if state == "released" { "frozen" } else if checked_out { "upload" } else { "checkout" }),
                     "rev": revision(state, checked_out), "item": item(), "revisions": [revision(state, checked_out)],
                     "hidden": { "parents": 2, "incoming": 1, "changes": 1, "simulations": 0 },
-                    "is_latest": false, "latest_id": OTHER, "files": [file.clone(), native.clone(), unknown.clone()], "native_without_preview": state == "released", "lines": [bom_line.clone()],
+                    "is_latest": false, "latest_id": OTHER, "files": [file.clone(), native.clone(), unknown.clone()],
+                    "file_groups": [{ "files": [file.clone(), unknown.clone()], "collapsed": false },
+                                    { "files": [native.clone()], "collapsed": true, "count": 1, "families": "SolidWorks" }],
+                    "native_without_preview": state == "released", "lines": [bom_line.clone()],
                     "where_used": [{ "line_id": ME, "parent_revision_id": OTHER, "parent_item_id": ME,
                                      "parent_number": "ASM-000001", "parent_code": "A", "parent_name": "Assembly",
                                      "parent_state": "released", "find_number": 10, "quantity": 2.0 }],
@@ -693,7 +764,9 @@ mod tests {
                     "references": references.clone(), "impact_groups": [impact_group()],
                     "resolved_impacts": [impact(Some("acknowledged"))],
                     "open_requests": [request("in_triage")], "similar": similar,
-                    "can": can_all.clone(), "max_upload_mb": 512, "assistant_enabled": state == "released",
+                    "can": can_rev,
+                    "release_reason": { "min": 10, "max": 500 },
+                    "max_upload_mb": 512, "assistant_enabled": state == "released",
                     "interchange": {
                         "alternates": [linked("PRT-000003", false)],
                         "alternate_for": [linked("PRT-000004", false)],
@@ -711,6 +784,18 @@ mod tests {
                                        { "key": "old", "label": "Old <code>", "unit": "", "value": "x", "active": false }],
                     "classifications": [{ "value": "make", "label": "In-house" }, { "value": "purchased", "label": "Purchased" }],
                 })),
+            );
+            // preferred CAD program: the other program's file in a <details>
+            let (open, rest) = html
+                .split_once("<details class=\"other-formats\"")
+                .expect("collapsed group of other CAD formats");
+            assert!(open.contains("nozzle.step") && !open.contains(">nozzle.SLDPRT<"));
+            assert!(rest.contains("1 file in other CAD formats (SolidWorks)"));
+            assert!(rest.contains(">nozzle.SLDPRT<"));
+            assert_eq!(
+                html.contains("name=\"reason\" minlength=\"10\" maxlength=\"500\" required"),
+                checked_out,
+                "a manager releases an active member's lock with a reason"
             );
             assert!(
                 html.contains("aria-current=\"step\""),
@@ -850,6 +935,7 @@ mod tests {
                 &env,
                 "revisions/show.html",
                 with_common(json!({
+                    "files_hint": files_hint(if editable { "upload" } else { "frozen" }),
                     "rev": rev.clone(), "item": sim_item, "revisions": [rev.clone(), revision("released", false)],
                     "hidden": { "parents": 0, "incoming": 0, "changes": 0, "simulations": 0 },
                     "is_latest": true, "latest_id": OTHER, "files": [], "native_without_preview": false,
@@ -917,6 +1003,7 @@ mod tests {
             &env,
             "revisions/show.html",
             with_common(json!({
+                "files_hint": files_hint("hidden"),
                 "rev": revision("released", false), "item": item(), "revisions": [revision("released", false)],
                 "hidden": { "parents": 0, "incoming": 0, "changes": 0, "simulations": 1 },
                 "is_latest": true, "latest_id": OTHER, "files": [], "native_without_preview": false,
@@ -979,6 +1066,7 @@ mod tests {
                 &env,
                 "revisions/show.html",
                 with_common(json!({
+                    "files_hint": files_hint(if editable { "upload" } else { "frozen" }),
                     "rev": rev.clone(), "item": unit_item, "revisions": [rev.clone()],
                     "hidden": { "parents": 0, "incoming": 0, "changes": 0, "simulations": 0, "units": 0 },
                     "is_latest": true, "latest_id": OTHER, "files": [], "native_without_preview": false,
@@ -1034,6 +1122,7 @@ mod tests {
             &env,
             "revisions/show.html",
             with_common(json!({
+                "files_hint": files_hint("frozen"),
                 "rev": revision("released", false), "item": item(), "revisions": [revision("released", false)],
                 "hidden": { "parents": 0, "incoming": 0, "changes": 0, "simulations": 0, "units": 2 },
                 "is_latest": true, "latest_id": OTHER, "files": [], "native_without_preview": false,
@@ -1124,13 +1213,16 @@ mod tests {
         render(
             &env,
             "revisions/edit.html",
-            with_common(json!({ "rev": revision("in_work", false), "error": null })),
+            with_common(
+                json!({ "rev": revision("in_work", false), "error": null, "materials": [] }),
+            ),
         );
         let html = render(
             &env,
             "revisions/edit.html",
             with_common(json!({
                 "rev": revision("in_work", false), "error": null,
+                "materials": [{ "name": "Alu <7075>", "label": "2810 kg/m³" }],
                 "attribute_fields": [
                     { "key": "vendor", "label": "Vendor", "unit": "", "data_type": "choice",
                       "choices": ["Bosch", "SKF"], "value": "Old <Ltd>" },
@@ -1141,6 +1233,11 @@ mod tests {
         );
         assert!(html.contains("name=\"attr.vendor\"") && html.contains("Length [mm]"));
         assert!(
+            html.contains("<datalist id=\"material-options\"><option value=\"Alu &lt;7075&gt;\">2810 kg&#x2f;m³</option></datalist>")
+                && html.contains("data-material-hint"),
+            "material suggestions are escaped"
+        );
+        assert!(
             html.contains("Old &lt;Ltd&gt; (no longer a choice)"),
             "removed choices stay selectable"
         );
@@ -1149,7 +1246,7 @@ mod tests {
             &env,
             "revisions/edit.html",
             with_common(json!({
-                "rev": revision("in_work", false), "error": "Mass: 'x' is not a number.", "mass_raw": "x", "cost_raw": ""
+                "rev": revision("in_work", false), "error": "Mass: 'x' is not a number.", "mass_raw": "x", "cost_raw": "", "materials": []
             })),
         );
 
@@ -1163,6 +1260,34 @@ mod tests {
         let mut unresolved = node.clone();
         unresolved["revision"] = Value::Null;
         unresolved["level"] = json!(9);
+        let child = |status: &str, label: &str| {
+            json!({ "item_id": OTHER, "item_number": "PRT-000004", "item_name": "Bolt <M6>",
+                    "quantity": 4.0, "quantity_text": "4", "bom_quantity_text": "2", "quantity_source": "cad_instances", "quantity_label": "CAD instances",
+                    "via": "A.SLDASM → bolt.SLDPRT", "status": status, "status_label": label,
+                    "bom_quantity": 2.0, "selected": status == "new" })
+        };
+        let from_refs = render(
+            &env,
+            "revisions/bom_from_references.html",
+            with_common(json!({
+                "rev": revision("in_work", false), "editable": true, "can_checkout": false, "differs": true,
+                "plan": { "children": [child("new", "new line"), child("differs", "differs")],
+                          "not_in_teamcraft": [{ "name": "ghost.SLDPRT", "via": "A.SLDASM" }],
+                          "hidden": 2, "excluded": ["glue.SLDPRT"] },
+            })),
+        );
+        assert!(from_refs.contains("Bolt &lt;M6&gt;") && from_refs.contains("BOM 2, CAD 4"));
+        assert!(from_refs.contains("Not in TeamCraft") && from_refs.contains("2 hidden item(s)"));
+        assert!(from_refs.contains("Add the ticked lines"));
+        let not_out = render(
+            &env,
+            "revisions/bom_from_references.html",
+            with_common(json!({
+                "rev": revision("in_work", false), "editable": false, "can_checkout": true, "differs": false,
+                "plan": { "children": [child("new", "new line")], "not_in_teamcraft": [], "hidden": 0, "excluded": [] },
+            })),
+        );
+        assert!(not_out.contains("Check out and create"));
         let bom_html = render(
             &env,
             "revisions/bom.html",
@@ -1210,7 +1335,8 @@ mod tests {
                     "items": [{ "revision_id": OTHER, "item_id": ME, "item_number": "PRT-000001", "code": "A",
                                 "name": "Bracket", "state": "in_work", "checked_out_by_name": "Erika" }],
                     "reviews": [{ "reviewer_id": OTHER, "reviewer_username": "erika", "reviewer_name": "Erika",
-                                  "decision": "approved", "comment": "ok", "decided_at": TS, "absent": null },
+                                  "decision": "approved", "comment": "ok", "decided_at": TS, "absent": null,
+                                  "sign_off_method": "password", "sign_off_meaning": "approved as <owner>" },
                                  { "reviewer_id": ME, "reviewer_username": "gone", "reviewer_name": "Gone <G>",
                                   "decision": "pending", "comment": "", "decided_at": null, "absent": "deactivated" }],
                     "replacements": [user()], "review_round": 2,
@@ -1227,8 +1353,19 @@ mod tests {
                                  "revision_state": "released", "relation": "bom", "via_number": "PRT-000001",
                                  "in_change": false }],
                     "can": { "modify": true, "edit_text": true, "submit": true, "withdraw": true, "reopen": true,
-                             "cancel": true, "review": true, "replace_reviewer": true },
+                             "cancel": true, "review": true, "replace_reviewer": true, "take_over": true },
+                    "sign_off": { "reauth": "release", "rejections_too": false, "sso": false,
+                                  "reauthenticated": false, "window_minutes": 10 },
                 })),
+            );
+            assert!(
+                html.contains("name=\"password\"") && html.contains("name=\"meaning\""),
+                "{status}: a fresh sign-in is asked for"
+            );
+            assert!(
+                html.contains("signed off with password")
+                    && html.contains("approved as &lt;owner&gt;"),
+                "{status}: the sign-off of a decision"
             );
             assert!(
                 html.contains("Earlier rounds")
@@ -1236,6 +1373,10 @@ mod tests {
                     && html.contains("&lt;too thin&gt;")
                     && html.contains("/reviewers/"),
                 "{status}: rounds and absent reviewers"
+            );
+            assert!(
+                html.contains("/take-over\""),
+                "{status}: a manager takes over a deactivated author's change"
             );
             if status == "in_review" {
                 let mut ctx = json!({
@@ -1365,11 +1506,33 @@ mod tests {
             );
         }
 
-        render(
+        let html = render(
             &env,
             "projects/list.html",
-            with_common(json!({ "projects": [project()], "my_projects": [ROCKET] })),
+            with_common(json!({
+                "projects": [project()], "my_projects": [ROCKET], "review_due": [],
+                "manager_gaps": [
+                    { "project_id": ROCKET, "code": "ROCKET", "name": "Sounding <rocket>", "kind": "none",
+                      "active_managers": 0, "last_active_at": null },
+                    { "project_id": OTHER, "code": "ROVER", "name": "Rover", "kind": "stale",
+                      "active_managers": 2, "last_active_at": TS },
+                ],
+                "manager_gap_ids": [ROCKET, OTHER], "stale_days": 90,
+            })),
         );
+        assert!(html.contains("Groups without an active manager"));
+        assert!(html.contains("Sounding &lt;rocket&gt; –") && html.contains("no active manager"));
+        assert!(html.contains("2 active managers, none seen for 90 days"));
+        assert!(html.contains("href=\"#manager-gaps\""), "the row is marked");
+        let html = render(
+            &env,
+            "projects/list.html",
+            with_common(json!({
+                "projects": [project()], "my_projects": [ROCKET], "review_due": [],
+                "manager_gaps": [], "manager_gap_ids": [], "stale_days": 90,
+            })),
+        );
+        assert!(!html.contains("manager-gaps"));
         let html = render(
             &env,
             "projects/access_review.html",
@@ -1378,21 +1541,63 @@ mod tests {
                 "report": { "project_code": "ROVER", "project_name": "Rover <x>", "generated_at": TS,
                     "admin_read": "with_reason", "administrators_outside": 2, "stale_days": 90,
                     "members": [{ "username": "erika", "display_name": "Erika", "role": "editor", "manager": true,
-                                  "source": "oidc", "active": true, "added_at": TS, "last_login_at": null, "stale": true }],
+                                  "source": "oidc", "active": true, "added_at": TS, "last_login_at": null, "stale": true,
+                                  "conditions_met": false }],
+                    "conditions": { "required_claims": [{ "claim": "site", "values": ["a", "b"] }],
+                                    "allowed_networks": [], "max_signin_age_hours": null },
                     "elevations": [{ "id": OTHER, "project_id": OTHER, "user_id": OTHER, "username": "root", "reason": "audit <b>",
                                     "started_at": TS, "expires_at": TS, "ended_at": null, "active": false }],
                     "reviews": [{ "id": OTHER, "username": "root", "note": "ok", "reviewed_at": TS,
-                                  "admin_read": "none", "member_count": 1 }] },
+                                  "admin_read": "none", "member_count": 1 }],
+                    "schedule": { "interval_days": 90, "last_review_at": TS, "next_review_at": TS, "due": true } },
             })),
         );
         assert!(html.contains("no sign-in for 90 days") && html.contains("audit &lt;b&gt;"));
+        assert!(html.contains("review of this group is due") && html.contains("every 90 days"));
+        assert!(html.contains("is one of a, b") && html.contains("not met"));
+        let entry = json!({ "id": OTHER, "at": TS, "user_id": OTHER, "username": "erika",
+                            "channel": "assistant", "kind": "view", "object_type": "item",
+                            "object_id": OTHER, "label": "PRT-1 <x>", "client_address": "192.0.2.4",
+                            "detail": "get_bom" });
+        let html = render(
+            &env,
+            "projects/access_log.html",
+            with_common(json!({
+                "project": project(), "entries": [entry],
+                "query": { "user": "erika", "kind": "view", "channel": "assistant", "object": null,
+                           "since": "2026-11-01", "until": null, "limit": null, "before": null },
+                "next_link": "/projects/x/access-log?user=erika&before=y", "first_page_link": null,
+                "filtered": true, "read_log": true, "error": null, "collapse_minutes": 5,
+                "kinds": [{ "value": "view", "label": "View" }],
+                "channels": [{ "value": "assistant", "label": "Assistant" }],
+            })),
+        );
+        assert!(html.contains("PRT-1 &lt;x&gt;") && html.contains("get_bom"));
+        assert!(html.contains("Older entries") && !html.contains("Newest entries"));
+        assert!(html.contains("value=\"assistant\" selected"));
+        let html = render(
+            &env,
+            "projects/access_log.html",
+            with_common(json!({
+                "project": project(), "entries": [], "query": {}, "next_link": null,
+                "first_page_link": "/projects/x/access-log", "filtered": false, "read_log": false,
+                "error": "since must be a date", "collapse_minutes": 5, "kinds": [], "channels": [],
+            })),
+        );
+        assert!(
+            html.contains("the log of this group is off") && html.contains("since must be a date")
+        );
         let html = render(
             &env,
             "projects/show.html",
             with_common(json!({
                 "project": project(),
                 "members": [{ "user_id": OTHER, "username": "erika", "display_name": "Erika", "role": "editor",
-                              "active": true, "source": "oidc", "added_at": TS, "manager": true }],
+                              "active": true, "source": "oidc", "added_at": TS, "manager": true, "checkouts": 0 },
+                            { "user_id": "33333333-3333-4333-8333-333333333333", "username": "lena", "display_name": "Lena <gone>", "role": "editor",
+                              "active": false, "source": "oidc", "added_at": TS, "manager": false, "checkouts": 40 }],
+                "former_holders": [{ "user_id": OTHER, "username": "tom", "display_name": "Tom <left>",
+                                     "active": true, "checkouts": 3 }],
                 "candidates": [user()], "is_member": true, "can_edit": true, "oidc_enabled": true,
                 "can_manage": true,
                 "result_templates": [{ "id": OTHER, "project_id": OTHER, "name": "Pressure <drop>", "file_pattern": "*.log",
@@ -1411,6 +1616,59 @@ mod tests {
         assert!(html.contains("Add template"), "managers add templates");
         assert!(html.contains("manager"), "project managers are marked");
         assert!(html.contains("Add member"), "managers add members");
+        assert!(html.contains("/demote\""), "managers demote managers");
+        assert!(
+            html.contains("/season\""),
+            "managers find the season handover"
+        );
+        let season = render(
+            &env,
+            "projects/season.html",
+            with_common(json!({
+                "project": project(),
+                "members": [
+                    { "user_id": OTHER, "username": "erika", "display_name": "Erika", "role": "editor",
+                      "active": true, "source": "oidc", "manager": true, "checkouts": 0,
+                      "last_active_at": TS, "expires_at": null, "expired": false },
+                    { "user_id": ME, "username": "lena", "display_name": "Lena <gone>", "role": "editor",
+                      "active": false, "source": "manual", "manager": false, "checkouts": 40,
+                      "last_active_at": null, "expires_at": "2026-07-31", "expired": true },
+                ],
+                "chosen": [ME], "inactive_since": "2026-08-01",
+                "release_reason": { "min": 10, "max": 500 }, "max_members": 500,
+            })),
+        );
+        assert!(season.contains("Lena &lt;gone&gt;") && season.contains("expired"));
+        assert!(season.contains(&format!("name=\"release\" value=\"{ME}\"")));
+        assert!(
+            season.contains(&format!(
+                "name=\"remove\" value=\"{ME}\" aria-label=\"Remove lena\" checked"
+            )),
+            "a member whose membership expired is ticked"
+        );
+        assert!(
+            !season.contains(&format!(
+                "name=\"remove\" value=\"{OTHER}\" aria-label=\"Remove erika\" checked"
+            )),
+            "an active member is not"
+        );
+        assert!(season.contains("value=\"2026-08-01\""));
+        assert!(
+            html.contains("Release 40 check-outs") && html.contains("Lena &lt;gone&gt;"),
+            "a deactivated member's check-outs can be released"
+        );
+        assert!(
+            html.contains("/members/33333333-3333-4333-8333-333333333333/remove\""),
+            "a deactivated member's IdP membership can be removed"
+        );
+        assert!(
+            !html.contains(&format!("/members/{OTHER}/remove\"")),
+            "an active member's IdP membership cannot"
+        );
+        assert!(
+            html.contains("Former members still holding") && html.contains("Release 3 check-outs"),
+            "former holders are listed"
+        );
         assert!(
             html.contains("ROCKET-PRT-2026-0001"),
             "next numbers are shown"
@@ -1427,11 +1685,16 @@ mod tests {
                 "can_edit": true, "oidc_enabled": false, "can_manage": true, "readable": true,
                 "result_templates": [],
                 "policy": { "admin_read": "implicit", "access": { "read_log": true, "log_retention_days": 90,
-                    "interfaces": { "api_tokens": true, "mcp": false, "assistant": true, "webhooks": true, "packages": true } } },
+                    "review_interval_days": 120,
+                    "interfaces": { "api_tokens": true, "mcp": false, "assistant": true, "webhooks": true, "packages": true } },
+                    "conditions": { "required_claims": [{ "claim": "site", "values": ["main-office"] }],
+                                    "allowed_networks": ["10.0.0.0/8", "192.168.1.0/24"], "max_signin_age_hours": 12 } },
+                "review_schedule": { "interval_days": 120, "last_review_at": null, "next_review_at": TS, "due": true },
+                "claim_lines": "site = main-office, <x>", "my_address": "10.1.2.3",
                 "admin_modes": [{ "value": "implicit", "label": "Implicit" }],
                 "interface_rows": [{ "name": "mcp", "label": "MCP <server>", "allowed": false }],
                 "access_entries": [{ "id": OTHER, "at": TS, "username": "erika", "channel": "api", "kind": "download",
-                    "label": "<b>secret.step</b>", "client_address": "10.0.0.1" }],
+                    "label": "<b>secret.step</b>", "client_address": "10.0.0.1", "detail": "" }],
                 "numbering": { "scheme": "{TYPE}-{SEQ:6}", "is_default": true, "next": [] },
                 "scheme_input": "", "previewing": false, "scheme_error": null, "default_scheme": "{TYPE}-{SEQ:6}",
             })),
@@ -1445,6 +1708,10 @@ mod tests {
             html.contains("&lt;b&gt;secret.step"),
             "log labels are escaped"
         );
+        assert!(html.contains("access review due") && html.contains("value=\"120\""));
+        assert!(html.contains("/access-log\""), "the whole log is linked");
+        assert!(html.contains("/conditions\"") && html.contains("main-office, &lt;x&gt;"));
+        assert!(html.contains("10.1.2.3") && html.contains("value=\"12\""));
         render(
             &env,
             "admin/users.html",
@@ -1453,18 +1720,69 @@ mod tests {
                 "oidc": { "admin_group": "a", "editor_group": "e", "viewer_group": null },
             })),
         );
-        render(
+        let html = render(
             &env,
             "admin/user_edit.html",
             with_common(json!({
                 "user": user(), "roles": roles(), "oidc_enabled": false, "memberships": [project()],
-                "handover_targets": [user()],
+                "handover_targets": [user()], "held_checkouts": 40, "sole_manager_of": ["CHASSIS"],
                 "tokens": [{ "id": ME, "name": "ci", "token_prefix": "tc_pat_abc123", "created_at": TS,
                              "last_used_at": null, "expires_at": TS, "scope": "full", "idle_days": null },
                            { "id": ME, "name": "desktop", "token_prefix": "tc_pat_def456", "created_at": TS,
                              "last_used_at": TS, "expires_at": TS, "scope": "read_only", "idle_days": 30 }],
             })),
         );
+        assert!(html.contains("/offboard\"") && html.contains("only active manager of CHASSIS"));
+        assert!(html.contains("name=\"confirm_no_manager\"") && html.contains("API tokens (2)"));
+        let html = render(
+            &env,
+            "admin/holdings.html",
+            with_common(json!({
+                "nothing": false,
+                "h": {
+                    "user_id": OTHER, "username": "lena", "display_name": "Lena <left>", "active": false,
+                    "last_login_at": null, "scope": "all",
+                    "checkouts": { "total": 40, "shown": [{ "revision_id": OTHER, "item_number": "PRT-000007",
+                        "code": "B", "name": "Upright <x>", "project_code": "CHASSIS", "checked_out_at": TS }] },
+                    "hidden_checkouts": [{ "project_code": "NTK", "count": 2 }],
+                    "authored_changes": { "total": 1, "shown": [{ "id": OTHER, "number": "CO-0031",
+                        "title": "Stiffer upright", "status": "rejected" }] },
+                    "pending_reviews": { "total": 0, "shown": [] },
+                    "assigned_requests": { "total": 1, "shown": [{ "id": OTHER, "number": "CR-0004",
+                        "title": "Crack", "status": "in_triage" }] },
+                    "raised_requests": { "total": 0, "shown": [] },
+                    "owned_items": { "total": 1, "shown": [{ "id": OTHER, "number": "PRT-000007",
+                        "name": "Upright", "project_code": null }] },
+                    "memberships": [{ "project_id": OTHER, "project_code": "CHASSIS", "project_name": "Chassis",
+                        "source": "oidc", "manager": true, "only_active_manager": true }],
+                    "tokens": [{ "id": ME, "name": "desktop", "token_prefix": "tc_pat_def456", "created_at": TS,
+                        "last_used_at": null, "expires_at": TS, "scope": "full", "idle_days": 30 }],
+                },
+            })),
+        );
+        assert!(html.contains("Lena &lt;left&gt;") && html.contains("Upright &lt;x&gt;"));
+        assert!(html.contains("The first 1 of 40") && html.contains("the only active manager"));
+        assert!(html.contains("2 check-outs in") && html.contains("CO-0031"));
+        let html = render(
+            &env,
+            "admin/holdings.html",
+            with_common(json!({
+                "nothing": true,
+                "h": {
+                    "user_id": OTHER, "username": "tom", "display_name": "Tom", "active": true,
+                    "last_login_at": TS, "scope": "managed",
+                    "checkouts": { "total": 0, "shown": [] }, "hidden_checkouts": [],
+                    "authored_changes": { "total": 0, "shown": [] },
+                    "pending_reviews": { "total": 0, "shown": [] },
+                    "assigned_requests": { "total": 0, "shown": [] },
+                    "raised_requests": { "total": 0, "shown": [] },
+                    "owned_items": { "total": 0, "shown": [] },
+                    "memberships": [], "tokens": null,
+                },
+            })),
+        );
+        assert!(html.contains("holds nothing that blocks") && !html.contains("API tokens"));
+        assert!(html.contains("Only what lies in the project groups you manage"));
         render(
             &env,
             "admin/audit.html",
@@ -1472,6 +1790,127 @@ mod tests {
                 "entries": [audit_entry()], "filter": { "entity_type": "item", "username": null, "action": null },
                 "base_query": "entity_type=item", "pagination": page(), "per_page": 50,
             })),
+        );
+        // mass properties: a full report, editable and read-only settings
+        let mass_line = |source: &str, warnings: Value| {
+            json!({ "level": 1, "find_number": 10, "item_number": "PRT-000002",
+                    "revision_id": OTHER, "revision_code": "A", "name": "Fin <x>", "quantity": 4.0,
+                    "factor": 1.0, "source": source, "source_label": source,
+                    "detail": "fin.stl (mm) × 2810 kg/m³ (Aluminium 7075-T6)",
+                    "unit_mass_kg": 0.0425, "total_mass_kg": 0.17, "cg_m": [1.2, 0.0, 1e-9],
+                    "warnings": warnings })
+        };
+        let report = json!({
+            "rule": "latest", "root_revision_id": ME, "root_label": "ASM-000001/A", "root_name": "Vehicle",
+            "root_source": "assembly", "root_detail": "", "reference_m": [0.0, 0.0, 0.0],
+            "mass_kg": 12.5, "placed_mass_kg": 12.4, "unplaced_mass_kg": 0.1,
+            "cg_m": [1.234567, 0.0001, -0.002], "inertia_cg": [0.1, 5.2, 5.3, 1e-6, 0.0, -2e-4],
+            "inertia_ref": [0.1, 24.0, 24.1, 1e-6, 0.0, -2e-4], "principal_moments": [5.3, 5.2, 0.1],
+            "lines": [mass_line("computed", json!([])), mass_line("missing", json!(["no density <x>"])),
+                      mass_line("restricted", json!([]))],
+            "line_count": 3, "restricted_lines": 1, "missing_lines": 1, "complete": false,
+            "warnings": ["1 restricted line left out."], "lines_with_warnings": 1,
+        });
+        let geometry_file = json!({ "id": OTHER, "revision_id": ME, "filename": "fin.stl", "sha256": "ab",
+                                    "format": "stl", "length_unit": null, "instances": 4 });
+        for (editable, measured) in [(true, true), (false, false)] {
+            let settings = json!({
+                "settings": { "revision_id": ME, "density_kg_m3": if measured { json!(2810.0) } else { Value::Null },
+                              "geometry_file_id": OTHER,
+                              "measured_mass_kg": if measured { json!(1.5) } else { Value::Null },
+                              "measured_cg_m": if measured { json!([1.0, 0.0, 0.0]) } else { Value::Null },
+                              "measured_inertia_kg_m2": null, "measured_note": "scale <A>" },
+                "files": [geometry_file.clone()], "geometry_file_id": OTHER,
+                "material": if measured { json!({ "id": OTHER, "name": "AlMg3", "density_kg_m3": 2660.0,
+                                                  "notes": "", "created_at": TS, "updated_at": TS }) } else { Value::Null },
+            });
+            let html = render(
+                &env,
+                "revisions/mass.html",
+                with_common(json!({
+                    "rev": revision("in_work", editable), "rule": "latest", "report": report,
+                    "reference": "0,0,0", "reference_error": if editable { Value::Null } else { json!("bad point") },
+                    "settings": settings, "chosen": geometry_file, "chosen_unit": "mm",
+                    "units": [{ "value": "mm" }, { "value": "m" }, { "value": "in" }],
+                    "measured_cg": if measured { json!(["1", "0", "0"]) } else { json!([]) },
+                    "measured_inertia": [], "editable": editable, "is_admin": false,
+                })),
+            );
+            assert!(html.contains("Fin &lt;x&gt;") && html.contains("no density &lt;x&gt;"));
+            assert!(html.contains("1.23457") && html.contains("mass.csv?rule=latest"));
+            assert_eq!(html.contains("Save mass settings"), editable);
+        }
+        let empty_report = json!({
+            "rule": "latest", "root_revision_id": ME, "root_label": "PRT-000001/B", "root_name": "Bracket",
+            "root_source": "missing", "root_detail": "", "reference_m": [0.0, 0.0, 0.0],
+            "mass_kg": 0.0, "placed_mass_kg": 0.0, "unplaced_mass_kg": 0.0, "cg_m": null,
+            "inertia_cg": null, "inertia_ref": null, "principal_moments": null, "lines": [],
+            "line_count": 0, "restricted_lines": 0, "missing_lines": 0, "complete": false,
+            "warnings": [], "lines_with_warnings": 0,
+        });
+        let html = render(
+            &env,
+            "revisions/mass.html",
+            with_common(json!({
+                "rev": revision("released", false), "rule": "released", "report": empty_report,
+                "reference": "0,0,0", "reference_error": null,
+                "settings": { "settings": { "revision_id": ME, "density_kg_m3": null, "geometry_file_id": null,
+                                            "measured_mass_kg": null, "measured_cg_m": null,
+                                            "measured_inertia_kg_m2": null, "measured_note": "" },
+                              "files": [], "geometry_file_id": null, "material": null },
+                "chosen": null, "chosen_unit": null, "units": [], "measured_cg": [], "measured_inertia": [],
+                "editable": false, "is_admin": false,
+            })),
+        );
+        assert!(html.contains("No placed mass"));
+        // files of several parts: the warning, the one-click choice (only
+        // when editable) and the grouped selector
+        for editable in [true, false] {
+            let candidate = |id: &str, name: &str, likely: bool| json!({ "file_id": id, "filename": name, "format": "jt", "likely": likely, "used": false });
+            let geometry = json!({
+                "choice": "ambiguous", "file": null, "file_id": null, "other_formats": 0,
+                "models": 2, "files": 3, "likely_file": "asm <1>.jt", "likely_file_id": OTHER,
+                "candidates": [
+                    { "model": "asm <1>", "files": [candidate(OTHER, "asm <1>.jt", true)] },
+                    { "model": "fin", "files": [candidate(ME, "fin.jt", false)] },
+                ],
+            });
+            let html = render(
+                &env,
+                "revisions/mass.html",
+                with_common(json!({
+                    "rev": revision("in_work", editable), "rule": "latest", "report": empty_report,
+                    "reference": "0,0,0", "reference_error": null,
+                    "settings": { "settings": { "revision_id": ME, "density_kg_m3": null, "geometry_file_id": null,
+                                                "measured_mass_kg": null, "measured_cg_m": null,
+                                                "measured_inertia_kg_m2": null, "measured_note": "" },
+                                  "files": [], "geometry_file_id": null, "geometry": geometry,
+                                  "material": null },
+                    "chosen": null, "chosen_unit": null, "units": [], "measured_cg": [], "measured_inertia": [],
+                    "editable": editable, "is_admin": false,
+                })),
+            );
+            assert!(html.contains("Geometry ambiguous") && html.contains("asm &lt;1&gt;.jt"));
+            assert_eq!(html.contains("/mass/geometry"), editable);
+            assert_eq!(html.contains("<optgroup label=\"fin\">"), editable);
+        }
+        for is_admin in [true, false] {
+            let html = render(
+                &env,
+                "materials.html",
+                with_common(json!({
+                    "materials": [{ "id": OTHER, "name": "Aluminium <7075>", "density_kg_m3": 2810.0,
+                                    "notes": "handbook", "created_at": TS, "updated_at": TS }],
+                    "is_admin": is_admin,
+                })),
+            );
+            assert!(html.contains("Aluminium &lt;7075&gt;"));
+            assert_eq!(html.contains("Add material"), is_admin);
+        }
+        render(
+            &env,
+            "materials.html",
+            with_common(json!({ "materials": [], "is_admin": false })),
         );
         let attr_def = json!({
             "id": ME, "key": "vendor", "label": "Vendor <Lieferant>", "data_type": "choice",
@@ -1575,6 +2014,7 @@ mod tests {
             run_timeout: std::time::Duration::from_secs(180),
             max_concurrent: 4,
             retention_days: 30,
+            internal_urls: Vec::new(),
         };
         use crate::config::LocalAgents;
         // the notice, and what the desktop app's Agent view runs on
@@ -1676,6 +2116,9 @@ mod tests {
                 "new_token": { "name": "ci", "value": "tc_pat_secret", "scope": "read_only" },
                 "api_base": "http://localhost:8080/api/v1",
                 "skins": crate::domain::SKINS,
+                "cad_families": crate::cadformat::families().iter()
+                    .map(|s| json!({ "id": s.id, "short": s.short, "name": s.name }))
+                    .collect::<Vec<_>>(),
                 "notify": {
                     "settings": { "email": true, "email_address": "max@example.org", "mattermost": false,
                                   "mattermost_username": null, "muted": ["item_update"] },
@@ -1688,6 +2131,12 @@ mod tests {
             })),
         );
         assert!(html.contains("tc_pat_secret"));
+        assert!(
+            html.contains("action=\"/account/preferred-cad\"")
+                && html.contains("value=\"nx\"")
+                && html.contains("Siemens NX"),
+            "preferred CAD program choice"
+        );
         assert!(
             html.contains("“ci” (read-only)")
                 && html.contains("MCP only")
@@ -1714,7 +2163,7 @@ mod tests {
                     { "id": ME, "kind": "review_requested", "title": "Review requested: CHG-000004 <x>",
                       "body": "Erika asks you to review PRT-000003/B.", "link": "/changes/1", "subject_type": "change",
                       "subject_ref": "CHG-000004", "actor_name": "Erika", "created_at": TS, "read_at": null,
-                      "email_state": "sent", "chat_state": "failed" },
+                      "email_state": "sent", "chat_state": "failed", "chat_error": "Mattermost user \"x\" not found" },
                     { "id": OTHER, "kind": "impact", "title": "Check needed: ASM-000001", "body": "",
                       "link": "/revisions/1", "subject_type": "revision", "subject_ref": "ASM-000001/A",
                       "actor_name": "Rolf", "created_at": TS, "read_at": TS, "email_state": "none", "chat_state": "none" }],
@@ -1881,6 +2330,17 @@ mod tests {
         );
 
         let answer = crate::assistant::render_markdown("## Scope\n- PRT-000001 <b>");
+        // "Open 3D preview" links: checked by open_links, label escaped
+        let links = crate::assistant::open_links(
+            &[
+                json!({ "url": "http://localhost:8080/files/0b9c3a3e-5d1f-4c9a-9e8b-1234567890ab/preview",
+                        "item": "PRT-000001", "revision": "A", "file": "<script>x</script>.stl" }),
+                json!({ "url": "https://evil.example/files/0b9c3a3e-5d1f-4c9a-9e8b-1234567890ab/preview",
+                        "item": "PRT-000002", "revision": "A", "file": "evil.stl" }),
+            ],
+            "http://localhost:8080",
+        );
+        assert_eq!(links.len(), 1);
         let html = render(
             &env,
             "assistant.html",
@@ -1890,10 +2350,16 @@ mod tests {
                 "back": "/changes/x", "error": null,
                 "run": { "label": "Brief me for this review", "html": answer, "text": "x", "truncated": true,
                          "tools": [{ "name": "get_change", "ok": true }, { "name": "bom_health", "ok": false }],
-                         "steps": 3, "model": "claude-opus-5-5", "allow_drafts": false },
+                         "steps": 3, "model": "claude-opus-5-5", "allow_drafts": false,
+                         "links": links },
             })),
         );
+        assert!(
+            !html.contains("<script>x") && !html.contains("evil"),
+            "the link is escaped and only to this server"
+        );
         for expected in [
+            "<a class=\"button small view-3d\" href=\"&#x2f;files&#x2f;0b9c3a3e-5d1f-4c9a-9e8b-1234567890ab&#x2f;preview\">Open 3D preview: PRT-000001&#x2f;A · &lt;script&gt;x&lt;&#x2f;script&gt;.stl</a>",
             "<h3>Scope</h3>",
             "<a href=\"/i/PRT-000001\">PRT-000001</a> &lt;b&gt;",
             "Is it &lt;ready&gt;?",
@@ -1952,6 +2418,13 @@ mod tests {
         assert_eq!(filter_num(Some(1.23456), None), "1.235");
         assert_eq!(filter_num(Some(2.0), Some(2)), "2");
         assert_eq!(filter_num(None, None), "—");
+        assert_eq!(filter_sig(Some(12.345678)), "12.3457");
+        assert_eq!(filter_sig(Some(0.0425)), "0.0425");
+        assert_eq!(filter_sig(Some(-1234.5)), "-1234.5");
+        assert_eq!(filter_sig(Some(2.5e-7)), "2.50000e-7");
+        assert_eq!(filter_sig(Some(0.0)), "0");
+        assert_eq!(filter_sig(Some(f64::NAN)), "—");
+        assert_eq!(filter_sig(None), "—");
         assert_eq!(filter_fixed(Some(41.0), None), "41.00");
         assert_eq!(filter_fixed(Some(0.2), Some(3)), "0.200");
         assert_eq!(filter_fixed(None, Some(3)), "—");

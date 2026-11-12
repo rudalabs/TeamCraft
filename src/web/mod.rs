@@ -9,6 +9,8 @@
 
 mod account;
 mod admin;
+// the audit log export is shared with the REST API
+pub(crate) use admin::{audit_download, audit_filter};
 mod as_built;
 mod assistant;
 mod attributes;
@@ -23,11 +25,13 @@ mod formats;
 mod imports;
 mod interchange;
 mod items;
+mod mass;
 mod notifications;
 mod personal;
 mod references;
 mod requests;
 mod revisions;
+mod season;
 mod simulations;
 mod uploads;
 mod webhooks;
@@ -92,6 +96,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/setup", post(auth_pages::setup_submit))
         .route("/auth/oidc/login", get(auth_pages::oidc_start))
         .route("/auth/oidc/callback", get(auth_pages::oidc_callback))
+        .route("/auth/oidc/reauth", get(auth_pages::oidc_reauth))
         // items
         .route(
             "/items",
@@ -109,6 +114,8 @@ pub fn router(state: &AppState) -> Router<AppState> {
         )
         .route("/items/new", get(items::new_form))
         .route("/items/{id}", get(items::show))
+        .route("/items/{id}/label", get(items::label))
+        .route("/items/{id}/qr.svg", get(items::qr_svg))
         .route("/items/{id}/master", post(items::update_master))
         .route("/items/{id}/owner", post(items::set_owner))
         .route("/items/{id}/delete", post(items::delete))
@@ -169,8 +176,20 @@ pub fn router(state: &AppState) -> Router<AppState> {
             get(revisions::preview_version),
         )
         .route("/file-versions/{id}/mesh", get(revisions::mesh_version))
+        .route(
+            "/file-versions/{id}/annotations",
+            get(revisions::annotations).post(revisions::add_annotation),
+        )
+        .route(
+            "/annotations/{id}/delete",
+            post(revisions::remove_annotation),
+        )
         // BOM
         .route("/revisions/{id}/bom", get(bom::show))
+        .route(
+            "/revisions/{id}/bom/from-references",
+            get(bom::from_references).post(bom::apply_from_references),
+        )
         .route("/revisions/{id}/bom/compare", get(personal::bom_compare))
         .route(
             "/revisions/{id}/bom/compare.xlsx",
@@ -193,6 +212,17 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/import/{id}", get(imports::preview))
         .route("/import/{id}/run", post(imports::run))
         .route("/import/{id}/discard", post(imports::discard))
+        // mass properties
+        .route("/revisions/{id}/mass", get(mass::show).post(mass::update))
+        .route("/revisions/{id}/mass/geometry", post(mass::choose_geometry))
+        .route("/revisions/{id}/mass.csv", get(mass::csv))
+        .route("/revisions/{id}/mass.json", get(mass::json_export))
+        .route(
+            "/materials",
+            get(mass::materials).post(mass::create_material),
+        )
+        .route("/materials/{id}", post(mass::update_material))
+        .route("/materials/{id}/delete", post(mass::delete_material))
         .route("/revisions/{id}/bom.csv", get(bom::csv))
         .route("/revisions/{id}/bom.xlsx", get(bom::xlsx))
         .route("/revisions/{id}/package.zip", get(bom::package))
@@ -222,6 +252,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route(
             "/as-built-deviations/{id}/delete",
             post(as_built::delete_deviation),
+        )
+        .route(
+            "/as-built-deviations/{id}/confirm",
+            post(as_built::confirm_concession),
         )
         .route("/revisions/{id}/built-units", post(as_built::record_unit))
         // simulations: basis links, result values, comparison
@@ -255,6 +289,10 @@ pub fn router(state: &AppState) -> Router<AppState> {
             post(simulations::delete_result),
         )
         .route(
+            "/revisions/{id}/simulation/fill-with-ai",
+            post(simulations::fill_with_ai),
+        )
+        .route(
             "/simulation-proposals/{id}/accept",
             post(simulations::accept_proposal),
         )
@@ -280,6 +318,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/changes/new", get(changes::new_form))
         .route("/changes/{id}", get(changes::show).post(changes::update))
         .route("/changes/{id}/items", post(changes::add_item))
+        .route("/changes/{id}/actions", post(changes::add_action))
         .route(
             "/changes/{id}/dependencies",
             post(changes::add_dependencies),
@@ -302,6 +341,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/changes/{id}/withdraw", post(changes::withdraw))
         .route("/changes/{id}/reopen", post(changes::reopen))
         .route("/changes/{id}/cancel", post(changes::cancel))
+        .route("/changes/{id}/take-over", post(changes::take_over))
         // change requests (ECR)
         .route("/requests", get(requests::list).post(requests::create))
         .route("/requests/new", get(requests::new_form))
@@ -348,6 +388,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/projects/{id}/visibility", post(admin::update_visibility))
         .route("/projects/{id}/policy", post(admin::update_policy))
         .route("/projects/{id}/access", post(admin::update_access))
+        .route("/projects/{id}/conditions", post(admin::update_conditions))
         .route(
             "/projects/{id}/access-review",
             get(admin::access_review).post(admin::confirm_access_review),
@@ -356,6 +397,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
             "/projects/{id}/access-review.csv",
             get(admin::access_review_csv),
         )
+        .route("/projects/{id}/access-log", get(admin::access_log_page))
         .route(
             "/projects/{id}/review-policy",
             post(admin::update_review_policy),
@@ -375,6 +417,15 @@ pub fn router(state: &AppState) -> Router<AppState> {
             "/projects/{id}/members/{user_id}/remove",
             post(admin::remove_member),
         )
+        .route(
+            "/projects/{id}/members/{user_id}/demote",
+            post(admin::demote_member),
+        )
+        .route(
+            "/projects/{id}/members/{user_id}/release-checkouts",
+            post(admin::release_member_checkouts),
+        )
+        .route("/projects/{id}/season", get(season::page).post(season::run))
         .route("/admin/users", get(admin::users).post(admin::create_user))
         .route(
             "/admin/users/{id}",
@@ -382,9 +433,17 @@ pub fn router(state: &AppState) -> Router<AppState> {
         )
         .route("/admin/users/{id}/password", post(admin::reset_password))
         .route("/admin/users/{id}/handover", post(admin::handover))
+        .route("/admin/users/{id}/offboard", post(admin::offboard))
+        .route(
+            "/admin/users/{id}/release-checkouts",
+            post(admin::release_user_checkouts),
+        )
+        .route("/users/{id}/holdings", get(admin::user_holdings))
         .route("/admin/audit", get(admin::audit))
+        .route("/admin/audit/export", get(admin::audit_export))
         .route("/admin/ai", get(admin::ai))
         .route("/admin/branding", get(branding::page))
+        .route("/admin/branding/name", post(branding::set_name))
         .route(
             "/admin/branding/{kind}",
             post(branding::upload).layer(DefaultBodyLimit::max(
@@ -425,6 +484,7 @@ pub fn router(state: &AppState) -> Router<AppState> {
         .route("/account/tokens", post(account::create_token))
         .route("/account/tokens/{id}/revoke", post(account::revoke_token))
         .route("/account/skin", post(account::set_skin))
+        .route("/account/preferred-cad", post(account::set_preferred_cad))
         // sign-in of the desktop app
         .route(
             "/desktop/authorize",
@@ -555,6 +615,37 @@ pub(crate) fn read_flash(headers: &HeaderMap) -> Option<Flash> {
         .and_then(|bytes| serde_json::from_slice(&bytes).ok())
 }
 
+/// A revision's file list (JSON rows with their `format` id) split for the
+/// user's preferred CAD program (`cadformat::group_by_family`): the visible
+/// group first, then – only when it has files – the collapsed group of the
+/// native files of other CAD programs with their count and program names.
+/// Display only; the template shows the second group in a `<details>`.
+pub(crate) fn file_groups(preferred: &str, files: &[Value]) -> Value {
+    let formats: Vec<&str> = files
+        .iter()
+        .map(|f| f.get("format").and_then(Value::as_str).unwrap_or(""))
+        .collect();
+    let grouping = crate::cadformat::group_by_family(preferred, &formats);
+    let (mut shown, mut other) = (Vec::new(), Vec::new());
+    for (file, collapsed) in files.iter().zip(&grouping.collapsed) {
+        if *collapsed {
+            other.push(file.clone());
+        } else {
+            shown.push(file.clone());
+        }
+    }
+    let mut groups = vec![json!({ "files": shown, "collapsed": false })];
+    if !other.is_empty() {
+        groups.push(json!({
+            "files": other,
+            "collapsed": true,
+            "count": grouping.collapsed_count(),
+            "families": grouping.other_families.join(", "),
+        }));
+    }
+    json!(groups)
+}
+
 fn me_json(me: &Actor) -> Value {
     json!({
         "id": me.id,
@@ -564,6 +655,7 @@ fn me_json(me: &Actor) -> Value {
         "avatar": domain::avatar_tint(&me.username),
         "role": me.role,
         "skin": me.skin,
+        "preferred_cad": me.preferred_cad,
         "is_admin": me.is_admin(),
         "can_edit": me.can_edit(),
     })
@@ -957,5 +1049,40 @@ mod tests {
         let single = pagination(1, 0, 50);
         assert_eq!(single["pages"], 1);
         assert!(single["next"].is_null());
+    }
+
+    #[test]
+    fn file_groups_put_other_cad_programs_into_a_second_group() {
+        let files = vec![
+            json!({ "filename": "bracket.prt", "format": "nx-part" }),
+            json!({ "filename": "bracket.sldprt", "format": "solidworks-part" }),
+            json!({ "filename": "bracket.step", "format": "step" }),
+            json!({ "filename": "bracket.ipt", "format": "inventor-part" }),
+        ];
+        let names = |g: &Value| -> Vec<String> {
+            g["files"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|f| f["filename"].as_str().unwrap().to_string())
+                .collect()
+        };
+        let groups = file_groups("nx", &files);
+        assert_eq!(groups.as_array().map(Vec::len), Some(2));
+        assert_eq!(names(&groups[0]), ["bracket.prt", "bracket.step"]);
+        assert_eq!(groups[0]["collapsed"], false);
+        assert_eq!(names(&groups[1]), ["bracket.sldprt", "bracket.ipt"]);
+        assert_eq!(groups[1]["collapsed"], true);
+        assert_eq!(groups[1]["count"], 2);
+        assert_eq!(groups[1]["families"], "SolidWorks, Inventor");
+
+        // no preference, or no file of the preferred program: one group with all
+        for preferred in ["", "creo"] {
+            let groups = file_groups(preferred, &files);
+            assert_eq!(groups.as_array().map(Vec::len), Some(1), "{preferred}");
+            assert_eq!(names(&groups[0]).len(), 4);
+        }
+        // an empty list still gives one (empty) group
+        assert_eq!(file_groups("nx", &[]).as_array().map(Vec::len), Some(1));
     }
 }

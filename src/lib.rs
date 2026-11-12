@@ -18,6 +18,7 @@ pub mod assets;
 pub mod assistant;
 pub mod auth;
 pub mod backup;
+pub mod backupcrypt;
 pub mod bomtable;
 pub mod cadformat;
 pub mod cadrefs;
@@ -30,7 +31,11 @@ pub mod error;
 pub mod fuzz_harness;
 pub mod htmltext;
 pub mod httprange;
+pub mod invasm;
 pub mod llm;
+pub mod malware;
+pub mod massprops;
+pub mod mattermost;
 pub mod mcp;
 pub mod mesh;
 pub mod metrics;
@@ -101,12 +106,15 @@ pub struct AppState {
 
 impl AppState {
     pub async fn new(config: Config, db: PgPool) -> anyhow::Result<AppState> {
-        let vault = Vault::open(&config.vault_dir).await.with_context(|| {
-            format!(
-                "cannot open the file vault at {}",
-                config.vault_dir.display()
-            )
-        })?;
+        let vault = Vault::open(&config.vault_dir)
+            .await
+            .with_context(|| {
+                format!(
+                    "cannot open the file vault at {}",
+                    config.vault_dir.display()
+                )
+            })?
+            .with_scanner(config.clamd.clone());
         let mut templates =
             templates::environment(&config.instance_name).context("loading templates failed")?;
         if let Some(a) = &config.assistant {

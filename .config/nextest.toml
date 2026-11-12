@@ -1,0 +1,78 @@
+# Test time limits for `cargo nextest run` (CI runs the tests with nextest).
+#
+# A unit test is expected to be fast: it is killed and fails after 1 second,
+# so a hang (a lock, an endless loop) shows up at once instead of stalling CI.
+# Exceptions are tests that do a lot of work on purpose – fuzzing damaged or
+# hostile input, password hashing, large meshes – and the integration tests,
+# which each create their own PostgreSQL database. A new slow unit test needs
+# an entry here with a reason, not a higher default.
+
+[profile.default]
+slow-timeout = { period = "1s", terminate-after = 1 }
+fail-fast = false
+
+# End-to-end tests: a temporary database per test (CREATE DATABASE alone
+# takes about a second in CI), backup/restore with the PostgreSQL tools.
+[[profile.default.overrides]]
+filter = "kind(test)"
+slow-timeout = { period = "60s", terminate-after = 5 }
+
+# Unit tests: two more attempts after a failure. A shared CI runner sometimes
+# stalls for seconds, and whichever fast test runs then is killed at 1 s
+# (tests of 0.015-0.17 s in a green run timed out at 1-9 s on the next,
+# without a code change). A hang or a real failure fails every attempt; a
+# stall passes on the next one and is reported as FLAKY in the summary.
+[[profile.default.overrides]]
+filter = "kind(lib) | kind(bin)"
+retries = 2
+
+# Windows only: a refused TCP connection to a closed local port takes about
+# 2 s there (the OS retries before it gives up), and starting a child process
+# is slow – milliseconds on Linux and macOS. The vault tests flush every
+# stored file to disk (sync_data/sync_all), and a flush on the Windows
+# runner can take a second when the disk is busy – 0.1 s on Linux.
+[[profile.default.overrides]]
+platform = "cfg(windows)"
+filter = """
+test(=llm::http::tests::network_errors_do_not_carry_the_url)
+| test(=malware::tests::an_unreachable_scanner_fails_closed)
+| test(=preview::tests::conversions_are_cached_including_failures)
+| test(/^vault::tests::/)
+"""
+slow-timeout = { period = "10s", terminate-after = 3 }
+
+# Unit tests that are slow by design (debug build: 0.3 s to 15 s locally).
+# The triangle limit builds 8 million triangles (22 s and hundreds of MB on
+# the Windows runner): it runs alone, so it does not starve the tests next
+# to it – the vault tests timed out on every retry while it ran.
+[[profile.default.overrides]]
+filter = """
+test(=mesh::tessellated::tests::the_triangle_limit_fails_the_preview)
+"""
+slow-timeout = { period = "60s", terminate-after = 2 }
+threads-required = "num-test-threads"
+
+[[profile.default.overrides]]
+filter = """
+test(=auth::tests::password_hash_round_trip)
+| test(=mesh::helpers::tests::large_point_clouds_are_thinned_evenly)
+| test(=htmltext::tests::hostile_input_is_bounded)
+| test(=swpart::tests::hostile_sections_are_rejected)
+| test(=swpart::tests::damaged_nist_files_never_panic)
+| test(=swpart::tests::the_walk_finds_every_section_of_the_nist_files)
+| test(=shape::tests::large_meshes_are_bounded)
+| test(=shape::tests::rotation_and_position_do_not_change_the_signature)
+| test(=simmesh::tests::many_appended_arrays_are_fast)
+| test(=simmesh::tests::damaged_fixtures_never_panic)
+| test(=mesh::rhino::tests::damaged_models_are_errors_not_panics)
+| test(=mesh::jt::tests::flipped_bytes_in_the_hex_nut_never_panic)
+| test(=mesh::jt::tests::the_hex_nut_shape_data_ends_where_it_is_read)
+| test(=mesh::jt::tests::a_polygon_of_the_largest_valence_decodes_in_linear_time)
+| test(=nxasm::tests::damaged_structures_never_panic)
+| test(=resultscan::tests::a_five_megabyte_log_with_the_value_at_the_end)
+| test(=services::similar::tests::prefilter_keeps_every_possible_hit)
+| test(=backupcrypt::tests::roundtrips_at_chunk_boundaries)
+| test(=llm::http::tests::redirects_are_not_followed_and_the_key_stays_on_the_host)
+| test(=templates::tests::every_rendered_page_is_accessible)
+"""
+slow-timeout = { period = "10s", terminate-after = 3 }

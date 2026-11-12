@@ -12,13 +12,15 @@ Background, licence and the decision: [research note](../research/mutation-testi
 `.cargo/mutants.toml` lists the files (`examine_globs`): the pure modules
 whose rules the unit tests are meant to pin down – `src/domain/**`,
 `httprange`, `pagecontext`, `util`, `htmltext`, `resultscan`, `bomtable`,
-`cadformat`, `cadrefs` and `stepbom`. Only `cargo test --lib` runs per
+`cadformat`, `cadrefs` and `stepbom`, plus the 3D readers in `src/mesh/` and
+`src/simmesh/` (untrusted input, unit tests per format). STEP goes through
+the truck CAD kernel and stays out (`exclude_globs`: `mesh/step.rs`,
+`mesh/tessellated.rs`); the own Part 21 reader `mesh/p21.rs` is in. Only `cargo test --lib` runs per
 mutant: no PostgreSQL, no integration tests in `tests/`. A rule that only an
 integration test checks therefore shows up as *missed* here – the fix is a
 unit test next to the rule, which is the point.
 
-Services, handlers, templates and the 3D readers are not examined yet
-(*What to cover next* in `docs/OPEN_WORK.md`).
+Services, handlers and templates are not examined yet (*What to cover next* in `docs/OPEN_WORK.md`).
 
 ## Running it locally
 
@@ -47,13 +49,13 @@ costs twice here.
 
 The results land in `target/mutants.out/` (`output` in the configuration):
 
-| File | Meaning |
-|---|---|
-| `caught.txt` | a test failed – good |
-| `missed.txt` | every test passed with the change – a gap in the tests, or an equivalent mutant |
-| `timeout.txt` | the tests hung (a loop bound depends on the changed code); counts as caught but is slow |
-| `unviable.txt` | the change did not compile – no information |
-| `outcomes.json` | everything, machine-readable; `log/` has the build and test output per mutant |
+| File            | Meaning                                                                                 |
+|-----------------|-----------------------------------------------------------------------------------------|
+| `caught.txt`    | a test failed – good                                                                    |
+| `missed.txt`    | every test passed with the change – a gap in the tests, or an equivalent mutant         |
+| `timeout.txt`   | the tests hung (a loop bound depends on the changed code); counts as caught but is slow |
+| `unviable.txt`  | the change did not compile – no information                                             |
+| `outcomes.json` | everything, machine-readable; `log/` has the build and test output per mutant           |
 
 `cargo mutants --iterate` reruns only what was missed or new since the last
 run in the same output directory – the quick loop while writing the tests.
@@ -70,8 +72,8 @@ that must stay in TiB instead of indexing past the unit table. Do not test
 the mutation ("`<` is not `<=`"); test the behaviour a user or caller would
 see.
 
-Some mutants cannot be caught because they do not change behaviour
-(*equivalent mutants*): `x >= 0` on an unsigned value, a capacity hint, a
+Some mutants cannot be caught because they do not change behaviour (*equivalent mutants*): `x >= 0` on an unsigned
+value, a capacity hint, a
 cache that only saves time. Leave them missed and say so in the pull request,
 or – when the same pattern keeps coming back – add an `exclude_re` to
 `.cargo/mutants.toml` **with a comment** saying why. TeamCraft does not use
@@ -85,8 +87,8 @@ Workflow *Mutation testing* (`.github/workflows/mutants.yml`):
 * **Pull requests** that touch `src/**`: `cargo mutants --in-diff` over the
   pull request's diff – only mutants in changed lines of examined files. No
   such lines, no run. **Report-only for now**: missed mutants appear as
-  warnings on the changed lines, in the job summary and in the artifact
-  *mutants-pr*; the check stays green. A broken run (the unmutated tests
+  warnings on the changed lines, in the job summary and in the artifact *mutants-pr*; the check stays green. A broken
+  run (the unmutated tests
   fail, a diff that does not match, a tool error) fails the job.
   `--in-place` runs one mutant at a time (about 30 s each), so the run is
   stopped after 80 minutes with a warning and partial results; check a large

@@ -162,6 +162,8 @@ pub async fn assign(
 }
 
 /// Accepts, rejects or defers a request. Rejecting and deferring need a reason.
+/// In a group whose review policy has `requester_cannot_decide`, the
+/// requester may not decide (403) – an administrator neither.
 pub async fn decide(
     pool: &PgPool,
     actor: &Actor,
@@ -180,6 +182,14 @@ pub async fn decide(
     let projects = project_ids(&mut tx, id).await?;
     if !may_triage(actor, &projects) {
         return Err(forbidden(&request, "decide on"));
+    }
+    if request.requested_by == actor.id
+        && crate::services::project_policy::requester_cannot_decide(&mut tx, &projects).await?
+    {
+        return Err(AppError::Forbidden(format!(
+            "You raised {}; in its project group another CAD editor decides on it.",
+            request.number
+        )));
     }
     let to = decision.status();
     set_status(&mut tx, &request, to).await?;

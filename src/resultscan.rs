@@ -895,6 +895,11 @@ mod tests {
         assert!(!glob_matches("*.log", "a.logx"));
         assert!(glob_matches("a*b*c", "aXXbYYc"));
         assert!(!glob_matches("a*b*c", "aXXbYY"));
+        // trailing stars match nothing as well (found by cargo mutants)
+        assert!(glob_matches("summary*", "summary"));
+        assert!(glob_matches("run.log**", "run.log"));
+        assert!(glob_matches("*", ""));
+        assert!(!glob_matches("summary*x", "summary"));
         // pathological patterns stay fast
         let name = "a".repeat(5000);
         assert!(!glob_matches(
@@ -985,6 +990,17 @@ mod tests {
         assert_eq!(
             extract("summary.csv", de.as_bytes(), &[t.clone()])[0].value,
             12.5
+        );
+        // a numeric column name is a header, not the first value (found by
+        // cargo mutants)
+        let mut first = template("csv", "summary.csv", "");
+        first.csv_column = "100".into();
+        first.pick = "first".into();
+        let temps = "case,100,200\nA,1.5,2.5\nB,3.5,4.5\n";
+        let found = extract("summary.csv", temps.as_bytes(), &[first]);
+        assert_eq!(
+            (found[0].value, found[0].source.as_str()),
+            (1.5, "summary.csv:2")
         );
         // no such column
         t.csv_column = "nope".into();
@@ -1272,5 +1288,171 @@ mod tests {
         assert!(no_column.validated().is_err());
         assert!(scannable("run.trn") && scannable("x.F06") && scannable("m.java"));
         assert!(!scannable("pipe.cas.h5") && !scannable("run.op2"));
+    }
+
+    /// Found by cargo mutants: the most frequent delimiter wins, a tie keeps
+    /// the earlier one of `, ; tab |`, and no delimiter means a comma.
+    #[test]
+    fn csv_delimiter() {
+        let lines = |s: &[&str]| s.iter().map(|l| l.to_string()).collect::<Vec<_>>();
+        assert_eq!(delimiter(&lines(&["a;b;c", "1;2;3"])), b';');
+        assert_eq!(
+            delimiter(&lines(&["a\tb", "1,5\t2,5"])),
+            b',',
+            "2 commas vs 2 tabs"
+        );
+        assert_eq!(
+            delimiter(&lines(&["a;b", "1,2"])),
+            b',',
+            "a tie keeps the comma"
+        );
+        assert_eq!(delimiter(&lines(&["a|b|c"])), b'|');
+        assert_eq!(delimiter(&lines(&["just text"])), b',');
+    }
+
+    /// Found by cargo mutants: a template sent without `enabled` (REST API)
+    /// is enabled.
+    #[test]
+    fn templates_are_enabled_unless_said_otherwise() {
+        let t: TemplateInput = serde_json::from_str(
+            r#"{"name":"Max stress","file_pattern":"*.frd","method":"regex"}"#,
+        )
+        .unwrap();
+        assert!(t.enabled);
+        let t: TemplateInput = serde_json::from_str(
+            r#"{"name":"Max stress","file_pattern":"*.frd","method":"regex","enabled":false}"#,
+        )
+        .unwrap();
+        assert!(!t.enabled);
+    }
+
+    /// Found by cargo mutants: `pick` is `last` by default, `first` stays,
+    /// anything else is refused.
+    #[test]
+    fn template_pick() {
+        let with = |pick: &str| TemplateInput {
+            name: "Max stress".into(),
+            file_pattern: "*.dat".into(),
+            method: "regex".into(),
+            pattern: r"max = (\S+)".into(),
+            pick: pick.into(),
+            enabled: true,
+            ..Default::default()
+        };
+        assert_eq!(with("").validated().unwrap().pick, "last");
+        assert_eq!(with("first").validated().unwrap().pick, "first");
+        assert_eq!(with(" last ").validated().unwrap().pick, "last");
+        assert!(with("middle").validated().is_err());
+    }
+
+    /// Found by cargo mutants: the checks of `TemplateInput::validated`.
+    #[test]
+    fn template_validation() {
+        let regex = TemplateInput {
+            name: "Max stress".into(),
+            file_pattern: "*.dat".into(),
+            method: "regex".into(),
+            pattern: r"max = (\S+)".into(),
+            enabled: true,
+            ..Default::default()
+        };
+        // limits: finite, and the lower one not above the upper one
+        let limits = |lo: Option<f64>, hi: Option<f64>| {
+            TemplateInput {
+                lower_limit: lo,
+                upper_limit: hi,
+                ..regex.clone()
+            }
+            .validated()
+        };
+        assert!(limits(Some(1.0), Some(2.0)).is_ok());
+        assert!(limits(Some(2.0), Some(2.0)).is_ok(), "equal limits");
+        assert!(limits(Some(-5.0), None).is_ok());
+        assert!(limits(Some(3.0), Some(2.0)).unwrap_err().contains("above"));
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(limits(Some(bad), None).unwrap_err().contains("finite"));
+            assert!(limits(None, Some(bad)).unwrap_err().contains("finite"));
+        }
+        // a regular expression with exactly one capture group
+        for bad in ["max = \\S+", "(max) = (\\S+)", "("] {
+            let t = TemplateInput {
+                pattern: bad.into(),
+                ..regex.clone()
+            };
+            assert!(t.validated().is_err(), "{bad}");
+        }
+        // file names, not paths
+        for bad in ["out/*.dat", "out\\*.dat"] {
+            let t = TemplateInput {
+                file_pattern: bad.into(),
+                ..regex.clone()
+            };
+            assert!(t.validated().unwrap_err().contains("not paths"), "{bad}");
+        }
+        // CSV: a column; key column and key value together or not at all
+        let csv = |column: &str, key_column: &str, key_value: &str| {
+            TemplateInput {
+                method: "csv".into(),
+                pattern: String::new(),
+                csv_column: column.into(),
+                csv_key_column: key_column.into(),
+                csv_key_value: key_value.into(),
+                ..regex.clone()
+            }
+            .validated()
+        };
+        let ok = csv("Stress", "", "").unwrap();
+        assert_eq!(
+            (ok.csv_column.as_str(), ok.pattern.as_str()),
+            ("Stress", "")
+        );
+        assert!(csv("Stress", "Load case", "LC1").is_ok());
+        assert!(csv("", "", "").is_err(), "a column is needed");
+        assert!(csv("Stress", "Load case", "").unwrap_err().contains("both"));
+        assert!(csv("Stress", "", "LC1").unwrap_err().contains("both"));
+    }
+
+    /// Found by cargo mutants: both limits of an exchange file are inclusive
+    /// and hold beyond the first value past them.
+    #[test]
+    fn exchange_file_limits() {
+        use crate::services::simulations::MAX_RESULTS;
+        let values = |n: usize| {
+            let rows: Vec<String> = (0..n)
+                .map(|i| format!(r#"{{"name":"v{i}","value":{i}}}"#))
+                .collect();
+            format!("[{}]", rows.join(","))
+        };
+        assert_eq!(
+            parse_exchange(EXCHANGE_JSON, values(MAX_RESULTS).as_bytes())
+                .unwrap()
+                .len(),
+            MAX_RESULTS
+        );
+        for n in [MAX_RESULTS + 1, MAX_RESULTS + 2] {
+            let err = parse_exchange(EXCHANGE_JSON, values(n).as_bytes()).unwrap_err();
+            assert!(err.contains("more than"), "{n}: {err}");
+        }
+        // exactly EXCHANGE_MAX_BYTES (padded with white space) is read
+        let size = usize::try_from(EXCHANGE_MAX_BYTES).unwrap();
+        let mut padded = br#"[{"name":"a","value":1}]"#.to_vec();
+        padded.resize(size, b' ');
+        assert_eq!(parse_exchange(EXCHANGE_JSON, &padded).unwrap().len(), 1);
+        padded.push(b' ');
+        let err = parse_exchange(EXCHANGE_JSON, &padded).unwrap_err();
+        assert!(err.contains("larger than"), "{err}");
+    }
+
+    /// The documented limits (found by cargo mutants: behavioural tests
+    /// would have to read megabytes).
+    #[test]
+    fn limits() {
+        assert_eq!(EXCHANGE_MAX_BYTES, 1024 * 1024);
+        assert_eq!(SCAN_MAX_BYTES, 2 * 1024 * 1024);
+        assert_eq!(SCAN_MAX_LINES, 200_000);
+        assert_eq!(MAX_LINE_CHARS, 8 * 1024);
+        assert_eq!(MAX_TEMPLATES, 100);
+        assert_eq!(MAX_PATTERN_LEN, 500);
+        assert_eq!(REGEX_SIZE_LIMIT, 256 * 1024);
     }
 }

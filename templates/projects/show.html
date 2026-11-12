@@ -24,24 +24,36 @@
 <div class="grid grid-2">
   <section class="card">
     <h2>Members</h2>
+    {% if can_manage %}<p class="small"><a href="/projects/{{ project.id }}/season">Season handover</a> <span class="hint">– release, demote, remove or set "member until" for many members at once</span></p>{% endif %}
     {% if members %}
     <table>
-      <thead><tr><th scope="col">Name</th><th scope="col">Role</th><th scope="col">Added</th><th scope="col"></th></tr></thead>
+      <thead><tr><th scope="col">Name</th><th scope="col">Role</th><th scope="col">Added</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
       <tbody>
       {% for u in members %}
         <tr>
-          <td>{{ u.display_name }} <span class="muted small mono">{{ u.username }}</span>{% if u.manager %} <span class="badge badge-member">manager</span>{% endif %}{% if not u.active %} <span class="badge badge-obsolete">deactivated</span>{% endif %}</td>
+          <td>{{ u.display_name }} <span class="muted small mono">{{ u.username }}</span>{% if u.manager %} <span class="badge badge-member">manager</span>{% endif %}{% if not u.active %} <span class="badge badge-obsolete">deactivated</span>{% endif %}{% if can_manage and u.checkouts > 0 %} <span class="muted small">{{ u.checkouts }} checked out</span>{% endif %}{% if can_manage %} <a class="small" href="/users/{{ u.user_id }}/holdings">holds…</a>{% endif %}</td>
           <td><span class="badge badge-{{ u.role }}">{{ u.role|label }}</span></td>
           <td class="small nowrap">{% if u.source == "oidc" %}via IdP group{% else %}manually{% endif %} · {{ m.time(u.added_at) }}</td>
           <td class="right nowrap">
-            {% if can_manage and not u.manager %}
+            {% if can_manage and u.checkouts > 0 and (not u.active or me.is_admin) %}
+            <form class="inline" method="post" action="/projects/{{ project.id }}/members/{{ u.user_id }}/release-checkouts"
+                  data-confirm="Release the {{ u.checkouts }} check-outs of {{ u.display_name }} in {{ project.code }}? Changes they have not checked in stay in their working folder.">
+              <button class="small" type="submit">Release {{ u.checkouts }} check-outs</button>
+            </form>
+            {% endif %}
+            {% if can_manage and not u.manager and u.active %}
             <form class="inline" method="post" action="/projects/{{ project.id }}/members">
               <input type="hidden" name="username" value="{{ u.username }}">
               <input type="hidden" name="manager" value="1">
               <button class="small" type="submit" title="Managers edit the group and its members">Make manager</button>
             </form>
+            {% elif can_manage and u.manager %}
+            <form class="inline" method="post" action="/projects/{{ project.id }}/members/{{ u.user_id }}/demote"
+                  data-confirm="{{ u.display_name }} will no longer manage {{ project.code }}. Continue?">
+              <button class="small" type="submit" title="Keeps the membership; at least one active manager must remain">Demote</button>
+            </form>
             {% endif %}
-            {% if u.source == "oidc" and project.oidc_group %}
+            {% if u.source == "oidc" and project.oidc_group and (u.active or not can_manage) %}
             <span class="muted small" title="Removed when the identity provider drops the user from {{ project.oidc_group }}">via IdP</span>
             {% elif can_manage or u.user_id == me.id %}
             <form class="inline" method="post" action="/projects/{{ project.id }}/members/{{ u.user_id }}/remove"
@@ -55,6 +67,26 @@
       </tbody>
     </table>
     {% else %}<p class="empty">No members yet.</p>{% endif %}
+    {% if former_holders %}
+    <h3>Former members still holding check-outs</h3>
+    <table>
+      <thead><tr><th scope="col">Name</th><th scope="col">Check-outs</th><th scope="col"><span class="visually-hidden">Actions</span></th></tr></thead>
+      <tbody>
+      {% for h in former_holders %}
+        <tr>
+          <td>{{ h.display_name }} <span class="muted small mono">{{ h.username }}</span>{% if not h.active %} <span class="badge badge-obsolete">deactivated</span>{% endif %}</td>
+          <td>{{ h.checkouts }}</td>
+          <td class="right nowrap">
+            <form class="inline" method="post" action="/projects/{{ project.id }}/members/{{ h.user_id }}/release-checkouts"
+                  data-confirm="Release the {{ h.checkouts }} check-outs of {{ h.display_name }} in {{ project.code }}? Changes they have not checked in stay in their working folder.">
+              <button class="small" type="submit">Release {{ h.checkouts }} check-outs</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
     {% if can_manage %}
       {% if candidates %}
       <h3>Add member</h3>
@@ -67,7 +99,7 @@
       </form>
       {% endif %}
       {% if project.oidc_group %}
-      <p class="hint">Members of the IdP group <span class="mono">{{ project.oidc_group }}</span> are added and removed automatically at their SSO login{% if not oidc_enabled %} (SSO is not configured on this instance){% endif %}; to revoke such a membership, remove the user from the IdP group. Making them a manager keeps the membership synchronised. Manually added members stay. A manually added member who is also in the IdP group comes back at their next SSO login when removed here.</p>
+      <p class="hint">Members of the IdP group <span class="mono">{{ project.oidc_group }}</span> are added and removed automatically at their SSO login{% if not oidc_enabled %} (SSO is not configured on this instance){% endif %}; to revoke such a membership, remove the user from the IdP group. A deactivated user's synchronised membership can be removed here (SSO refuses them, so it cannot come back). Making them a manager keeps the membership synchronised; Demote lowers it again. Manually added members stay. A manually added member who is also in the IdP group comes back at their next SSO login when removed here.</p>
       {% endif %}
     {% endif %}
   </section>
@@ -128,6 +160,9 @@
       <input type="text" name="role_group" maxlength="40" value="{% if review_policy.role_group %}{{ review_policy.role_group.code }}{% endif %}">
       {% if review_policy.role_group_hidden %}<span class="hint">A role group is set that you cannot see; saving this form with the field empty removes it.</span>{% endif %}
     </label>
+    <label class="check"><input type="checkbox" name="obsolete_requires_change" value="1"{% if review_policy.obsolete_requires_change %} checked{% endif %}> Obsolete and supersede only through a change order <span class="hint">the direct buttons are refused; add an obsolete or supersede line to a change order instead, which the reviewers approve</span></label>
+    <label class="check"><input type="checkbox" name="requester_cannot_decide" value="1"{% if review_policy.requester_cannot_decide %} checked{% endif %}> Requesters do not decide their own change requests <span class="hint">another CAD editor of the group accepts, rejects or defers them</span></label>
+    <label class="check"><input type="checkbox" name="concessions_need_review" value="1"{% if review_policy.concessions_need_review %} checked{% endif %}> A reviewer confirms each "use as is" deviation <span class="hint">as-built changes: before approving, a reviewer other than the person who recorded it confirms every "use as is" concession</span></label>
     <p class="hint">Applies to every change that touches items of this group. A change that cannot meet the policy of all its groups is refused when it is submitted. A single rejection always rejects the change.</p>
     <div class="actions"><button class="primary" type="submit">Save</button></div>
   </form>
@@ -137,7 +172,8 @@
 {% if policy %}
 <section class="card" id="need-to-know">
   <h2>Need to know: administrator access</h2>
-  <p><a href="/projects/{{ project.id }}/access-review">Access review and evidence report</a></p>
+  <p><a href="/projects/{{ project.id }}/access-review">Access review and evidence report</a>
+    {% if review_schedule and review_schedule.due %}<span class="badge badge-in_review">access review due</span>{% endif %}</p>
   {% if not readable %}<p class="hint">Your administrator access to this group is closed: you manage it, but you cannot read its items, files or changes.</p>{% endif %}
   <form class="stack" method="post" action="/projects/{{ project.id }}/policy">
     <label>Administrators who are not members
@@ -193,26 +229,46 @@
     <label>Keep the log for (days) <span class="hint">empty keeps it until purged with <span class="mono">teamcraft access-log purge</span></span>
       <input type="number" name="retention_days" min="1" max="36500" value="{% if policy.access.log_retention_days %}{{ policy.access.log_retention_days }}{% endif %}">
     </label>
+    <label>Review the access every (days) <span class="hint">empty = no schedule; the managers are reminded when a review is due</span>
+      <input type="number" name="review_interval_days" min="1" max="3650" value="{% if policy.access.review_interval_days %}{{ policy.access.review_interval_days }}{% endif %}">
+    </label>
     <div class="actions"><button class="primary" type="submit">Save</button></div>
   </form>
   <h3>Read and download log</h3>
   {% if access_entries %}
   <div class="table-wrap">
   <table>
-    <thead><tr><th scope="col">When</th><th scope="col">Who</th><th scope="col">What</th><th scope="col">Object</th><th scope="col">Channel</th><th scope="col">Address</th></tr></thead>
+    <thead><tr><th scope="col">When</th><th scope="col">Who</th><th scope="col">What</th><th scope="col">Object</th><th scope="col">Through</th><th scope="col">Channel</th><th scope="col">Address</th></tr></thead>
     <tbody>
     {% for e in access_entries %}
-    <tr><td>{{ m.time(e.at) }}</td><td>{{ e.username }}</td><td>{{ e.kind }}</td><td>{{ e.label }}</td><td>{{ e.channel }}</td><td class="mono">{{ e.client_address or "" }}</td></tr>
+    <tr><td>{{ m.time(e.at) }}</td><td>{{ e.username }}</td><td>{{ e.kind }}</td><td>{{ e.label }}</td><td>{{ e.detail }}</td><td>{{ e.channel }}</td><td class="mono">{{ e.client_address or "" }}</td></tr>
     {% endfor %}
     </tbody>
   </table>
   </div>
-  <p class="hint">The newest 50 entries; the REST API lists more (<span class="mono">GET /api/v1/projects/{code}/access-log</span>).</p>
+  <p><a href="/projects/{{ project.id }}/access-log">The whole log, with filters</a> <span class="hint">(here: the newest 50 entries; also <span class="mono">GET /api/v1/projects/{code}/access-log</span>)</span></p>
   {% elif not readable %}
   <p class="muted">The log is shown to readers of the group; your administrator access to it is closed.</p>
   {% else %}
   <p class="muted">Nothing logged{% if not policy.access.read_log %} (the log is off){% endif %}.</p>
   {% endif %}
+</section>
+<section class="card" id="conditions">
+  <h2>Need to know: conditions on membership</h2>
+  <p class="hint">Besides being a member, a reader must meet every condition set here, or the group is hidden from them – administrators included. Empty fields set no condition.</p>
+  <form class="stack" method="post" action="/projects/{{ project.id }}/conditions">
+    <label>Required claims of the identity provider <span class="hint">one per line: <span class="mono">claim = value, value</span> (e.g. <span class="mono">site = main-office, partner-workshop</span>); taken from the last single sign-on, compared without case – local accounts never meet them</span>
+      <textarea name="required_claims" rows="3" maxlength="4000">{{ claim_lines or "" }}</textarea>
+    </label>
+    <label>Allowed networks <span class="hint">address ranges, one per line (e.g. <span class="mono">10.20.0.0/16</span>){% if my_address %}; your address is <span class="mono">{{ my_address }}</span>{% endif %}</span>
+      <textarea name="allowed_networks" rows="3" maxlength="4000">{{ policy.conditions.allowed_networks | join("\n") }}</textarea>
+    </label>
+    <label>Maximum sign-in age (hours) <span class="hint">the group is visible for so many hours after signing in; tokens count from the last sign-in</span>
+      <input type="number" name="max_signin_age_hours" min="1" max="8760" value="{% if policy.conditions.max_signin_age_hours %}{{ policy.conditions.max_signin_age_hours }}{% endif %}">
+    </label>
+    <p class="hint">Conditions that would hide the group from you are refused. Every change is audited and the other managers are told; a member refused by a condition is recorded once per session.</p>
+    <div class="actions"><button class="primary" type="submit">Save</button></div>
+  </form>
 </section>
 {% endif %}
 
@@ -253,7 +309,7 @@
   {% if result_templates %}
   <div class="table-wrap">
   <table>
-    <thead><tr><th scope="col">Result</th><th scope="col">Files</th><th scope="col">Finds</th><th scope="col">Unit</th><th scope="col" class="num">Limits</th>{% if can_manage %}<th scope="col"></th>{% endif %}</tr></thead>
+    <thead><tr><th scope="col">Result</th><th scope="col">Files</th><th scope="col">Finds</th><th scope="col">Unit</th><th scope="col" class="num">Limits</th>{% if can_manage %}<th scope="col"><span class="visually-hidden">Actions</span></th>{% endif %}</tr></thead>
     <tbody>
     {% for t in result_templates %}
       <tr>

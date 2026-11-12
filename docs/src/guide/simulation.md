@@ -25,10 +25,10 @@ Exodus II, LS-DYNA, …) but does not parse them.
   `.f04`, `.pch` and `.op2` are Nastran results. A text `.fem` is an
   OptiStruct/HyperMesh deck, not an NX FE model.
 * **Fluent:** case, data and mesh files – legacy (`.cas`, `.dat`, `.msh`),
-  gzip-compressed (`.cas.gz`, …, checked by the gzip magic) and HDF5
-  (`.cas.h5`, `.dat.h5`, `.msh.h5`, checked by the HDF5 signature) – plus the
-  project (`.flprj`), CFD-Post data (`.cdat`), journals (`.jou`), transcripts
-  (`.trn`) and report files (`report-file-*.out`).
+  gzip-compressed (`.cas.gz`, …, checked by the gzip magic) and HDF5 (`.cas.h5`, `.dat.h5`, `.msh.h5`, checked by the
+  HDF5 signature) – plus the
+  project (`.flprj`), CFD-Post data (`.cdat`), journals (`.jou`), transcripts (`.trn`) and report files
+  (`report-file-*.out`).
 * **STAR-CCM+:** the `.sim` (when its beginning names STAR-CCM+), the
   solution history (`.simh`) and macros (`.java` files that name STAR-CCM+ or
   import its API – other Java sources stay unclassified).
@@ -43,13 +43,13 @@ search, the assistant and the extraction templates (below).
 The **Based on** card of a simulation revision lists the revisions it was
 computed with, each with a role:
 
-| Role      | Typical basis                                    |
-|-----------|--------------------------------------------------|
-| Geometry  | the part or assembly revision that was analysed  |
-| Mesh      | a mesh / FE model kept as its own item           |
-| Material  | a material specification or data sheet           |
-| Load case | the load specification or a test report          |
-| Other     | anything else the result depends on              |
+| Role      | Typical basis                                   |
+|-----------|-------------------------------------------------|
+| Geometry  | the part or assembly revision that was analysed |
+| Mesh      | a mesh / FE model kept as its own item          |
+| Material  | a material specification or data sheet          |
+| Load case | the load specification or a test report         |
+| Other     | anything else the result depends on             |
 
 Add a basis by item number, revision code (empty = latest revision) and,
 optionally, a **file name**: TeamCraft then pins the *current version* of
@@ -57,6 +57,22 @@ that file, so the simulation records exactly which file version it used.
 Like BOM lines the basis links belong to the simulation revision: they
 change only while it is checked out, *Revise* copies them, and they are
 frozen when the simulation is released.
+
+**New simulation from a part or assembly.** On the page of a part or assembly
+revision, *New simulation based on PRT-000002/A* (card *Simulations* and the *More* menu) opens the new-item form
+prefilled from that revision: the basis
+line with a role select (geometry by default), the type fixed to Simulation, the
+name `Simulation – <name of the basis>`, a description with the basis
+revision and material, and the project group of the basis (or your first group
+when you may not create items there – the form says so). Unit, classification,
+material, mass and cost do not apply to a simulation and are hidden; the item
+number is generated from the group's scheme (the hint shows the next one).
+Creating adds the basis link in the same transaction: the current version of the
+STEP file of the basis revision (else its first CAD file) is pinned, without a
+file the revision alone is linked. You land on the basis card of the new
+simulation, which is checked out to you. A basis you may not read behaves like
+a missing one: the plain form is shown and nothing of it is echoed. Further
+bases are added on the Basis card.
 
 The part or assembly shows the other side in its **Simulations** card: every
 simulation whose latest revision is based on it, with state, failed results
@@ -70,8 +86,8 @@ A simulation is **out of date** when, for one of its bases,
 * the basis revision became obsolete, or
 * the pinned file has a newer version (or the pinned version was deleted).
 
-The reason is shown next to the basis (*PRT-000012/C was released
-(simulated: B)*). A basis in a restricted group that the reader may not see
+The reason is shown next to the basis (*PRT-000012/C was released (simulated: B)*). A basis in a restricted group that
+the reader may not see
 shows no reason (see [Read permissions](../admin/permissions.md)). Releasing or obsoleting a basis also **flags the
 simulation for a check** through the normal [change
 propagation](structure.md#change-propagation): the simulation shows *Check
@@ -88,8 +104,8 @@ has changed since; without a pinned file TeamCraft cannot tell.
 ## Results
 
 The **Results** card holds the key numbers of the run: name, value, unit,
-optional lower and upper limit, load case, solver and solver version. A value
-**passes** when *lower limit ≤ value ≤ upper limit* (limits inclusive, either
+optional lower and upper limit, load case, solver and solver version. A value **passes** when *lower limit ≤ value ≤
+upper limit* (limits inclusive, either
 may be empty) and **fails** otherwise; values without limits are informative.
 The card summarises failed and passed values; the part's *Simulations* card
 shows the number of failed values.
@@ -108,23 +124,23 @@ Optional columns: `solver`, `solver_version`, `note`. Semicolons, tabs,
 decimal commas and German column names (`Kennwert`, `Wert`, `Einheit`,
 `Untergrenze`, `Obergrenze`, `Lastfall`) work too; `min`/`max` are accepted
 as limits. A value with the same name and load case is updated, new ones are
-appended; *Replace all values* removes the values that are not in the file.
-*CSV* on the card exports the table in the same layout.
+appended; *Replace all values* removes the values that are not in the file. *CSV* on the card exports the table in the
+same layout.
 
-Solver scripts write their results through the REST API
-(`PUT …/simulation/results` replaces the set in one transaction; see the
+Solver scripts write their results through the REST API (`PUT …/simulation/results` replaces the set in one transaction;
+see the
 [REST API](../reference/api.md#simulations)).
 
 ### Solver summary of a file
 
-For solver output a one-line summary appears next to the file on the revision page
-(and in the vault explorer): solver and version, how the run ended (`converged`,
+For solver output a one-line summary appears next to the file on the revision page (and in the vault explorer): solver
+and version, how the run ended (`converged`,
 `END OF JOB`, `fatal`), the last iteration or time step, and the number of `FATAL`
 and `WARNING` lines. It is made at check-in from the **first and the last 64 KiB**
 of the file only, so the counts cover those two windows, not the whole file – the
 line says so. Supported: Fluent transcripts (`.trn`) and report files, Nastran
-`.f06` and decks (`SOL`), STAR-CCM+ macros (`.java`) and batch logs
-(`.log`/`.txt` that name STAR-CCM+). The summary is a hint read from a
+`.f06` and decks (`SOL`), STAR-CCM+ macros (`.java`) and batch logs (`.log`/`.txt` that name STAR-CCM+). The summary is
+a hint read from a
 user-written file, never a verified result; the MCP tools mark it as untrusted
 data. The rules follow public documentation and typical output and are **not yet
 checked against real files** of these programs; a file that does not match shows
@@ -163,21 +179,21 @@ finds one number in a small *text* file (`.txt`, `.csv`, `.log`, `.out`,
 `.dat`, `.rpt`, `.html`, Fluent `.trn` and `.jou`, Nastran `.f06`, `.f04` and
 `.pch`, STAR-CCM+ `.java`, … – the first 2 MB are read, and with `pick = last`
 the last 2 MB of a larger file as well). An HTML report is
-not read as markup: the template sees the text TeamCraft extracted from it
-(see below), one line per table row with the cells separated by ` | `, so
+not read as markup: the template sees the text TeamCraft extracted from it (see below), one line per table row with the
+cells separated by ` | `, so
 `Maximum stress \| ([-+0-9.eE]+) \| MPa` finds the row
 `Maximum stress | 152.4 | MPa`, and a `csv` template reads such a table
 with `|` as the separator (always for an HTML file, whatever the title and
 paragraphs above the table contain; an empty header cell keeps its column).
 
-| Field | Meaning |
-|---|---|
-| `name` | the result's name (with `load_case`: the key of the value) |
-| `file_pattern` | file names it applies to, `*` and `?`, case-insensitive, e.g. `*.log` |
-| `method` | `regex`: the first capture group of `pattern` on a line is the number; `csv`: the column `csv_column` (header name), optionally only the row where `csv_key_column` = `csv_key_value`; `table`: the same for a whitespace-separated table with quoted column names (Fluent's `report-file-*.out`) |
-| `pick` | `last` (default) or `first` match – a solver log reports the final value last. `last` reads the end of a file larger than 2 MB first (its last 2 MB, from the first whole line on) and falls back to the beginning; a `csv`/`table` header always comes from the beginning. `first` reads the beginning only |
-| `unit`, `lower_limit`, `upper_limit`, `load_case`, `solver` | stored with the value; the limits decide pass or fail |
-| `enabled` | switch a template off without deleting it |
+| Field                                                       | Meaning                                                                                                                                                                                                                                                                                                      |
+|-------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `name`                                                      | the result's name (with `load_case`: the key of the value)                                                                                                                                                                                                                                                   |
+| `file_pattern`                                              | file names it applies to, `*` and `?`, case-insensitive, e.g. `*.log`                                                                                                                                                                                                                                        |
+| `method`                                                    | `regex`: the first capture group of `pattern` on a line is the number; `csv`: the column `csv_column` (header name), optionally only the row where `csv_key_column` = `csv_key_value`; `table`: the same for a whitespace-separated table with quoted column names (Fluent's `report-file-*.out`)            |
+| `pick`                                                      | `last` (default) or `first` match – a solver log reports the final value last. `last` reads the end of a file larger than 2 MB first (its last 2 MB, from the first whole line on) and falls back to the beginning; a `csv`/`table` header always comes from the beginning. `first` reads the beginning only |
+| `unit`, `lower_limit`, `upper_limit`, `load_case`, `solver` | stored with the value; the limits decide pass or fail                                                                                                                                                                                                                                                        |
+| `enabled`                                                   | switch a template off without deleting it                                                                                                                                                                                                                                                                    |
 
 Example: `Pressure drop:\s*([-+0-9.eE]+)\s*Pa` on `*.log`. Regular
 expressions run in linear time (no backtracking) and are limited in size, so a
@@ -227,8 +243,8 @@ of both when they are uploaded, so the assistant can read it with
   one line with the cells separated by ` | `
   (`Equivalent (von Mises) stress | 0.0213 | 152.4 | MPa`); numbers, signs,
   exponents and units stay as written, character references (`&deg;`,
-  `&nbsp;`, `&#176;`) are decoded. Scripts, styles, comments, embedded
-  (base64) images and **hidden elements** (`hidden`, `aria-hidden="true"`,
+  `&nbsp;`, `&#176;`) are decoded. Scripts, styles, comments, embedded (base64) images and **hidden elements**
+  (`hidden`, `aria-hidden="true"`,
   inline `display:none` / `visibility:hidden`) are skipped – hidden text is
   not part of the report and could carry instructions for the assistant. The
   charset comes from a byte order mark or `<meta charset>`, else UTF-8, else
@@ -244,13 +260,23 @@ of both when they are uploaded, so the assistant can read it with
   `[… middle of the file left out …]` – where a solver writes its status and
   final values.
 
-The quick action **Fill result values from the report** on the simulation page
-(drafts must be allowed) – or the MCP tool `propose_result_values` – proposes
+The **Fill with AI…** button on the *Results* card (shown to editors of the
+group when the server has an assistant and the group has not switched the
+assistant off) opens a box: *What to extract* (the values you want, optional –
+empty means every key number of the report), *Limits to use* (optional, for
+example "upper limit 250 MPa for stress", applied only where it fits a value
+you named) and the report files to read (PDF, HTML or text, all ticked). *Propose values* is the request for drafts.
+Values you asked for that the
+report does not contain are reported as *Not found* and are not proposed;
+numbers are taken as written, never converted. Proposing works without a
+check-out, accepting needs it.
+
+The quick action **Fill result values from the report** on the simulation page (drafts must be allowed) – or the MCP
+tool `propose_result_values` – proposes
 the key numbers the report states. A proposal is a **draft**: it names the
 file version and quotes the text it was read from (the quote must stand in
-the report, so numbers cannot be invented from nothing) and appears under
-*Proposed from reports* on the *Results* card. A CAD editor of the group
-**accepts** it (the revision must be checked out to them, as for any value;
+the report, so numbers cannot be invented from nothing) and appears under *Proposed from reports* on the *Results* card.
+A CAD editor of the group **accepts** it (the revision must be checked out to them, as for any value;
 the value then shows the file as its source) or **rejects** it. The assistant
 never writes a final value and never releases anything; every proposal,
 acceptance and rejection is audited. Compare every number with the quote
@@ -259,15 +285,15 @@ before accepting – the model can misread a table.
 ## Results in 3D
 
 Result files in open formats open in the browser's 3D viewer like CAD
-previews – no ParaView needed. *View result in 3D* on the Results card (or
-*3D* next to the file) shows the outer surface of the mesh coloured by a
+previews – no ParaView needed. *View result in 3D* on the Results card (or *3D* next to the file) shows the outer
+surface of the mesh coloured by a
 result field, with the field's minimum and maximum above the canvas.
 
-| Format                          | Read                                                                                     |
-|---------------------------------|------------------------------------------------------------------------------------------|
-| Legacy VTK (`.vtk`)             | ASCII and BINARY, `UNSTRUCTURED_GRID` and `POLYDATA`, file versions up to 5.1            |
-| VTK XML (`.vtu`, `.vtp`)        | `ascii`, inline `binary` and appended (`raw`/`base64`) data, zlib compression, all pieces |
-| CalculiX (`.frd`)               | ASCII files: nodes, elements and every nodal result block (`DISP`, `STRESS`, `NDTEMP`, …) |
+| Format                   | Read                                                                                      |
+|--------------------------|-------------------------------------------------------------------------------------------|
+| Legacy VTK (`.vtk`)      | ASCII and BINARY, `UNSTRUCTURED_GRID` and `POLYDATA`, file versions up to 5.1             |
+| VTK XML (`.vtu`, `.vtp`) | `ascii`, inline `binary` and appended (`raw`/`base64`) data, zlib compression, all pieces |
+| CalculiX (`.frd`)        | ASCII files: nodes, elements and every nodal result block (`DISP`, `STRESS`, `NDTEMP`, …) |
 
 How the preview is made:
 
@@ -320,12 +346,12 @@ The item list (*Result values* and *Result name* in the filter bar, `result=`
 and `result_name=` in the URL and in `GET /api/v1/items`) looks at the result
 values of the **latest revision** of simulations:
 
-| `result` | Matches simulations with at least one value that |
-|---|---|
-| `failed` | is outside its limits |
-| `passed` | has limits and is within them |
-| `above_limit` | is above its upper limit |
-| `below_limit` | is below its lower limit |
+| `result`      | Matches simulations with at least one value that |
+|---------------|--------------------------------------------------|
+| `failed`      | is outside its limits                            |
+| `passed`      | has limits and is within them                    |
+| `above_limit` | is above its upper limit                         |
+| `below_limit` | is below its lower limit                         |
 
 `result_name` is a case-insensitive "contains" on the value name and can be
 combined with `result` (the same value must match both), the type, project,
@@ -349,5 +375,5 @@ not see never make a simulation appear out of date.
   chunked, resumable uploads and a retention rule for intermediate results
   are open work.
 * The desktop app shows simulation items and their files; creating a
-  simulation *from* a part revision and checking out the basis files are
+  simulation *from* a part revision (web: done) and checking out the basis files are
   planned.

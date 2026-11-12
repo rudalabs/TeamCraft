@@ -44,6 +44,7 @@
       <noscript><button type="submit">Apply</button></noscript>
     </form>
     <a class="button" href="/revisions/{{ rev.id }}/bom/compare" title="Added, removed and changed lines compared with another revision">Compare…</a>
+    <a class="button" href="/revisions/{{ rev.id }}/mass?rule={{ rule }}" title="Mass, centre of gravity and inertia from the 3D files, densities and measured masses">Mass properties</a>
     <details class="menu">
       <summary class="button">Export <span class="chev" aria-hidden="true"></span></summary>
       <div class="menu-pop menu-right">

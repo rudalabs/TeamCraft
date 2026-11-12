@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Label {{ rev.item_number }}{% endblock %}
+{% block nav_items %}active{% endblock %}
+{% block content %}
+{% import "macros.html" as m %}
+<div class="page-head no-print">
+  <div>
+    <p class="crumbs"><a href="/items">Items</a><a href="/revisions/{{ rev.id }}">{{ rev.item_number }}/{{ rev.code }}</a><span>Label</span></p>
+    <h1>Label of {{ rev.item_number }}</h1>
+    <p class="meta">Scanning the code opens the item in TeamCraft (its latest revision).</p>
+  </div>
+  <div class="actions">
+    <button type="button" class="primary" data-print>Print</button>
+    <a class="button" href="/items/{{ rev.item_id }}/qr.svg" download="{{ rev.item_number }}-qr.svg">Download QR code (SVG)</a>
+  </div>
+</div>
+<section class="item-label" aria-label="Label of {{ rev.item_number }}">
+  <img class="item-label-qr" src="/items/{{ rev.item_id }}/qr.svg" alt="QR code for {{ url }}" width="160" height="160">
+  <div class="item-label-text">
+    <p class="item-label-number mono">{{ rev.item_number }}</p>
+    <p class="item-label-name">{{ rev.name }}</p>
+    <p class="small">Revision {{ rev.code }} · {{ rev.state }}{% if rev.project_code %} · {{ rev.project_code }}{% endif %}</p>
+    <p class="small mono">{{ url }}</p>
+  </div>
+</section>
+{% endblock %}

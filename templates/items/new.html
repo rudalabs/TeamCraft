@@ -1,10 +1,11 @@
 {% extends "base.html" %}
-{% block title %}New item{% endblock %}
+{% block title %}{% if basis %}New simulation{% else %}New item{% endif %}{% endblock %}
 {% block nav_items %}active{% endblock %}
 {% block content %}
+{% import "macros.html" as m %}
 <div class="page-head">
   <div>
-    <h1>New item</h1>
+    <h1>{% if basis %}New simulation{% else %}New item{% endif %}</h1>
     <p class="subtitle">Creates the item together with its first revision <span class="mono">A</span> in work.</p>
   </div>
 </div>
@@ -12,16 +13,30 @@
 <div class="card">
   {% if error %}<div class="flash flash-error" role="alert">{{ error }}</div>{% endif %}
   <form class="stack" method="post" action="/items" enctype="multipart/form-data" data-chunked="new-item">
-    <label>Files <span class="hint">the CAD model with its drawing and a STEP export for the 3D preview – the item is created together with them</span>
-      <input type="file" name="file" multiple data-fill-name="new-item-name" data-fill-type="new-item-type">
+    {% if basis %}
+    <input type="hidden" name="basis" value="{{ basis.revision_id }}">
+    <input type="hidden" name="item_type" value="simulation">
+    <div class="form-row" id="new-simulation-basis">
+      <p>Basis: <a class="mono" href="/revisions/{{ basis.revision_id }}">{{ basis.label }}</a> – {{ basis.name }}
+        · <a href="/items/new?type=simulation" title="Create the simulation without a basis">remove</a></p>
+      <label>Role of the basis
+        <select name="basis_role">
+          {% for r in basis_roles %}<option value="{{ r.value }}" {% if form.basis_role == r.value %}selected{% endif %}>{{ r.label }}</option>{% endfor %}
+        </select>
+      </label>
+    </div>
+    <p class="hint">The current version of the STEP (else first CAD) file of {{ basis.label }} is pinned as the simulated file; more bases can be added on the revision page afterwards.</p>
+    {% endif %}
+    <label>Files <span class="hint">{% if basis %}solver input, model and result files, reports (PDF/HTML) – the basis CAD files stay on {{ basis.item_number }}{% else %}the CAD model with its drawing and a STEP export for the 3D preview{% endif %} – the item is created together with them</span>
+      <input type="file" name="file" multiple {% if not basis %}data-fill-name="new-item-name" data-fill-type="new-item-type"{% else %}data-fill-name="new-item-name"{% endif %}>
     </label>
     <div class="form-row">
-      <label>Type
+      {% if not basis %}<label>Type
         <select name="item_type" id="new-item-type" required>
           {% for t in types %}<option value="{{ t.value }}" {% if form.item_type == t.value %}selected{% endif %}>{{ t.label }}</option>{% endfor %}
         </select>
-      </label>
-      <label>Item number <span class="hint">leave empty to generate one from the project group’s numbering scheme (default e.g. PRT-000042)</span>
+      </label>{% endif %}
+      <label>Item number <span class="hint">{% if basis and number_hint %}leave empty to use {{ number_hint }} (the next simulation number of the project group){% else %}leave empty to generate one from the project group’s numbering scheme (default e.g. PRT-000042){% endif %}</span>
         <input type="text" name="number" value="{{ form.number }}" maxlength="64" pattern="[A-Za-z0-9][A-Za-z0-9._\-]*">
       </label>
     </div>
@@ -37,9 +52,10 @@
           <option value="">— choose —</option>
           {% for p in projects %}<option value="{{ p.id }}" {% if form.project_id == p.id|string %}selected{% endif %}>{{ p.code }} – {{ p.name }}</option>{% endfor %}
         </select>
+        {% if basis and basis_other_group %}<span class="hint">You may not create items in the project group of {{ basis.label }}; another of your groups is preselected.</span>{% endif %}
         {% if not projects %}<span class="hint">You are not a member of any project group yet – ask an admin to add you.</span>{% endif %}
       </label>
-      <label>Unit of measure
+      {% if not basis %}<label>Unit of measure
         <input type="text" name="unit" value="{{ form.unit }}" list="units" maxlength="16">
         <datalist id="units">{% for u in units %}<option value="{{ u }}">{% endfor %}</datalist>
       </label>
@@ -47,21 +63,19 @@
         <select name="classification">
           {% for c in classifications %}<option value="{{ c.value }}" {% if form.classification == c.value %}selected{% endif %}>{{ c.label }}</option>{% endfor %}
         </select>
-      </label>
+      </label>{% endif %}
     </div>
-    <div class="form-row">
-      <label>Material
-        <input type="text" name="material" value="{{ form.material }}" maxlength="200" placeholder="e.g. AlMg3, 1.4301, CFRP">
-      </label>
+    {% if not basis %}<div class="form-row">
+      {{ m.material_field(form.material, materials, me.is_admin, "e.g. AlMg3, 1.4301, CFRP") }}
       <label>Mass per unit [kg]
-        <input type="text" name="mass_kg" value="{{ form.mass_kg }}" inputmode="decimal" placeholder="0.125">
+        <input type="text" name="mass_kg" value="{{ form.mass_kg }}" inputmode="decimal" placeholder="e.g. 0.125">
       </label>
       <label>Unit cost [€]
-        <input type="text" name="unit_cost" value="{{ form.unit_cost }}" inputmode="decimal" placeholder="12.50">
+        <input type="text" name="unit_cost" value="{{ form.unit_cost }}" inputmode="decimal" placeholder="e.g. 12.50">
       </label>
-    </div>
+    </div>{% endif %}
     <div class="actions">
-      <button class="primary" type="submit">Create item</button>
+      <button class="primary" type="submit">{% if basis %}Create simulation{% else %}Create item{% endif %}</button>
       <a class="button" href="/items">Cancel</a>
     </div>
   </form>

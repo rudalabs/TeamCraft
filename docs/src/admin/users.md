@@ -9,11 +9,11 @@ SHA-256 hashes only.
 
 ## Roles
 
-| Role       | Stored as | May                                                                                    |
-|------------|-----------|----------------------------------------------------------------------------------------|
-| Viewer     | `viewer`  | read internal project groups and the restricted groups they are a member of           |
+| Role       | Stored as | May                                                                                     |
+|------------|-----------|-----------------------------------------------------------------------------------------|
+| Viewer     | `viewer`  | read internal project groups and the restricted groups they are a member of             |
 | CAD editor | `editor`  | read like a viewer; change items of their project groups, create project groups, review |
-| Admin      | `admin`   | everything, including restricted groups, plus users, all groups, lock overrides        |
+| Admin      | `admin`   | everything, including restricted groups, plus users, all groups, lock overrides         |
 
 A project group can be **restricted** to its members: everybody else –
 viewers and CAD editors who are not members – gets "not found" for the
@@ -45,9 +45,11 @@ Accounts are created at the first sign-in; the role follows the groups at
 every sign-in. A project group bound to an IdP group (*Projects → group →
 Edit*, administrators) gets its members synchronised at every sign-in;
 manually added members stay. A synchronised membership stays one when its
-holder is made a manager, and it cannot be removed in TeamCraft (it would
-return at the next sign-in): remove the user from the IdP group, unlink the
-group or deactivate the user instead.
+holder is made a manager (*Demote* lowers it again), and it cannot be
+removed in TeamCraft while the user is active (it would return at the next
+sign-in): remove the user from the IdP group, unlink the group or deactivate
+the user instead. A deactivated user's synchronised membership can be
+removed (see [When someone leaves](#when-someone-leaves)).
 
 ## Item owners and handing over a leaving user's work
 
@@ -60,12 +62,12 @@ read the item. Every change is audited (`item.owner`).
 When somebody leaves, an administrator opens the user and uses **Hand over
 work**. In one transaction TeamCraft moves to the chosen person:
 
-| What | Moved when |
-|---|---|
-| item ownerships | always |
-| change orders the user authored | draft or rejected |
+| What                                 | Moved when                                      |
+|--------------------------------------|-------------------------------------------------|
+| item ownerships                      | always                                          |
+| change orders the user authored      | draft or rejected                               |
 | change requests assigned to the user | not closed (new, in triage, accepted, deferred) |
-| pending reviews of the user | the change order is a draft or in review |
+| pending reviews of the user          | the change order is a draft or in review        |
 
 A message after the run gives the counts and the first objects that stayed with
 the old user and why (numbers of groups the administrator may not read are
@@ -77,3 +79,129 @@ revisions). Every moved object gets its own audit entry (`item.owner`,
 one `user.handover` entry with the counts. Decisions already made, released
 changes and closed requests keep the original names. One run moves at most
 1000 objects of each kind; the message says when to run it again.
+
+## When someone leaves
+
+Teams with a high turnover (student teams, early-stage startups) lose
+members every season. Deactivating a user ends their sessions and disables
+their API and desktop tokens; their check-outs, change orders, reviews and
+memberships stay.
+
+**See what they hold first.** *Users → user → Everything … still holds*
+(`/users/{id}/holdings`, `GET /api/v1/users/{id}/holdings`, or
+`teamcraft user holdings --username lena` on the server) lists in one place
+the user's check-outs with their age, the change orders they wrote that are
+still open (draft, in review, rejected), the reviews that wait for them, the
+open change requests assigned to and raised by them, the items they own,
+their memberships with the source – flagging the groups in which they are
+the **only active manager** – and their API tokens with last use and expiry.
+The report is read-only and filtered by the rights of whoever reads it, not
+the leaver's: a check-out in a group the leaver was removed from is still
+listed. Administrators see every group they can read; for a group whose
+need-to-know policy hides its content from them the report gives only the
+number of check-outs. A manager of a project group opens the same report
+from the group's member list (*holds…*) and sees only what lies in the
+groups they manage, without the tokens. Each list shows at most 200 entries
+next to the full count.
+
+**Offboard in one step.** *Users → user → Offboard and deactivate* (or
+`POST /api/v1/users/{id}/offboard`, or `teamcraft user deactivate --username
+lena` on the server) deactivates the user and, in the same step:
+
+* **hands the work over** to a successor you choose – items, draft and
+  rejected change orders, open change requests and pending reviews (as *Hand
+  over work* above) – and their **manager roles**: the successor becomes a
+  manager of every group the leaver managed (added as a member where
+  needed), the leaver stops being one (`project.manager_handover` per
+  group);
+* **revokes the API tokens** (ticked by default): they are deleted, so
+  activating the account again does not bring old tokens back (`token.revoke_all`);
+* **releases the check-outs** (ticked when there are any), each in its own
+  transaction and audited like *Release all*.
+
+Deactivation, hand-over and token revocation run in one transaction; the
+check-outs are released afterwards and the message reports both. If the user
+is the **only active manager** of a group and no successor is named, the step
+is refused until you confirm that the group is left without an active manager (administrators can still manage it). An
+administrator cannot offboard
+themselves, and the last active administrator is kept. Every run is audited (`user.offboard`, with the choices). On the
+command line the options are
+`--hand-over-to USERNAME`, `--release-checkouts`, `--revoke-tokens` and
+`--confirm-no-manager`; the command exits with 2 when a check-out could not be
+released and is recorded as `system` in the audit log. The plain *Active*
+checkbox of the profile still deactivates without any of these steps.
+
+Or work through these steps by hand, in this order:
+
+1. **Keep at least two active administrators.** TeamCraft refuses to
+   deactivate or demote the last one. If nobody with the admin role is left,
+   whoever has a shell on the server creates one:
+   `teamcraft user create --username rescue --role admin` (break glass).
+2. **Before they go**, the leaver uses *Check in all* on the dashboard and
+   checks in the local changes of their desktop working folder. Work that
+   was never checked in exists only on their computer.
+3. **Hand over their work** (administrators): *Users → user → Hand over
+   work* moves item ownerships, draft and rejected change orders, open
+   change requests and pending reviews (see above).
+4. **Release the remaining check-outs.** Administrators use *Users → user →
+   Check-outs → Release all*. The managers of a project group use *Release N
+   check-outs* in the group's member list – for members who are deactivated
+   and, under *Former members still holding check-outs*, for people who are
+   no longer members. Each release is audited (`revision.checkout_forced_release`); one refused release does not stop
+   the others. A lock held by somebody who is still an active member (on
+   leave, or simply gone quiet) a manager releases one revision at a time
+   with *Release with reason* on the revision page; the reason is audited and
+   the holder is told it. Revisions of a need-to-know group that hides itself from
+   administrators (`admin_read = none`) are left out for administrators: a
+   manager of that group releases them.
+5. **Pending reviews:** a change order cannot be submitted while one of its
+   reviewers is deactivated – remove them and add someone else. For a change
+   already in review the author (or an administrator) replaces the pending
+   reviewer (*Substitute for*), which keeps the other decisions.
+6. **Change orders of a deactivated author:** besides administrators, a
+   manager of *every* project group the change touches may withdraw, reopen
+   or cancel it, or **take it over** (*Take over* on the change page; audited
+   as `change.handover`). Whoever takes it over is its author and can no
+   longer review it (four-eyes principle).
+7. **Group managers:** *Demote* in the member list lowers a manager to a
+   plain member, also for memberships synchronised from the identity
+   provider. At least one *active* manager must remain (only
+   administrators may demote or remove the last one); deactivated managers
+   do not count. Administrators see the groups left without an active
+   manager – or whose managers have neither signed in nor used a token for
+   90 days – under *Groups without an active manager* on *Project groups*
+   (`GET /api/v1/projects/manager-gaps`); the hourly housekeeping notifies
+   them once per group when that happens.
+8. **Revoke their tokens** on the user page.
+9. **Deactivate the user.** For SSO users both are needed: remove them at
+   the identity provider **and** deactivate them in TeamCraft. A synchronised
+   membership of a deactivated user can then be removed by the group's
+   managers (SSO refuses deactivated users, so it cannot come back); an
+   active user's synchronised membership still can only end at the identity
+   provider.
+
+### The end of a season
+
+When many members leave at once – the end of a term in a student team – the
+managers of a group use **Season handover** (link above the member list,
+`/projects/{id}/season`) instead of going person by person. The page lists
+every member with their last activity (sign-in or use of an API or desktop
+token), check-outs in the group, manager flag and *member until* date.
+*Tick members inactive since* a date ticks the deactivated and the inactive
+ones and those whose *member until* has passed; adjust the ticks, then run:
+
+1. the **new lead** becomes a manager;
+2. the ticked members' **check-outs are released** – with a reason (10 to
+   500 characters), which each holder is told and which is audited; without
+   a reason only the locks of deactivated and former members are released;
+3. **member until** is set (or cleared) for the ticked members – only a
+   flag, nobody is removed automatically;
+4. the ticked members are **removed** (an IdP-synchronised membership only
+   once its user is deactivated);
+5. the ticked managers are **demoted** – last, so a manager who steps down
+   can still run the steps above; at least one active manager must remain
+   unless an administrator runs it.
+
+Every step goes through the same checks as the single action and is audited
+on its own; a refused step is listed in the result and does not stop the
+others.

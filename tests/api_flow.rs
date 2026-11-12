@@ -926,6 +926,7 @@ async fn sso_groups_sync_project_memberships() {
         email: Some("max@example.org".into()),
         role: Role::Editor,
         groups: groups.iter().map(|g| g.to_string()).collect(),
+        claims: Default::default(),
     };
     let rocket = app.project_id("ROCKET").await;
     let rover = app.project_id("ROVER").await;
@@ -3630,93 +3631,56 @@ async fn nx_part_thumbnails_are_rendered_from_the_3d_preview() {
     app.teardown().await;
 }
 
-/// SketchUp models of 2021+ and of 2017 get a 3D preview (their faces,
-/// components placed) and a thumbnail rendered from it; a file with no faces
-/// keeps the picture SketchUp stored in it.
+/// A Rhino model gets a 3D preview from the meshes it stores (here a SubD,
+/// refined from its control net) and a thumbnail rendered from it.
 #[tokio::test]
-async fn sketchup_models_get_a_3d_preview_and_a_rendered_thumbnail() {
+async fn rhino_models_get_a_3d_preview_and_a_rendered_thumbnail() {
     let app = app_or_skip!();
     let (_, eng) = app.user_in("eng", Role::Editor, &["GEARBOX"]).await;
     app.api(
         Method::POST,
         "/api/v1/items",
         &eng,
-        Some(json!({ "item_type": "assembly", "name": "Hall", "project": "GEARBOX" })),
+        Some(json!({ "item_type": "part", "name": "Fairing", "project": "GEARBOX" })),
     )
     .await;
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cad/openskp");
-    let new = std::fs::read(dir.join("Untitled.skp")).unwrap();
-    let old = std::fs::read(dir.join("capilla_quiroz_v17.skp")).unwrap();
-    let lines = std::fs::read(dir.join("zero_material_custom_layer_v18.skp")).unwrap();
+    let model = std::fs::read(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/cad/rhino3dm/subd_creases.3dm"),
+    )
+    .unwrap();
     let files = app
         .api_multipart(
-            "/api/v1/items/ASM-000001/revisions/A/files",
+            "/api/v1/items/PRT-000001/revisions/A/files",
             &eng,
-            &[
-                ("hall.skp", &new),
-                ("chapel.skp", &old),
-                ("lines.skp", &lines),
-            ],
+            &[("fairing.3dm", &model)],
             &[],
         )
         .await;
     assert_eq!(files.status, StatusCode::CREATED, "{}", files.text());
-    let files = files.json();
-    let id_of = |name: &str| {
-        files
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|f| f["filename"] == name)
-            .unwrap()["id"]
-            .as_str()
-            .unwrap()
-            .to_string()
-    };
-    assert!(files
-        .as_array()
-        .unwrap()
-        .iter()
-        .all(|f| f["format"] == "sketchup"));
-    let get = |path: String| {
-        let app = &app;
-        let eng = &eng;
-        async move { app.api(Method::GET, &path, eng, None).await }
-    };
-    let hall = id_of("hall.skp");
-    let r = get(format!("/api/v1/files/{hall}/mesh")).await;
+    let file = &files.json()[0];
+    assert_eq!(file["format"], "rhino");
+    let id = file["id"].as_str().unwrap().to_string();
+
+    let r = app
+        .api(Method::GET, &format!("/api/v1/files/{id}/mesh"), &eng, None)
+        .await;
     assert_eq!(r.status, StatusCode::OK, "{}", r.text());
     let mesh = teamcraft::mesh::Mesh::decode(&r.body).unwrap();
-    assert_eq!(mesh.triangle_count(), 18_636);
-    let thumb = get(format!("/api/v1/files/{hall}/thumbnail")).await;
+    assert_eq!(mesh.triangle_count(), 3_072);
+
+    let thumb = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/files/{id}/thumbnail"),
+            &eng,
+            None,
+        )
+        .await;
     assert_eq!(thumb.status, StatusCode::OK, "{}", thumb.text());
     assert_eq!(thumb.header("content-type").as_deref(), Some("image/png"));
     // IHDR: the rendered size
     assert_eq!(&thumb.body[16..24], &[0, 0, 2, 0, 0, 0, 2, 0]);
-
-    // SketchUp 2017: the classic container, read by the vendored OpenSKP walker
-    let chapel = id_of("chapel.skp");
-    let r = get(format!("/api/v1/files/{chapel}/mesh")).await;
-    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
-    let mesh = teamcraft::mesh::Mesh::decode(&r.body).unwrap();
-    assert_eq!(mesh.triangle_count(), 638);
-    let thumb = get(format!("/api/v1/files/{chapel}/thumbnail")).await;
-    assert_eq!(thumb.status, StatusCode::OK, "{}", thumb.text());
-    assert_eq!(&thumb.body[16..24], &[0, 0, 2, 0, 0, 0, 2, 0]);
-
-    // only edges, no faces: no 3D preview, the picture SketchUp stored instead
-    let lines = id_of("lines.skp");
-    let r = get(format!("/api/v1/files/{lines}/mesh")).await;
-    assert_ne!(r.status, StatusCode::OK);
-    assert!(r.text().contains("no visible faces"), "{}", r.text());
-    let thumb = get(format!("/api/v1/files/{lines}/thumbnail")).await;
-    assert_eq!(thumb.status, StatusCode::OK, "{}", thumb.text());
-    assert_eq!(thumb.header("content-type").as_deref(), Some("image/png"));
-    assert_eq!(
-        &thumb.body[16..24],
-        &[0, 0, 1, 0, 0, 0, 1, 0],
-        "the stored 256 × 256 picture"
-    );
     app.teardown().await;
 }
 
@@ -3808,6 +3772,127 @@ async fn nx_assemblies_are_put_together_from_their_parts() {
         .await;
     assert_eq!(thumb.status, StatusCode::OK, "{}", thumb.text());
     assert_eq!(thumb.header("content-type").as_deref(), Some("image/png"));
+    app.teardown().await;
+}
+
+/// Width × height of a PNG.
+fn png_size(png: &[u8]) -> (u32, u32) {
+    assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+    let be = |at: usize| u32::from_be_bytes(png[at..at + 4].try_into().unwrap());
+    (be(16), be(20))
+}
+
+/// A SOLIDWORKS assembly is shown with the previews of its parts, placed
+/// as its component tree says (the NIST assembly: 36 instances of 8
+/// parts); parts and assemblies get thumbnails drawn from the 3D preview,
+/// an assembly without its parts keeps the image stored in the file.
+#[tokio::test]
+async fn solidworks_assemblies_are_put_together_from_their_parts() {
+    let Some(app) = common::setup_with(&[("TEAMCRAFT_MAX_UPLOAD_MB", "8")]).await else {
+        return;
+    };
+    let (_, eng) = app.user_in("eng", Role::Editor, &["GEARBOX"]).await;
+    for name in ["Crada", "Lonely"] {
+        app.api(
+            Method::POST,
+            "/api/v1/items",
+            &eng,
+            Some(json!({ "item_type": "assembly", "name": name, "project": "GEARBOX" })),
+        )
+        .await;
+    }
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/cad/nist/mtc-assembly/solidworks");
+    let assembly = "nist_mtc_crada_assembly_rev-D.SLDASM";
+    let upload = |item: &'static str, name: &'static str| {
+        let data = std::fs::read(dir.join(name)).unwrap();
+        let app = &app;
+        let eng = &eng;
+        async move {
+            let files = app
+                .api_multipart(
+                    &format!("/api/v1/items/{item}/revisions/A/files"),
+                    eng,
+                    &[(name, data.as_slice())],
+                    &[],
+                )
+                .await;
+            assert_eq!(
+                files.status,
+                StatusCode::CREATED,
+                "{name}: {}",
+                files.text()
+            );
+            files.json()[0]["id"].as_str().unwrap().to_string()
+        }
+    };
+    // the assembly alone: none of its parts is in TeamCraft
+    let lonely = upload("ASM-000002", assembly).await;
+    let thumb = |id: String| {
+        let app = &app;
+        let eng = &eng;
+        async move {
+            let r = app
+                .api(
+                    Method::GET,
+                    &format!("/api/v1/files/{id}/thumbnail"),
+                    eng,
+                    None,
+                )
+                .await;
+            assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+            assert_eq!(r.header("content-type").as_deref(), Some("image/png"));
+            png_size(&r.body)
+        }
+    };
+    assert_eq!(thumb(lonely.clone()).await, (640, 480), "the stored image");
+
+    let asm_id = upload("ASM-000001", assembly).await;
+    let mut part_id = String::new();
+    for name in [
+        "nist_mtc_crada_box_rev-D.SLDPRT",
+        "nist_mtc_crada_cover_rev-B.SLDPRT",
+        "nist_mtc_crada_plate_rev-A.SLDPRT",
+        "nist_mtc_crada_polycarb-window.SLDPRT",
+        "90591A141_ZINC PLATED STEEL HEX NUT.SLDPRT",
+        "91274A118_COATED ALLOY STEEL SOCKET HEAD CAP SCREW.SLDPRT",
+        "91274A141_COATED ALLOY STEEL SOCKET HEAD CAP SCREW.SLDPRT",
+        "91304A112_BLUE FLAT-HEAD SOCKET CAP SCREW.SLDPRT",
+    ] {
+        let id = upload("ASM-000001", name).await;
+        if name.starts_with("nist_mtc_crada_box") {
+            part_id = id;
+        }
+    }
+    let r = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/files/{asm_id}/mesh"),
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let mesh = teamcraft::mesh::Mesh::decode(&r.body).unwrap();
+    assert_eq!(mesh.parts, 36, "every instance placed");
+    let b = mesh.bounds();
+    // the box is 152.4 × 101.6 mm; screws stand out on top
+    assert!((b[3] - b[0] - 152.4).abs() < 1.0, "{b:?}");
+    assert!((b[4] - b[1] - 101.6).abs() < 1.0, "{b:?}");
+    let again = app
+        .api(
+            Method::GET,
+            &format!("/api/v1/files/{asm_id}/mesh"),
+            &eng,
+            None,
+        )
+        .await;
+    assert_eq!(again.body, r.body, "cached");
+
+    let side = teamcraft::thumbnail::RENDERED_SIZE;
+    let rendered = (side, side);
+    assert_eq!(thumb(asm_id).await, rendered);
+    assert_eq!(thumb(part_id).await, rendered);
     app.teardown().await;
 }
 
@@ -4731,6 +4816,96 @@ async fn simulation_bases_results_and_out_of_date() {
         "",
         "plain .dat files are not Fluent: {}",
         r.text()
+    );
+    app.teardown().await;
+}
+
+/// SketchUp models of 2021+ and of 2017 get a 3D preview (their faces,
+/// components placed) and a thumbnail rendered from it; a file with no faces
+/// keeps the picture SketchUp stored in it.
+#[tokio::test]
+async fn sketchup_models_get_a_3d_preview_and_a_rendered_thumbnail() {
+    let app = app_or_skip!();
+    let (_, eng) = app.user_in("eng", Role::Editor, &["GEARBOX"]).await;
+    app.api(
+        Method::POST,
+        "/api/v1/items",
+        &eng,
+        Some(json!({ "item_type": "assembly", "name": "Hall", "project": "GEARBOX" })),
+    )
+    .await;
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cad/openskp");
+    let new = std::fs::read(dir.join("Untitled.skp")).unwrap();
+    let old = std::fs::read(dir.join("capilla_quiroz_v17.skp")).unwrap();
+    let lines = std::fs::read(dir.join("zero_material_custom_layer_v18.skp")).unwrap();
+    let files = app
+        .api_multipart(
+            "/api/v1/items/ASM-000001/revisions/A/files",
+            &eng,
+            &[
+                ("hall.skp", &new),
+                ("chapel.skp", &old),
+                ("lines.skp", &lines),
+            ],
+            &[],
+        )
+        .await;
+    assert_eq!(files.status, StatusCode::CREATED, "{}", files.text());
+    let files = files.json();
+    let id_of = |name: &str| {
+        files
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["filename"] == name)
+            .unwrap()["id"]
+            .as_str()
+            .unwrap()
+            .to_string()
+    };
+    assert!(files
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|f| f["format"] == "sketchup"));
+    let get = |path: String| {
+        let app = &app;
+        let eng = &eng;
+        async move { app.api(Method::GET, &path, eng, None).await }
+    };
+    let hall = id_of("hall.skp");
+    let r = get(format!("/api/v1/files/{hall}/mesh")).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let mesh = teamcraft::mesh::Mesh::decode(&r.body).unwrap();
+    assert_eq!(mesh.triangle_count(), 18_636);
+    let thumb = get(format!("/api/v1/files/{hall}/thumbnail")).await;
+    assert_eq!(thumb.status, StatusCode::OK, "{}", thumb.text());
+    assert_eq!(thumb.header("content-type").as_deref(), Some("image/png"));
+    // IHDR: the rendered size
+    assert_eq!(&thumb.body[16..24], &[0, 0, 2, 0, 0, 0, 2, 0]);
+
+    // SketchUp 2017: the classic container, read by the vendored OpenSKP walker
+    let chapel = id_of("chapel.skp");
+    let r = get(format!("/api/v1/files/{chapel}/mesh")).await;
+    assert_eq!(r.status, StatusCode::OK, "{}", r.text());
+    let mesh = teamcraft::mesh::Mesh::decode(&r.body).unwrap();
+    assert_eq!(mesh.triangle_count(), 638);
+    let thumb = get(format!("/api/v1/files/{chapel}/thumbnail")).await;
+    assert_eq!(thumb.status, StatusCode::OK, "{}", thumb.text());
+    assert_eq!(&thumb.body[16..24], &[0, 0, 2, 0, 0, 0, 2, 0]);
+
+    // only edges, no faces: no 3D preview, the picture SketchUp stored instead
+    let lines = id_of("lines.skp");
+    let r = get(format!("/api/v1/files/{lines}/mesh")).await;
+    assert_ne!(r.status, StatusCode::OK);
+    assert!(r.text().contains("no visible faces"), "{}", r.text());
+    let thumb = get(format!("/api/v1/files/{lines}/thumbnail")).await;
+    assert_eq!(thumb.status, StatusCode::OK, "{}", thumb.text());
+    assert_eq!(thumb.header("content-type").as_deref(), Some("image/png"));
+    assert_eq!(
+        &thumb.body[16..24],
+        &[0, 0, 1, 0, 0, 0, 1, 0],
+        "the stored 256 × 256 picture"
     );
     app.teardown().await;
 }

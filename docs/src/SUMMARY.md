@@ -10,6 +10,7 @@
 - [Files, versions and 3D preview](guide/files.md)
 - [BOM, references and change propagation](guide/structure.md)
 - [Finding similar parts](guide/similar-parts.md)
+- [Mass properties (mass, CG, inertia)](guide/mass-properties.md)
 - [Change requests, change orders and notifications](guide/changes.md)
 - [Simulations (FEA, CFD)](guide/simulation.md)
 - [As-built records](guide/as-built.md)
@@ -56,8 +57,14 @@
 # Research
 
 - [Research notes](research/index.md)
+    - [Instance counts of Inventor assemblies](research/inventor-instance-counts.md)
+    - [Crash reports from the desktop app](research/crash-reporting.md)
+    - [Mass properties from exported meshes](research/mass-properties.md)
+    - [3D preview of Fusion designs](research/fusion-ogs-preview.md)
+    - [3D preview of SOLIDWORKS files](research/solidworks-display-preview.md)
     - [Mutation testing with cargo-mutants](research/mutation-testing.md)
     - [3D preview of NX parts](research/nx-jt-preview.md)
+    - [3D preview of Rhino models](research/rhino-3dm-preview.md)
     - [3D preview of SketchUp models](research/sketchup-preview.md)
     - [Text from HTML reports](research/html-report-text.md)
     - [Text from PDF reports](research/pdf-text-extraction.md)

@@ -2,17 +2,28 @@
 
 TeamCraft Desktop (`desktop/`, Tauri 2) is a rich client for Linux, macOS and
 Windows: a navigator tree of the project groups, object tabs (overview,
-files, structure, where used, changes, history, 3D viewer), a worklist with
+files, structure, where used, references, graph, changes, history, 3D viewer), a worklist with
 check-outs and reviews, and a **local working folder**:
 
 * *New* (`Ctrl/Cmd+N`) creates an item together with its files: choose the
   CAD files first, name and type follow from the first one;
 * *Check out* takes the lock, copies the files into the working folder and
-  makes them writable;
+  makes them writable. For an assembly it also downloads every part of its
+  structure that is missing (latest version, read-only) – only the assembly is
+  locked; parts you changed locally, or whose place is taken by another file,
+  are never overwritten and are listed in the report (*Settings → Workspace*
+  switches this off);
+* *Files / All items / Structure* in the navigator head: *Files* shows the
+  folders and files of the project group as in its working folder (see
+  below); *Structure* shows, per project
+  group, the assemblies and the parts no BOM uses; an assembly expands into its
+  parts one level at a time with quantity, state, lock owner and ⧉ N for a part
+  used in several assemblies;
 * *Get…* on a revision copies the item **with everything it consists of** –
   its BOM resolved with a revision rule and the parts its CAD files
   reference – so the assembly opens in the CAD program (see below);
-* the download icon next to *Projects* in the navigator (*Tools → Get Project Groups…*) copies the files of every item of
+* the download icon next to *Projects* in the navigator (*Tools → Get Project Groups…*) copies the files of every item
+  of
   chosen project groups into the working folder – for new team members;
 * the folder icon next to it (*Tools → Import CAD Folder…*) brings an existing CAD folder in:
   scan first (nothing is uploaded), then one item per part or assembly with
@@ -21,9 +32,16 @@ check-outs and reviews, and a **local working folder**:
   where it stopped – an item whose files did not arrive is completed, none is
   created twice; the app remembers per project group what it imported, so
   the same folder can also be imported into another group. BOM lines come
-  from the references in the assembly files – for NX also from `.prt` files
-  (such an assembly is imported as a part item, NX does not tell parts and
-  assemblies apart by the file type). *Help → How to
+  from the references in the assembly files – for NX also from `.prt` files (such an assembly is imported as a part
+  item, NX does not tell parts and
+  assemblies apart by the file type). Their quantity is how often the
+  assembly places the part where the file tells it (SOLIDWORKS 2015+, NX,
+  Inventor and STEP assemblies with external part files; instances excluded
+  from the BOM and suppressed Inventor occurrences do not count, a part that
+  is only placed that way gets no BOM line but stays referenced); for other
+  formats (Solid Edge, …) it is 1
+  with the note *check the quantity* – set the real quantities with *Import
+  BOM…* from the CAD program's BOM export. *Help → How to
   Import a CAD Folder* is the step-by-step tutorial (Pack and Go, unique file
   names, check and release);
 * *Import BOM…* (in the *Structure* tab and the *More* menu of a revision you
@@ -35,6 +53,28 @@ check-outs and reviews, and a **local working folder**:
   missing items. *Part numbers from the file* or *New numbers* (the group's
   numbering scheme), and whether items with the same number are reused, are
   chosen in the dialog;
+* *Quantities from CAD…* (next to *Import BOM…*) compares the BOM with the
+  instances counted in the revision's CAD files (SOLIDWORKS 2015+, NX, STEP
+  assemblies with external part files): missing lines and lines whose
+  quantity differs – such as the quantity 1 of an assembly imported before
+  the counts existed – are ticked; *Apply* adds and corrects them in one step (the same plan as *Create BOM from CAD
+  references…* in the web UI). A
+  quantity the CAD file does not tell never replaces an existing one;
+* the *Graph* tab draws a navigable reference and BOM graph around the
+  revision: the focused item in the middle, its BOM children and references
+  below, the assemblies that use it above. Node colour is the lifecycle state,
+  node size (and the ⚙ badge) the item's own BOM complexity; the small ×n in
+  the top-left corner of a child is how many instances of it the assembly
+  contains (summed over its BOM lines). Click a node to go to it: the tab
+  becomes that item – a sub-assembly shows its own graph, anything else its
+  overview – and *← Back*, always in the same place (left of the tab row),
+  leads back the way you came, one step per click; clicking the assembly you
+  came from is the same step back. A click on the item in the middle opens
+  its own overview. `Ctrl`+click (`⌘`+click on macOS) opens a node in a tab
+  of its own instead. The mouse wheel zooms on the cursor, dragging pans and
+  a double-click on the background fits the graph again. Large assemblies are
+  laid out in rows, and only the first 48 neighbours get a preview and their
+  complexity;
 * the *Workspace* tab shows per file where it is, whether it is up to date,
   modified, outdated, in conflict, new, missing or a name clash, whether it
   is read-only, and who holds the lock for how long; opening an outdated
@@ -69,27 +109,31 @@ check-outs and reviews, and a **local working folder**:
 * on Windows with Inventor or Solid Edge installed, *STEP* (workspace) and
   the check-in option create STEP exports for the 3D preview with that
   program; the Files tab shows the preview image stored in native files.
+* with a *Preferred CAD program* set on your account page in the web UI, the
+  Files tab of a revision collapses the native files of other CAD programs
+  (see [Files](files.md#preferred-cad-program)); the app reads the setting at
+  sign-in.
 * *Agent* (rail, *View → Agent*, `Ctrl/Cmd+4`, or *Agent* in a revision or
   change tab) is the app's one place for AI. It runs on one of two
   backends, decided by the server's policy and your choice:
-  * **Company AI** – the server's assistant, configured by the
-    administrator (the key stays on the server). It is the
-    [Ask TeamCraft](assistant.md) conversation of the web UI, inline in the
-    Agent tab: it knows the last revision (and its section, BOM with
-    revision rule), change order or change request tab you opened, offers
-    quick actions that fit it (*Draft release notes*, *Check before
-    release*, *Brief me for this review* …), has the *Allow drafting*
-    checkbox, *Cancel* and *New conversation*, and keeps one conversation on
-    the server that survives restarts.
-  * **Local agent** – an AI agent on your computer that you set up under
-    *Settings → Agents…*, for example Claude Code through its ACP adapter
-    or Gemini CLI. None is set up by default. The app starts the agent in
-    the workspace folder and gives it TeamCraft's tools with your rights.
-    The conversation streams in the tab, with tool calls, the agent's plan,
-    permission prompts (*Allow once* / *Reject*), *Cancel* and quick
-    prompts (release notes, release check, change review, worklist triage).
-    Through the app the agent may only read text files in the workspace
-    folder; it gets no write access and no terminal.
+    * **Company AI** – the server's assistant, configured by the
+      administrator (the key stays on the server). It is the
+      [Ask TeamCraft](assistant.md) conversation of the web UI, inline in the
+      Agent tab: it knows the last revision (and its section, BOM with
+      revision rule), change order or change request tab you opened, offers
+      quick actions that fit it (*Draft release notes*, *Check before
+      release*, *Brief me for this review* …), has the *Allow drafting*
+      checkbox, *Cancel* and *New conversation*, and keeps one conversation on
+      the server that survives restarts.
+    * **Local agent** – an AI agent on your computer that you set up under *Settings → Agents…*, for example Claude Code
+      through its ACP adapter
+      or Gemini CLI. None is set up by default. The app starts the agent in
+      the workspace folder and gives it TeamCraft's tools with your rights.
+      The conversation streams in the tab, with tool calls, the agent's plan,
+      permission prompts (*Allow once* / *Reject*), *Cancel* and quick
+      prompts (release notes, release check, change review, worklist triage).
+      Through the app the agent may only read text files in the workspace
+      folder; it gets no write access and no terminal.
 
   When the server offers both, *Company AI* / *Local agent* in the Agent
   toolbar switches between them (each keeps its own conversation); the app
@@ -112,11 +156,11 @@ account can read and says so at the start and in *Settings*. An address with
 plain `http://` to another computer gets a warning when you connect: the token
 and all data would cross the network unencrypted – use the `https://` address
 of the server. The app uses the same skins
-and 3D viewer as the web interface; the models are converted by the server.
-*Settings → Appearance*: *TeamCraft* (the default) follows the light or dark
+and 3D viewer as the web interface; the models are converted by the server. *Settings → Appearance*: *TeamCraft* (the
+default) follows the light or dark
 appearance of the operating system and switches with it, *TeamCraft Light*
-and *TeamCraft Dark* stay fixed, the distribution skins are dark.
-*Settings → Change password…* changes the password of a local account (it
+and *TeamCraft Dark* stay fixed, the distribution skins are dark. *Settings → Change password…* changes the password of
+a local account (it
 asks for the current one; wrong ones count like failed sign-ins, and your web
 sessions end); single-sign-on accounts do not see it.
 
@@ -126,6 +170,14 @@ toolbar of the open object with its one next step filled (see
 released, a ring: in review, a half-filled ring: in work, – obsolete, the
 name in the tooltip); the search field is `Ctrl+F` (`⌘F`).
 
+**Moving tabs:** drag an object tab to a new place (a bar shows where it
+lands; the tab keeps its state, and a plain click still just selects it).
+Without a mouse: `Ctrl+Shift+PageUp` / `PageDown` move the active tab left or
+right, `Ctrl+PageUp` / `PageDown` (or `Ctrl+Tab` / `Ctrl+Shift+Tab`) switch
+to the previous or next tab, and the arrow keys move between the tabs when
+the tab strip has the focus. The right-click menu of a tab offers *Move to
+start*, *Move to end*, *Close*, *Close others* and *Close tabs to the right*.
+
 ## The toolbar
 
 The toolbar sits right below the tab strip and acts on the active tab. Its
@@ -134,13 +186,13 @@ in; a button that does not apply right now is greyed out, and its tooltip
 says why (for example *Check out first* or *Already in change order
 CHG-000002*). The **one highlighted button is the most likely next step**:
 
-| Revision | Highlighted |
-|---|---|
-| in work, not checked out | *Check out* |
-| checked out by you, with local changes (or the workspace could not be read) | *Check in…* |
-| checked out by you, no local changes | *Release…* (when it can be released, otherwise *Check in…*) |
-| in review, obsolete, or checked out by somebody else | nothing |
-| released | *Revise* |
+| Revision                                                                    | Highlighted                                                 |
+|-----------------------------------------------------------------------------|-------------------------------------------------------------|
+| in work, not checked out                                                    | *Check out*                                                 |
+| checked out by you, with local changes (or the workspace could not be read) | *Check in…*                                                 |
+| checked out by you, no local changes                                        | *Release…* (when it can be released, otherwise *Check in…*) |
+| in review, obsolete, or checked out by somebody else                        | nothing                                                     |
+| released                                                                    | *Revise*                                                    |
 
 The working folder of your check-out is looked at again whenever the tab is
 shown or the app window gets the focus back – save in the CAD program, switch
@@ -152,31 +204,58 @@ back, and *Check in…* is highlighted.
   (*Request change…*, *Watch*, *Agent*);
 * change tab: **Review** (*Approve change* highlighted, *Reject* – the comment field
   of *Your review* goes with it, required for a rejection) while your review
-  is pending · **Lifecycle** (*Submit for review*, highlighted on your draft,
-  *Withdraw*) · **Collaborate**;
+  is pending · **Lifecycle** (*Submit for review*, highlighted on your draft, *Withdraw*) · **Collaborate**;
 * change request tab: **Triage** (*Start triage* or *Create change order*
-  highlighted, *Take up again*) · **Requester** (*Attach…*, *Withdraw*) ·
-  **Collaborate**.
+  highlighted, *Take up again*) · **Requester** (*Attach…*, *Withdraw*) · **Collaborate**.
 
-Rare actions are in **More ▾** at the end: *Pack and Go…*, *Open in browser*,
-*Refresh* (`F5`) and *Mark obsolete…*. The menu works with the keyboard:
+Rare actions are in **More ▾** at the end: *Pack and Go…*, *Open in browser*, *Refresh* (`F5`) and *Mark obsolete…*. The
+menu works with the keyboard:
 `Enter`, `Space` or `↓` opens it, `↑`/`↓`, `Home`/`End` move, `Enter` runs
 the action, `Esc` closes it and returns to the button; a click outside closes
 it too.
 
 The **Overview** of a revision shows *At a glance* next to the properties:
-the preview image stored in an Inventor, Solid Edge, SolidWorks or NX file
-(with the way into the 3D viewer) and the number of files, BOM lines, where
+the preview image stored in an Inventor, Solid Edge, SolidWorks or NX file (with the way into the 3D viewer) and the
+number of files, BOM lines, where
 used, references, change orders and open change requests – a click opens the
 matching sub-tab.
 
-*Home*, *Refresh* and the dialogs that offer project groups (*New*, *Get
-Project Groups…*, *Import CAD Folder…*) load the groups and your memberships
-from the server again, so a group created or joined in the web UI shows
-without restarting the app.
+**Projects** (the rail button below *Agent*, `Ctrl/Cmd+5`) is where you
+choose the **active project group**: your groups first, then the others.
+CAD editors create a new group there (*New* – you become its manager; tick *Restricted* to keep it to its members), and
+the page offers *Get…* (copy
+groups into your workspace) and *Import CAD folder…*. The choice is kept on
+this computer.
+
+**Home** is a file browser of the active group, in three views:
+
+* *Files* (the view Home starts with): the **folders** of the group and the
+  **files** in them, as in its working folder – folders first, then the files
+  by name the way a file manager orders them (without regard to case, `Part2`
+  before `Part10`), each with the state and the lock of its item. The file
+  name comes first and the number and revision after it, so a narrow navigator
+  cuts the number, not the name. A folder opens its own level – a large group
+  is never loaded as a whole, and a folder with more than 500 files offers
+  *show … more*. The files are those of the latest revision of every item;
+  items without files are listed below the files at the top of the group.
+  The number next to the order is the rows of the whole group. A click on a
+  file opens its item;
+* *All items*: every item in one list, the name first (the first 500 by
+  number);
+* *Structure*: the assemblies with their parts.
+
+*Files* and *All items* are sorted by name (or by number, type or state – the
+choice is kept). *Change…* goes back to *Projects*. *New* and *Import CAD
+Folder…* start with the active group. With a server older than the *Files*
+view, Home shows *All items* instead.
+
+*Home*, *Projects*, *Refresh* and the dialogs that offer project groups (*New*, *Get Project Groups…*, *Import CAD
+Folder…*) load the groups and your
+memberships from the server again, so a group created or joined in the web UI
+shows without restarting the app.
 
 Keyboard: `Ctrl/Cmd+N` new item, `Ctrl/Cmd+F` search, `F5` refresh,
-`Ctrl/Cmd+1/2/3/4` Home, Worklist, Changes, Agent, `Ctrl/Cmd+W` close the tab,
+`Ctrl/Cmd+1/2/3/4/5` Home, Worklist, Changes, Agent, Projects, `Ctrl/Cmd+W` close the tab,
 `Ctrl/Cmd` + `+` / `-` / `0` (or `Ctrl` + mouse wheel) zoom.
 
 ## How files appear on your computer
@@ -210,13 +289,32 @@ group, and a file keeps its folder when new versions arrive. While a
 revision is checked out, the revision page can move a file to another
 folder.
 
-**Read-only rule.** Files you have **not** checked out are read-only on disk
-(the read-only attribute on Windows, no write permission on Linux and macOS).
+**Read-only rule.** Files you have **not** checked out are read-only on disk (the read-only attribute on Windows, no
+write permission on Linux and macOS).
 CAD programs then open them read-only, and nobody edits a file that cannot be
 checked in. *Check out* makes the files of the revision writable; *Check in*
 uploads the changed ones and makes them read-only again; *Cancel check-out*
 does the same without uploading. Files you changed are never made read-only
 or overwritten by TeamCraft.
+
+**Check-out of an assembly.** The lock is taken on the assembly only; its
+structure is then fetched like *Get* does under the *latest* rule, in the same
+progress dialog. Per file: missing – downloaded read-only; up to date –
+skipped; an unchanged older copy – updated; changed here, checked out by you,
+or a different file at the same place – kept untouched and listed (*kept – your
+local changes*, *name clash*). Cancelling leaves no partial file. **Add files.** *Add files…* (Files section and *More
+▾* of a revision) takes
+files from a file picker, checks the revision out first if you have not,
+and **copies** them into its working folder – the originals are never moved
+or changed. New files go into the revision's main folder or a sub-folder of
+it. A file with the name of an existing file becomes its next version and
+asks first (unticked files are not added). The copies appear as *new*
+files in *Check in…* – also files with an unrelated name, which TeamCraft
+remembers in `.teamcraft/added.json` until they are checked in – or tick *Check in now*. The Files section explains why
+the button is disabled:
+checked out by someone else (add after check-in), in review, or released (frozen: *Revise* and add the files to the new
+revision). Dropping files
+onto the window is not supported yet.
 
 **Get.** *Get…* on a revision resolves its structure on the server – the
 multi-level BOM with the revision rule you choose (*latest*: the newest
@@ -226,8 +324,8 @@ names its parts, a drawing its model) – and downloads **only what is
 missing or outdated**, compared by SHA-256. Every file is checked against
 its SHA-256 after the download and recorded at once, so a Get that was
 cancelled or interrupted continues where it stopped – also inside a large file:
-the bytes already received stay next to the file
-(`<name>.<sha>.teamcraft-download`, ignored by the working folder), the next
+the bytes already received stay next to the file (`<name>.<sha>.teamcraft-download`, ignored by the working folder), the
+next
 Get asks the server only for the rest and checks the SHA-256 of the whole
 file before it puts it in place. A file that changed on the server
 meanwhile is downloaded completely again. The status bar shows
@@ -281,6 +379,31 @@ Once a day at most, the app asks GitHub for the latest TeamCraft release. If
 it is newer than your version, the status bar shows *TeamCraft x.y.z is
 available* – a link to the release page in your browser. The app never
 downloads or installs anything itself; install the new version as you
-installed this one. *×* hides the notice until the next version;
-*Settings → Updates* switches the check off (for example on computers without
+installed this one. *×* hides the notice until the next version; *Settings → Updates* switches the check off (for
+example on computers without
 internet access).
+
+## Crash reports
+
+When the app crashes – a panic in the app, an uncaught error in its user
+interface, or a session that ended without closing normally (for example the
+web view crashed, the app hung and was force-quit, or the computer lost
+power) – it writes a report into the `crash-reports` folder of its settings
+directory. Before the report is written, the home folder (and with it your
+user name), server addresses and sign-in tokens are removed. The report holds
+no item data and no files.
+
+At the next start a dialog shows the whole report:
+
+* *Report on GitHub…* opens a new issue at the TeamCraft repository in your
+  browser, prefilled with the report. You read it, add what you were doing,
+  and submit it yourself; a GitHub account is needed. The full text is also
+  copied to the clipboard, in case the link had to shorten it.
+* *Copy* puts the report on the clipboard, for example for an e-mail.
+* *Delete report* removes it without sharing.
+
+Nothing is ever sent without that choice. Closing the dialog keeps the report
+for the next start. *Don't ask again* (or *Settings → Crash reports*) stops
+the question; the reports then stay on the computer only. Background and the
+alternatives that were considered: [Crash reports from the desktop
+app](../research/crash-reporting.md).

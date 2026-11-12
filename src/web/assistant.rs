@@ -7,7 +7,10 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use super::{is_user_error, render, WebCtx};
-use crate::{api::ApiJson, auth::WebUser};
+use crate::{
+    api::ApiJson,
+    auth::{Origin, WebUser},
+};
 use crate::{
     assistant::{self, Action, AssistantError, Question},
     error::{AppError, AppResult},
@@ -99,6 +102,7 @@ pub async fn show(State(st): State<AppState>, ctx: WebCtx) -> AppResult<Response
 pub async fn ask(
     State(st): State<AppState>,
     ctx: WebCtx,
+    origin: Origin,
     Form(form): Form<AskForm>,
 ) -> AppResult<Response> {
     require_enabled(&st)?;
@@ -110,7 +114,7 @@ pub async fn ask(
         form.change.as_deref(),
         form.allow_drafts.as_deref() == Some("1"),
     ) {
-        Ok(q) => q,
+        Ok(q) => Question { origin, ..q },
         Err(message) => return page(&st, &ctx, &form, None, Some(message)),
     };
     match services::assistant::ask(&st, &ctx.me, question).await {
@@ -120,6 +124,7 @@ pub async fn ask(
                 "html": assistant::render_markdown(&run.answer.text),
                 "text": run.answer.text,
                 "truncated": run.answer.truncated,
+                "links": run.links,
                 "tools": run.tools,
                 "steps": run.steps,
                 "model": run.model,
@@ -167,6 +172,7 @@ pub(super) async fn thread(
 pub(super) async fn chat(
     State(st): State<AppState>,
     WebUser(me): WebUser,
+    origin: Origin,
     ApiJson(body): ApiJson<ChatBody>,
 ) -> AppResult<Json<Value>> {
     let run = services::assistant::chat(
@@ -177,6 +183,7 @@ pub(super) async fn chat(
         &body.context,
         body.allow_drafts,
         true,
+        origin,
     )
     .await?;
     Ok(Json(json!(run)))

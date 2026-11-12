@@ -7,7 +7,9 @@
 //! as SolidWorks, Inventor, Solid Edge and CATIA store paths that way) – that
 //! ends with the extension of a CAD file (`Bracket.SLDPRT`,
 //! `C:\Rover\Motor mount.ipt`, `'nozzle.stp'`, `"power.kicad_sch"`). Paths
-//! are reduced to the file name. The result is a list of referenced file
+//! are reduced to the file name. UTF-16 strings with a length prefix (as
+//! Inventor stores its references) are also read by their length, so a
+//! binary field right after the name cannot hide it. The result is a list of referenced file
 //! names; `services::references` matches them against the files in the
 //! vault.
 //!
@@ -16,6 +18,11 @@
 //! (`swpart`: the component tree of an assembly, otherwise the document
 //! manager's section – both inflated from their compressed sections). The
 //! rest of such a file (history, old names) is never scanned.
+//!
+//! For those two – and for STEP assemblies with external references – the
+//! scan also tells how often an assembly places each component
+//! ([`instance_counts`], stored as `file_references.instances`); every
+//! other format gives names only.
 //!
 //! For every other file this is a heuristic: a name that a CAD program keeps
 //! in its file after the component was removed is still found, and
@@ -29,7 +36,7 @@
     clippy::unreachable
 )]
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::{Read, Seek};
 use std::path::Path;
 
@@ -214,7 +221,7 @@ fn utf16_runs(content: &[u8], skip: Option<&std::ops::Range<usize>>, mut f: impl
         let mut i = align;
         while let Some(&[lo, hi]) = content.get(i..i + 2) {
             let unit = u16::from_le_bytes([lo, hi]);
-            let printable = ((0x20..0x7f).contains(&unit) || (0xa0..0x180).contains(&unit))
+            let printable = printable_unit(unit)
                 && !skip.is_some_and(|s| s.contains(&i) || s.contains(&(i + 1)));
             if printable {
                 run.push(char::from_u32(u32::from(unit)).unwrap_or('?'));
@@ -229,6 +236,55 @@ fn utf16_runs(content: &[u8], skip: Option<&std::ops::Range<usize>>, mut f: impl
         if run.chars().count() >= 5 {
             f(&run);
         }
+    }
+}
+
+/// Shortest and longest length-prefixed UTF-16 string read by
+/// [`prefixed_utf16_strings`], in code units.
+const PREFIXED_MIN: usize = 5;
+const PREFIXED_MAX: usize = 1024;
+
+/// Whether a UTF-16 code unit is text for the scans (Latin-1 and Latin
+/// Extended-A, as in [`utf16_runs`]).
+fn printable_unit(unit: u16) -> bool {
+    (0x20..0x7f).contains(&unit) || (0xa0..0x180).contains(&unit)
+}
+
+/// Length-prefixed UTF-16LE strings: a `u32` LE count of code units directly
+/// followed by exactly that many printable units. Inventor stores the paths
+/// of its references this way (`57 00 00 00` + 87 units of
+/// `C:\…\Planet_SpurGear.iam`), and the field after the string may
+/// itself look like text – `43 00` is a `C` – which a plain
+/// [`utf16_runs`] scan glues onto the extension (`….iamC`), so the name was
+/// lost. The count gives the exact end of the string.
+fn prefixed_utf16_strings(
+    content: &[u8],
+    skip: Option<&std::ops::Range<usize>>,
+    mut f: impl FnMut(&str),
+) {
+    let mut i = 0;
+    while let Some(head) = content.get(i..i + 4) {
+        let count = <[u8; 4]>::try_from(head).map_or(0, u32::from_le_bytes) as usize;
+        if (PREFIXED_MIN..=PREFIXED_MAX).contains(&count) {
+            let end = i + 4 + 2 * count;
+            let skipped = skip.is_some_and(|s| s.start < end && i < s.end);
+            if let (false, Some(body)) = (skipped, content.get(i + 4..end)) {
+                let units: Vec<u16> = body
+                    .chunks_exact(2)
+                    .map(|p| <[u8; 2]>::try_from(p).map_or(0, u16::from_le_bytes))
+                    .collect();
+                if units.iter().all(|&u| printable_unit(u)) {
+                    let text: String = units
+                        .iter()
+                        .map(|&u| char::from_u32(u32::from(u)).unwrap_or('?'))
+                        .collect();
+                    f(&text);
+                    i = end;
+                    continue;
+                }
+            }
+        }
+        i += 1;
     }
 }
 
@@ -387,6 +443,38 @@ fn raw_names(content: &[u8]) -> Vec<String> {
     utf16_runs(content, skip.as_ref(), |run| {
         names_in(run, &exts, &mut found)
     });
+    // Length-prefixed strings have exact ends: a path is reduced to its last
+    // part as a whole, so `=`, `,` or `(` inside the name do not cut it
+    // (`Spring L=20_D=8.ipt`, `Bolt M4 x 12, stainless.ipt`).
+    let mut exact = Vec::new();
+    prefixed_utf16_strings(content, skip.as_ref(), |text| {
+        let last = text.rsplit(['\\', '/']).next().unwrap_or(text).trim();
+        if last.len() <= MAX_NAME && is_referencable(last) {
+            exact.push(last.to_string());
+        } else {
+            names_in(text, &exts, &mut found);
+        }
+    });
+    // The other scans cut such names at those characters: drop a name that
+    // is only the tail of an exact one after a boundary (`8.ipt`).
+    found.retain(|name| {
+        let name = name.to_lowercase();
+        !exact.iter().any(|e| {
+            let e = e.to_lowercase();
+            // the scans trim spaces after the boundary (`…M4 x 12, stainless.ipt`)
+            e.len() > name.len()
+                && e.ends_with(&name)
+                && e.get(..e.len() - name.len()).is_some_and(|head| {
+                    head.ends_with("  ")
+                        || head
+                            .trim_end()
+                            .chars()
+                            .next_back()
+                            .is_some_and(is_name_boundary)
+                })
+        })
+    });
+    found.extend(exact);
     found
 }
 
@@ -414,30 +502,136 @@ fn from_nx_streams(streams: &[Vec<u8>], own_name: &str) -> Vec<String> {
     finish(names, own_name)
 }
 
+/// A file name referenced by a CAD file, with how often the file places it
+/// where its format tells (see [`instance_counts`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FileRef {
+    pub name: String,
+    /// Instances counted in the file; `Some(0)`: only instances excluded
+    /// from the BOM; `None`: not known.
+    pub instances: Option<u32>,
+}
+
+/// The lookup key of a referenced file name: normalised as [`finish`] does,
+/// lower case.
+fn count_key(name: &str) -> String {
+    cadformat::normalize_name(name).to_lowercase()
+}
+
+/// How often an assembly places each component file – keyed by the lower
+/// case, normalised file name – where its format tells:
+///
+/// * NX (`nx-part`): the placed components (`NAME.prt`), hidden layers left
+///   out as in the preview (`nxasm::kind_of`);
+/// * SOLIDWORKS 2015+ assemblies: the instances of the component tree
+///   without `swExcludeFromBOM` (`swpart::file_component_counts`; a file
+///   with only excluded instances counts 0);
+/// * STEP assemblies with external references: the assembly occurrences of
+///   each external file (`stepbom::external_instance_counts`);
+/// * Inventor assemblies: the occurrences of each referenced file from the
+///   file descriptor table without the suppressed ones
+///   (`invasm::file_occurrence_counts`; only suppressed ones count 0).
+///
+/// `None` for every other format and for files without component data.
+/// Blocking (reads the file).
+pub fn instance_counts(path: &Path, format: &str) -> Option<HashMap<String, u32>> {
+    let mut counts: HashMap<String, u32> = HashMap::new();
+    match format {
+        "nx-part" => {
+            let comps = match crate::nxasm::kind_of(path).ok()? {
+                crate::nxasm::Kind::Assembly(c) | crate::nxasm::Kind::Part(c) => c,
+                crate::nxasm::Kind::Other => return None,
+            };
+            for c in comps {
+                let key = count_key(&format!("{}.prt", c.name));
+                let n = counts.entry(key).or_default();
+                *n = n.saturating_add(1);
+            }
+        }
+        "solidworks-assembly" => {
+            let file = std::io::BufReader::new(std::fs::File::open(path).ok()?);
+            for (p, n) in crate::swpart::file_component_counts(file, MAX_SCAN).ok()?? {
+                let key = count_key(p.rsplit(['\\', '/']).next().unwrap_or(&p).trim());
+                let total = counts.entry(key).or_default();
+                *total = total.saturating_add(n);
+            }
+        }
+        "step" => {
+            let mut content = Vec::new();
+            std::fs::File::open(path)
+                .ok()?
+                .take(MAX_SCAN)
+                .read_to_end(&mut content)
+                .ok()?;
+            for (name, n) in crate::stepbom::external_instance_counts(&content)? {
+                let total = counts.entry(count_key(&name)).or_default();
+                *total = total.saturating_add(n);
+            }
+        }
+        "inventor-assembly" => {
+            let file = std::io::BufReader::new(std::fs::File::open(path).ok()?);
+            let found = crate::invasm::file_occurrence_counts(file, MAX_SCAN).ok()??;
+            if found.is_empty() {
+                return None; // no descriptor table: the counts are not known
+            }
+            for (name, n) in found {
+                let total = counts.entry(count_key(&name)).or_default();
+                *total = total.saturating_add(n);
+            }
+        }
+        _ => return None,
+    }
+    Some(counts)
+}
+
+/// The names with their counts: a name the counts do not list is `None`
+/// (not known), as is every name when the file tells no counts.
+pub fn with_counts(names: Vec<String>, counts: Option<&HashMap<String, u32>>) -> Vec<FileRef> {
+    names
+        .into_iter()
+        .map(|name| {
+            let instances = counts.and_then(|c| c.get(&count_key(&name)).copied());
+            FileRef { name, instances }
+        })
+        .collect()
+}
+
 /// Reads a stored file and finds its references: NX parts through their
 /// stream directory and SOLIDWORKS 2015+ files through their sections (with
 /// seeks, so large files are read completely), everything else from its
-/// first [`MAX_SCAN`] bytes.
-pub async fn scan_file(path: &Path, own_name: &str) -> Vec<String> {
+/// first [`MAX_SCAN`] bytes. The instance counts come from
+/// [`instance_counts`] for the file's `format`.
+pub async fn scan_file(path: &Path, own_name: &str, format: &str) -> Vec<FileRef> {
     let path = path.to_path_buf();
     let own = own_name.to_string();
-    tokio::task::spawn_blocking(move || -> std::io::Result<Vec<String>> {
-        let mut file = std::io::BufReader::new(std::fs::File::open(&path)?);
-        if let Some(streams) = crate::nxpart::reference_streams(&mut file, MAX_SCAN)? {
-            return Ok(from_nx_streams(&streams, &own));
-        }
-        if let Some(data) = crate::swpart::reference_data(&mut file, MAX_SCAN)? {
-            return Ok(from_sw_sections(data, &own));
-        }
-        let mut content = Vec::new();
-        file.seek(std::io::SeekFrom::Start(0))?;
-        file.take(MAX_SCAN).read_to_end(&mut content)?;
-        Ok(find(&content, &own))
+    let format = format.to_string();
+    tokio::task::spawn_blocking(move || -> std::io::Result<Vec<FileRef>> {
+        let names = names_in_file(&path, &own)?;
+        let counts = if names.is_empty() {
+            None
+        } else {
+            instance_counts(&path, &format)
+        };
+        Ok(with_counts(names, counts.as_ref()))
     })
     .await
     .ok()
     .and_then(Result::ok)
     .unwrap_or_default()
+}
+
+fn names_in_file(path: &Path, own: &str) -> std::io::Result<Vec<String>> {
+    let mut file = std::io::BufReader::new(std::fs::File::open(path)?);
+    if let Some(streams) = crate::nxpart::reference_streams(&mut file, MAX_SCAN)? {
+        return Ok(from_nx_streams(&streams, own));
+    }
+    if let Some(data) = crate::swpart::reference_data(&mut file, MAX_SCAN)? {
+        return Ok(from_sw_sections(data, own));
+    }
+    let mut content = Vec::new();
+    file.seek(std::io::SeekFrom::Start(0))?;
+    file.take(MAX_SCAN).read_to_end(&mut content)?;
+    Ok(find(&content, own))
 }
 
 #[cfg(test)]
@@ -507,6 +701,97 @@ mod tests {
                 "Halterung_für_Düse.SLDPRT"
             ]
         );
+    }
+
+    /// A length-prefixed UTF-16 string as Inventor writes it: `u32` count of
+    /// code units, then the units.
+    fn prefixed(s: &str) -> Vec<u8> {
+        let units = utf16(s);
+        let mut out = u32::try_from(units.len() / 2)
+            .unwrap_or(0)
+            .to_le_bytes()
+            .to_vec();
+        out.extend(units);
+        out
+    }
+
+    #[test]
+    fn inventor_length_prefixed_references() {
+        // Bytes as in a real Inventor 2027 assembly: the path, then the next
+        // field `43 00 00 00` (a "C" to a plain UTF-16 scan) and the
+        // length-prefixed workspace name.
+        let mut content = vec![0x00, 0x13, 0x88, 0x01];
+        content.extend(prefixed(
+            "C:\\Projects\\Rover\\Workspace\\Drive\\Gearbox\\Planet\\\
+             Design Accelerator\\Planet_SpurGear.iam",
+        ));
+        content.extend([0x43, 0x00, 0x00, 0x00]);
+        content.extend(prefixed("Workspace"));
+        content.extend([0x02, 0x00, 0x00, 0x00, 0xff, 0xfe]);
+        content.extend(prefixed("Drive\\Gearbox\\RingGear.iam"));
+        content.extend([0x43, 0x00, 0x00, 0x00]);
+        // names with `=` and `,` stay whole – only the cut tail was found before
+        content.extend(prefixed("C:\\Rover\\Bumper\\Spring L=20_D=8.ipt"));
+        content.extend([0x43, 0x00, 0x00, 0x00]);
+        content.extend(prefixed(
+            "C:\\Rover\\Standard parts\\Bolt M4 x 12, stainless.ipt",
+        ));
+        content.extend([0x00, 0x00]);
+        let refs = find(&content, "Gearbox.iam");
+        assert_eq!(
+            refs,
+            vec![
+                "Planet_SpurGear.iam",
+                "RingGear.iam",
+                "Spring L=20_D=8.ipt",
+                "Bolt M4 x 12, stainless.ipt"
+            ]
+        );
+        // a different file whose name only ends the same way is kept
+        let mut both = prefixed("C:\\Rover\\Big Bracket.ipt");
+        both.extend([0x00, 0x00, 0x00, 0x00]);
+        both.extend(utf16("C:\\Rover\\Bracket.ipt"));
+        both.extend([0x00, 0x00]);
+        assert_eq!(
+            find(&both, "rover.iam"),
+            vec!["Big Bracket.ipt", "Bracket.ipt"]
+        );
+        // without the length prefix the glued "C" hides the name
+        let mut plain = utf16("C:\\Rover\\Motor mount.iam");
+        plain.extend([0x43, 0x00, 0x00, 0x00]);
+        assert!(find(&plain, "rover.iam").is_empty());
+    }
+
+    #[test]
+    fn prefixed_strings_need_exact_printable_length() {
+        fn collect(content: &[u8]) -> Vec<String> {
+            let mut out = Vec::new();
+            prefixed_utf16_strings(content, None, |t| out.push(t.to_string()));
+            out
+        }
+        // count larger than the data: nothing
+        let mut short = 40u32.to_le_bytes().to_vec();
+        short.extend(utf16("bracket.ipt"));
+        assert!(collect(&short).is_empty());
+        // a non-printable unit inside the counted range: nothing
+        let mut broken = 11u32.to_le_bytes().to_vec();
+        broken.extend(utf16("brack"));
+        broken.extend([0x01, 0x00]);
+        broken.extend(utf16("t.ipt"));
+        assert!(collect(&broken).is_empty());
+        // below the minimum length: nothing
+        let mut tiny = prefixed("a.ip");
+        tiny.extend([0x00, 0x00]);
+        assert!(collect(&tiny).is_empty());
+        // the exact string, even with text right after it
+        let mut exact = prefixed("bracket.ipt");
+        exact.extend(utf16("CX"));
+        assert_eq!(collect(&exact), vec!["bracket.ipt"]);
+        // inside a skipped range (STEP FILE_NAME): nothing
+        let mut skipped = Vec::new();
+        let range = 0..exact.len();
+        prefixed_utf16_strings(&exact, Some(&range), |t| skipped.push(t.to_string()));
+        assert!(skipped.is_empty());
     }
 
     #[test]
@@ -713,15 +998,118 @@ mod tests {
     async fn scan_file_reads_stored_files() {
         let path = std::env::temp_dir().join(format!("teamcraft-cadrefs-{}", uuid::Uuid::new_v4()));
         std::fs::write(&path, b"\x00bracket.SLDPRT\x00frame.SLDASM\x00").unwrap();
+        // not a SOLIDWORKS 2015+ container: names only, no counts
         assert_eq!(
-            scan_file(&path, "frame.sldasm").await,
-            vec!["bracket.SLDPRT"]
+            scan_file(&path, "frame.sldasm", "solidworks-assembly").await,
+            vec![FileRef {
+                name: "bracket.SLDPRT".into(),
+                instances: None
+            }]
         );
         std::fs::remove_file(&path).ok();
         assert!(
-            scan_file(&path, "frame.sldasm").await.is_empty(),
+            scan_file(&path, "frame.sldasm", "solidworks-assembly")
+                .await
+                .is_empty(),
             "missing file"
         );
+    }
+
+    #[test]
+    fn counts_are_matched_by_the_normalised_name_in_any_case() {
+        let counts: HashMap<String, u32> = [
+            ("bolt.sldprt".to_string(), 4),
+            ("glue.sldprt".to_string(), 0),
+            ("gear.prt".to_string(), 2),
+        ]
+        .into();
+        let names = vec![
+            "Bolt.SLDPRT".to_string(),
+            "glue.sldprt".to_string(),
+            // a Creo iteration suffix is not part of the name
+            "gear.prt.3".to_string(),
+            "nut.sldprt".to_string(),
+        ];
+        let refs = with_counts(names.clone(), Some(&counts));
+        let got: Vec<_> = refs
+            .iter()
+            .map(|r| (r.name.as_str(), r.instances))
+            .collect();
+        assert_eq!(
+            got,
+            [
+                ("Bolt.SLDPRT", Some(4)),
+                ("glue.sldprt", Some(0)),
+                ("gear.prt.3", Some(2)),
+                ("nut.sldprt", None)
+            ]
+        );
+        assert!(with_counts(names, None)
+            .iter()
+            .all(|r| r.instances.is_none()));
+    }
+
+    #[test]
+    fn inventor_assemblies_count_their_occurrences() {
+        let path = std::env::temp_dir().join(format!("teamcraft-iam-{}", uuid::Uuid::new_v4()));
+        std::fs::write(
+            &path,
+            crate::invasm::test_assembly(&[
+                ("C:\\Rover\\Wheel\\Wheel.iam", false, 4),
+                ("C:\\CC\\ISO 4762\\ISO 4762 - M6 x 20.ipt", true, 16),
+                ("C:\\Rover\\Frame.ipt", false, 1),
+            ]),
+        )
+        .unwrap();
+        let counts = instance_counts(&path, "inventor-assembly").unwrap();
+        assert_eq!(counts.get("wheel.iam"), Some(&4));
+        assert_eq!(counts.get("iso 4762 - m6 x 20.ipt"), Some(&16));
+        assert_eq!(counts.get("frame.ipt"), Some(&1));
+        let refs = with_counts(
+            vec!["Wheel.iam".into(), "Frame.ipt".into(), "Bracket.ipt".into()],
+            Some(&counts),
+        );
+        assert_eq!(
+            refs.iter().map(|r| r.instances).collect::<Vec<_>>(),
+            vec![Some(4), Some(1), None]
+        );
+        // a part file (no assembly occurrences) and a compound file without
+        // a descriptor table have no counts
+        assert_eq!(instance_counts(&path, "inventor-part"), None);
+        std::fs::write(&path, crate::invasm::test_assembly(&[])).unwrap();
+        assert_eq!(instance_counts(&path, "inventor-assembly"), None);
+        // suppressed occurrences are not counted; only suppressed ones: 0
+        // (still referenced, left out of the BOM like excluded SOLIDWORKS parts)
+        std::fs::write(
+            &path,
+            crate::invasm::test_assembly_with_records(
+                &[
+                    ("C:\\Rover\\Wheel.iam", false, 2),
+                    ("C:\\Rover\\Frame.ipt", false, 1),
+                ],
+                &[("Wheel", false), ("Frame", true), ("Wheel", true)],
+            ),
+        )
+        .unwrap();
+        let counts = instance_counts(&path, "inventor-assembly").unwrap();
+        assert_eq!(counts.get("wheel.iam"), Some(&1));
+        assert_eq!(counts.get("frame.ipt"), Some(&0));
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn only_assemblies_with_component_data_have_counts() {
+        let path = std::env::temp_dir().join(format!("teamcraft-counts-{}", uuid::Uuid::new_v4()));
+        std::fs::write(&path, b"\x00bracket.SLDPRT\x00").unwrap();
+        for format in [
+            "solidworks-assembly",
+            "nx-part",
+            "inventor-assembly",
+            "step",
+        ] {
+            assert_eq!(instance_counts(&path, format), None, "{format}");
+        }
+        std::fs::remove_file(&path).ok();
     }
 
     /// Regression: the extension is compared in lower case, and the Kelvin
@@ -814,5 +1202,120 @@ mod tests {
         let mut content = vec![0x01, 0x8e];
         content.extend(b"Bracket.SLDPRT\x00\x004711.stp\x00");
         assert_eq!(find(&content, "x.sldasm"), ["Bracket.SLDPRT", "4711.stp"]);
+    }
+
+    /// Found by cargo mutants: runs shorter than five bytes are dropped, also
+    /// late in the file and at its end.
+    #[test]
+    fn byte_runs_need_five_printable_bytes() {
+        let runs = |content: &[u8], skip: Option<&std::ops::Range<usize>>| {
+            let mut out = Vec::new();
+            byte_runs(content, skip, |r| out.push(r.to_string()));
+            out
+        };
+        let content = b"\0\0\0\0\0\0\0\0abcd\0ABCDE\0\0xyz";
+        assert_eq!(runs(content, None), ["ABCDE"]);
+        assert_eq!(
+            runs(b"\0\0\0\0\0\0\0\0UVWXY", None),
+            ["UVWXY"],
+            "a run at the end"
+        );
+        assert_eq!(runs(b"\0\0\0\0\0\0\0\0UVWX", None), Vec::<String>::new());
+        // a skipped range splits a run
+        assert_eq!(runs(b"ABCDEFGHIJ", Some(&(5..6))), ["ABCDE"]);
+    }
+
+    /// Found by cargo mutants: the end of the HEADER section is searched
+    /// after `HEADER;` – also when the header starts far into the file and
+    /// right after an `ENDSEC;`.
+    #[test]
+    fn the_file_name_entity_is_found_inside_the_header_only() {
+        let entity = b"FILE_NAME('it''s a) b.stp','',(''),(''),'','','')";
+        let file = |before_header: &str| {
+            let mut c = format!("ISO-10303-21;{before_header}HEADER;\n").into_bytes();
+            let at = c.len();
+            c.extend_from_slice(entity);
+            c.extend_from_slice(b";\nENDSEC;\nDATA;\nENDSEC;\nEND-ISO-10303-21;\n");
+            (c, at)
+        };
+        let comment = format!("\n/* {} */\n", "x".repeat(400));
+        let (content, at) = file(&comment);
+        assert_eq!(step_file_name_entity(&content), Some(at..at + entity.len()));
+        let (content, at) = file("\nENDSEC;");
+        assert_eq!(step_file_name_entity(&content), Some(at..at + entity.len()));
+        // FILE_NAME after the end of the header is not the entity
+        let late = b"ISO-10303-21;\nHEADER;\nENDSEC;\nDATA;\n#1=FILE_NAME('x');\nENDSEC;\n";
+        assert_eq!(step_file_name_entity(late), None);
+    }
+
+    /// Found by cargo mutants: the stored-file variant was only covered by
+    /// the integration tests.
+    #[tokio::test]
+    async fn the_export_name_of_a_stored_file() {
+        let dir = std::env::temp_dir().join(format!("teamcraft-step-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let stored = dir.join("object");
+        std::fs::write(&stored, step("'Bracket.STEP'")).unwrap();
+        assert_eq!(
+            scan_export_name(&stored, "bracket_v2.stp").await.as_deref(),
+            Some("Bracket.STEP")
+        );
+        assert_eq!(
+            scan_export_name(&stored, "bracket.step").await,
+            None,
+            "own name"
+        );
+        assert_eq!(scan_export_name(&dir.join("missing"), "x.stp").await, None);
+        // only the first EXPORT_NAME_SCAN bytes are read
+        let mut late = format!("ISO-10303-21;\n/* {} */\n", "x".repeat(70 * 1024)).into_bytes();
+        late.extend(
+            step("'Bracket.STEP'")
+                .into_iter()
+                .skip("ISO-10303-21;\n".len()),
+        );
+        let far = dir.join("far");
+        std::fs::write(&far, &late).unwrap();
+        assert_eq!(
+            step_export_name(&late, "x.stp").as_deref(),
+            Some("Bracket.STEP")
+        );
+        assert_eq!(scan_export_name(&far, "x.stp").await, None);
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Found by cargo mutants: a non-printable unit ends a UTF-16 run.
+    #[test]
+    fn utf16_runs_end_at_non_printable_units() {
+        let utf16 = |s: &str| {
+            s.encode_utf16()
+                .flat_map(u16::to_le_bytes)
+                .collect::<Vec<u8>>()
+        };
+        let runs = |content: &[u8], skip: Option<&std::ops::Range<usize>>| {
+            let mut out = Vec::new();
+            utf16_runs(content, skip, |r| out.push(r.to_string()));
+            out
+        };
+        let mut content = utf16("ABCDE");
+        content.extend_from_slice(&[0, 0]);
+        content.extend(utf16("Größe"));
+        let found = runs(&content, None);
+        assert!(found.contains(&"ABCDE".to_string()), "{found:?}");
+        assert!(found.contains(&"Größe".to_string()), "{found:?}");
+        assert!(found.iter().all(|r| !r.contains('\0')), "{found:?}");
+        // a skipped byte splits the run: both halves are too short
+        let found = runs(&utf16("ABCDEFGH"), Some(&(8..9)));
+        assert!(found.iter().all(|r| r.chars().count() < 8), "{found:?}");
+        // skipping only the high byte of 'E' (bytes 8–9) drops exactly that
+        // unit: "ABCD" is too short, "FGHIJKL" stays
+        assert_eq!(runs(&utf16("ABCDEFGHIJKL"), Some(&(9..10))), ["FGHIJKL"]);
+    }
+
+    /// The documented limits (found by cargo mutants: a behavioural test
+    /// would have to scan more than 32 MiB).
+    #[test]
+    fn scan_limits() {
+        assert_eq!(MAX_SCAN, 32 * 1024 * 1024);
+        assert_eq!(EXPORT_NAME_SCAN, 64 * 1024);
     }
 }

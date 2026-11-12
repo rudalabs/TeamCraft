@@ -17,7 +17,10 @@
 //!    `commands::agent_prompt` asks again before every message;
 //! 3. `session/prompt` per user message; meanwhile the agent streams
 //!    `session/update` notifications (message chunks, tool calls, plans) and
-//!    may ask `session/request_permission`, which the user answers;
+//!    may ask `session/request_permission`, which the user answers – except
+//!    calls of TeamCraft's own read-only MCP tools, which the desktop allows
+//!    once by itself ([`crate::autoallow`]; the server checks the user's
+//!    rights on every call) unless the user asks to be asked;
 //! 4. `session/cancel` stops a turn.
 //!
 //! Client capabilities are deliberately small: `fs/read_text_file` only for
@@ -53,6 +56,8 @@ use tokio::{
     sync::{oneshot, Mutex as AsyncMutex, Semaphore},
 };
 
+use crate::autoallow::{self, Decision, ReadOnlyTools};
+
 /// The ACP major version this client speaks.
 pub const PROTOCOL_VERSION: u64 = 1;
 /// Longest JSON-RPC message accepted from the agent (one line).
@@ -82,6 +87,8 @@ const MAX_READS: usize = 8;
 /// Most permission requests open at the same time; more are answered with
 /// `cancelled` right away.
 const MAX_PERMISSIONS: usize = 16;
+/// Most announced tool-call kinds remembered per session.
+const MAX_TOOL_KINDS: usize = 4_096;
 
 const METHOD_NOT_FOUND: i64 = -32601;
 const INVALID_PARAMS: i64 = -32602;
@@ -444,6 +451,14 @@ pub enum Event {
         title: String,
         /// The agent offers a one-time allow (only that is offered to the user).
         can_allow: bool,
+    },
+    /// A permission request for one of TeamCraft's read-only MCP tools,
+    /// allowed once without asking (the tool-call list marks it).
+    AutoAllowed {
+        tool_id: Option<String>,
+        title: String,
+        /// The TeamCraft tool, e.g. `get_item`.
+        tool: String,
     },
     /// A permission request was answered or became moot.
     PermissionDone {
@@ -907,6 +922,11 @@ pub struct Options {
     pub mcp: Option<McpServer>,
     pub client_version: String,
     pub stderr: Tail,
+    /// The read-only tools of the server's `tools/list`, fetched with
+    /// [`McpServer::token`]; `None` (not loaded) asks for every tool.
+    pub read_only_tools: Option<ReadOnlyTools>,
+    /// Settings → Agents: ask before read-only TeamCraft tools too.
+    pub ask_read_only: bool,
 }
 
 /// What the agent told about itself.
@@ -937,9 +957,88 @@ struct Shared {
     stderr: Tail,
     /// The models the agent offers, if it offers a choice.
     models: Mutex<Option<Models>>,
+    /// TeamCraft's read-only tools – only once the agent got TeamCraft's
+    /// MCP server from this desktop (otherwise a server of the agent's own
+    /// called `teamcraft` could match).
+    read_only: Mutex<Option<ReadOnlyTools>>,
+    /// The user asks to be asked before read-only TeamCraft tools too.
+    ask_read_only: AtomicBool,
+    /// Kinds of the tool calls the agent announced (`toolCallId` → kind), so
+    /// a permission request cannot drop the kind of a terminal command.
+    tool_kinds: Mutex<HashMap<String, String>>,
+    /// [`MAX_TOOL_KINDS`] was reached: unknown calls ask.
+    kinds_full: AtomicBool,
 }
 
 impl Shared {
+    fn remember_kind(&self, update: &Value) {
+        let (Some(id), Some(kind)) = (update["toolCallId"].as_str(), update["kind"].as_str())
+        else {
+            return;
+        };
+        let id = truncate(id, TITLE);
+        let mut kinds = self.tool_kinds.lock().expect("kinds lock");
+        if kinds.len() >= MAX_TOOL_KINDS && !kinds.contains_key(&id) {
+            // a full map takes no new calls; their requests ask (see below)
+            self.kinds_full.store(true, Ordering::SeqCst);
+            return;
+        }
+        // a kind other than `other` sticks: a later update cannot turn a
+        // terminal command into an MCP call
+        if kinds.get(&id).is_some_and(|k| k != "other") {
+            return;
+        }
+        kinds.insert(id, truncate(kind, 40));
+    }
+
+    /// The kind the agent announced for a tool call. Once the map is full, an
+    /// unknown call counts as an unknown kind, so its request asks.
+    fn announced_kind(&self, id: Option<&str>) -> Option<String> {
+        let kinds = self.tool_kinds.lock().expect("kinds lock");
+        match id.and_then(|id| kinds.get(&truncate(id, TITLE))) {
+            Some(kind) => Some(kind.clone()),
+            None if self.kinds_full.load(Ordering::SeqCst) => Some("unknown".into()),
+            None => None,
+        }
+    }
+
+    /// Answers a permission request without the user when it is a call of a
+    /// read-only TeamCraft tool; `false` = show it to the user.
+    async fn auto_allow(&self, id: &Value, params: &Value) -> bool {
+        if self.ask_read_only.load(Ordering::SeqCst) {
+            return false;
+        }
+        let tool_id = params["toolCall"]["toolCallId"].as_str();
+        let announced = self.announced_kind(tool_id);
+        let decision = {
+            let tools = self.read_only.lock().expect("read-only lock");
+            autoallow::decide(
+                params,
+                autoallow::MCP_SERVER_NAME,
+                tools.as_ref(),
+                announced.as_deref(),
+            )
+        };
+        let Decision::Allow { option_id, tool } = decision else {
+            return false;
+        };
+        self.rpc
+            .respond(
+                id.clone(),
+                Ok(json!({ "outcome": { "outcome": "selected", "optionId": option_id } })),
+            )
+            .await;
+        self.sink.emit(Event::AutoAllowed {
+            tool_id: tool_id.map(|t| truncate(t, TITLE)),
+            title: params["toolCall"]["title"]
+                .as_str()
+                .map(|t| truncate(t, TITLE))
+                .unwrap_or_else(|| tool.clone()),
+            tool,
+        });
+        true
+    }
+
     fn set_models(&self, models: Models) {
         *self.models.lock().expect("models lock") = Some(models.clone());
         self.sink.emit(Event::Models { models });
@@ -1017,6 +1116,9 @@ async fn dispatch(shared: &Arc<Shared>, msg: Incoming) {
                         shared.set_models(models);
                     }
                 } else if let Some(event) = translate_update(update) {
+                    if matches!(event, Event::Tool { .. }) {
+                        shared.remember_kind(update);
+                    }
                     shared.sink.emit(event);
                 }
             }
@@ -1031,6 +1133,9 @@ async fn dispatch(shared: &Arc<Shared>, msg: Incoming) {
             }
             match method.as_str() {
                 "session/request_permission" => {
+                    if shared.auto_allow(&id, &params).await {
+                        return;
+                    }
                     let key = shared.next_key.fetch_add(1, Ordering::SeqCst);
                     let options = permission_options(&params);
                     let can_allow = options.iter().any(|o| o.kind == "allow_once");
@@ -1143,6 +1248,11 @@ where
         next_key: AtomicU64::new(1),
         stderr: opts.stderr.clone(),
         models: Mutex::new(None),
+        // set by the handshake once TeamCraft's server was handed over
+        read_only: Mutex::new(None),
+        ask_read_only: AtomicBool::new(opts.ask_read_only),
+        tool_kinds: Mutex::new(HashMap::new()),
+        kinds_full: AtomicBool::new(false),
     });
     tokio::spawn(read_loop(BufReader::new(reader), shared.clone()));
     let result = handshake(&rpc, &shared, &opts).await;
@@ -1208,7 +1318,7 @@ async fn handshake(
     let mcp_servers = match (&opts.mcp, http) {
         (Some(m), true) => json!([{
             "type": "http",
-            "name": "teamcraft",
+            "name": autoallow::MCP_SERVER_NAME,
             "url": m.url,
             "headers": [
                 { "name": "Authorization", "value": format!("Bearer {}", m.token) },
@@ -1246,6 +1356,10 @@ async fn handshake(
         .to_string();
     *shared.session_id.lock().expect("session lock") = Some(session_id.clone());
     *shared.models.lock().expect("models lock") = models_of(&created);
+    // only the server this desktop handed over may be answered by itself
+    if opts.mcp.is_some() && http {
+        *shared.read_only.lock().expect("read-only lock") = opts.read_only_tools.clone();
+    }
     if opts.mcp.is_some() && !http {
         shared.sink.emit(Event::Notice {
             text: "This agent does not support MCP servers over HTTP, so it has no TeamCraft tools – it only sees the workspace folder.".into(),
@@ -1407,6 +1521,11 @@ impl Session {
         });
         self.shared.set_models(next.clone());
         Ok(next)
+    }
+
+    /// Settings → Agents changed: ask before read-only TeamCraft tools, or not.
+    pub fn set_ask_read_only(&self, ask: bool) {
+        self.shared.ask_read_only.store(ask, Ordering::SeqCst);
     }
 
     /// Answers open permission requests with `cancelled` (the turn is over).
@@ -1574,6 +1693,148 @@ mod tests {
             }),
             client_version: "0.1.0".into(),
             stderr: Tail::default(),
+            read_only_tools: None,
+            ask_read_only: false,
+        }
+    }
+
+    fn read_only_list() -> ReadOnlyTools {
+        ReadOnlyTools::from_tools_list(&json!({ "result": { "tools": [
+            { "name": "get_item", "annotations": { "readOnlyHint": true } },
+            { "name": "create_draft_change", "annotations": { "readOnlyHint": false } },
+        ] } }))
+        .unwrap()
+    }
+
+    /// A session whose agent got TeamCraft's server (or not: `http`) and the
+    /// read-only list.
+    async fn started_auto(
+        http: bool,
+        ask: bool,
+    ) -> (Arc<Session>, FakeAgent, Arc<Recorder>, tempfile::TempDir) {
+        let dir = tempfile::tempdir().unwrap();
+        let (cr, cw, mut agent) = pipes();
+        let sink = Arc::new(Recorder::default());
+        let opts = Options {
+            read_only_tools: Some(read_only_list()),
+            ask_read_only: ask,
+            ..options(dir.path())
+        };
+        let connecting = tokio::spawn({
+            let sink = sink.clone();
+            async move { connect(cr, cw, sink, opts).await }
+        });
+        agent.handshake_with(http, json!({})).await;
+        let session = connecting.await.unwrap().expect("connected");
+        (Arc::new(session), agent, sink, dir)
+    }
+
+    fn permission_request(id: u64, call: Value) -> Value {
+        json!({ "jsonrpc": "2.0", "id": id, "method": "session/request_permission", "params": {
+            "sessionId": "sess_1", "toolCall": call,
+            "options": [
+                { "optionId": "always", "name": "Always", "kind": "allow_always" },
+                { "optionId": "once", "name": "Allow", "kind": "allow_once" },
+                { "optionId": "no", "name": "Reject", "kind": "reject_once" } ] } })
+    }
+
+    #[tokio::test]
+    async fn read_only_teamcraft_tools_are_allowed_without_asking() {
+        let (session, mut agent, sink, _dir) = started_auto(true, false).await;
+        agent
+            .send(permission_request(
+                5,
+                json!({ "toolCallId": "t1",
+            "title": "mcp__teamcraft__get_item", "kind": "other" }),
+            ))
+            .await;
+        let answer = agent.recv().await;
+        assert_eq!(answer["id"], 5);
+        assert_eq!(
+            answer["result"]["outcome"],
+            json!({ "outcome": "selected", "optionId": "once" })
+        );
+        assert!(sink.events().contains(&Event::AutoAllowed {
+            tool_id: Some("t1".into()),
+            title: "mcp__teamcraft__get_item".into(),
+            tool: "get_item".into(),
+        }));
+
+        // a write tool, a terminal command announced earlier under a spoofed
+        // title: shown to the user
+        agent
+            .send(permission_request(
+                6,
+                json!({ "toolCallId": "t2",
+            "title": "mcp__teamcraft__create_draft_change", "kind": "other" }),
+            ))
+            .await;
+        let Event::Permission { key, tool_id, .. } = sink
+            .wait_for(|e| matches!(e, Event::Permission { tool_id: Some(t), .. } if t == "t2"))
+            .await
+        else {
+            unreachable!()
+        };
+        assert_eq!(tool_id.as_deref(), Some("t2"));
+        session.answer_permission(key, false).await.unwrap();
+        assert_eq!(agent.recv().await["id"], 6);
+        agent.send(json!({ "jsonrpc": "2.0", "method": "session/update", "params": { "sessionId": "sess_1",
+            "update": { "sessionUpdate": "tool_call", "toolCallId": "t3", "title": "rm -rf", "kind": "execute" } } })).await;
+        // … even when a later update claims another kind
+        agent.send(json!({ "jsonrpc": "2.0", "method": "session/update", "params": { "sessionId": "sess_1",
+            "update": { "sessionUpdate": "tool_call_update", "toolCallId": "t3", "kind": "other" } } })).await;
+        agent
+            .send(permission_request(
+                7,
+                json!({ "toolCallId": "t3",
+            "title": "mcp__teamcraft__get_item" }),
+            ))
+            .await;
+        sink.wait_for(|e| matches!(e, Event::Permission { tool_id: Some(t), .. } if t == "t3"))
+            .await;
+
+        // the user asks to be asked: shown, too
+        session.set_ask_read_only(true);
+        agent
+            .send(permission_request(
+                8,
+                json!({ "toolCallId": "t4",
+            "title": "mcp__teamcraft__get_item", "kind": "other" }),
+            ))
+            .await;
+        sink.wait_for(|e| matches!(e, Event::Permission { tool_id: Some(t), .. } if t == "t4"))
+            .await;
+        assert_eq!(
+            sink.events()
+                .iter()
+                .filter(|e| matches!(e, Event::AutoAllowed { .. }))
+                .count(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn without_teamcraft_s_server_or_with_the_setting_nothing_is_allowed() {
+        // the agent got no TeamCraft server: a `teamcraft` server of its own
+        // must not be answered by the desktop
+        for (http, ask) in [(false, false), (true, true)] {
+            let (_session, mut agent, sink, _dir) = started_auto(http, ask).await;
+            agent
+                .send(permission_request(
+                    5,
+                    json!({ "toolCallId": "t1",
+                "title": "mcp__teamcraft__get_item", "kind": "other" }),
+                ))
+                .await;
+            sink.wait_for(|e| matches!(e, Event::Permission { .. }))
+                .await;
+            assert!(
+                !sink
+                    .events()
+                    .iter()
+                    .any(|e| matches!(e, Event::AutoAllowed { .. })),
+                "http {http}, ask {ask}"
+            );
         }
     }
 

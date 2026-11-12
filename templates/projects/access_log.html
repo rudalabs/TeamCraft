@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Read log {{ project.code }}{% endblock %}
+{% block nav_projects %}active{% endblock %}
+{% block tc_context %}data-tc-kind="project" data-tc-id="{{ project.id }}"{% endblock %}
+{% block content %}
+{% import "macros.html" as m %}
+<div class="page-head">
+  <div>
+    <h1>Read and download log: {{ project.code }}</h1>
+    <p class="subtitle">Who viewed or downloaded what in {{ project.name }}, through which channel and from which address. Newest first; repeated reads of the same object within {{ collapse_minutes }} minutes are one entry.</p>
+  </div>
+  <div class="actions">
+    <a class="button" href="/projects/{{ project.id }}/access-review">Access review</a>
+    <a class="button" href="/projects/{{ project.id }}#interfaces">Back to the group</a>
+  </div>
+</div>
+
+<section class="card">
+  <h2>Filter</h2>
+  <form class="inline fields" method="get" action="/projects/{{ project.id }}/access-log">
+    <label>User <input type="text" name="user" maxlength="100" value="{{ query.user or '' }}"></label>
+    <label>What
+      <select name="kind">
+        <option value="">any</option>
+        {% for k in kinds %}<option value="{{ k.value }}" {% if k.value == query.kind %}selected{% endif %}>{{ k.label }}</option>{% endfor %}
+      </select>
+    </label>
+    <label>Channel
+      <select name="channel">
+        <option value="">any</option>
+        {% for c in channels %}<option value="{{ c.value }}" {% if c.value == query.channel %}selected{% endif %}>{{ c.label }}</option>{% endfor %}
+      </select>
+    </label>
+    <label class="grow">Object (item number, file or tool)
+      <input type="text" name="object" maxlength="100" value="{{ query.object or '' }}">
+    </label>
+    <label>From <input type="date" name="since" value="{{ query.since or '' }}"></label>
+    <label>To <input type="date" name="until" value="{{ query.until or '' }}"></label>
+    <button class="primary" type="submit">Show</button>
+    <a class="button" href="/projects/{{ project.id }}/access-log">Clear</a>
+  </form>
+  {% if error %}<div class="flash flash-error" role="alert">{{ error }}</div>{% endif %}
+</section>
+
+<section class="card">
+  <h2>Entries</h2>
+  {% if entries %}
+  <div class="table-wrap">
+  <table>
+    <thead><tr><th scope="col">When</th><th scope="col">Who</th><th scope="col">What</th><th scope="col">Object</th><th scope="col">Through</th><th scope="col">Channel</th><th scope="col">Address</th></tr></thead>
+    <tbody>
+    {% for e in entries %}
+    <tr><td>{{ m.time(e.at) }}</td><td>{{ e.username }}</td><td>{{ e.kind }}</td><td>{{ e.label }}</td><td>{{ e.detail }}</td><td>{{ e.channel }}</td><td class="mono">{{ e.client_address or "" }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+  <div class="actions">
+    {% if first_page_link %}<a class="button" href="{{ first_page_link }}">Newest entries</a>{% endif %}
+    {% if next_link %}<a class="button" href="{{ next_link }}">Older entries</a>{% endif %}
+  </div>
+  {% else %}
+  <p class="muted">No entries{% if filtered %} match the filter{% elif not read_log %} – the log of this group is off{% endif %}.</p>
+  {% endif %}
+</section>
+{% endblock %}

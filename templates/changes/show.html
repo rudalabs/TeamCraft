@@ -32,6 +32,12 @@
     {% if can.reopen %}
     <form method="post" action="/changes/{{ change.id }}/reopen"><button type="submit">Reopen as draft</button></form>
     {% endif %}
+    {% if can.take_over %}
+    <form method="post" action="/changes/{{ change.id }}/take-over"
+          data-confirm="Become the author of {{ change.number }}? Its author is deactivated; as author you can no longer review it.">
+      <button type="submit" title="The author is deactivated; you manage every affected project group">Take over</button>
+    </form>
+    {% endif %}
     {% if can.cancel %}
     <form method="post" action="/changes/{{ change.id }}/cancel">
       <button class="danger" type="submit" title="Cancel {{ change.number }} at once (cannot be undone)">Cancel change</button>
@@ -70,6 +76,21 @@
       <textarea name="comment" maxlength="4000" aria-describedby="decision-hint"></textarea>
       <span class="hint" id="decision-hint">A rejection needs a comment: what has to change.</span>
     </label>
+    <label>Meaning of your sign-off <span class="hint">optional, e.g. approved as design owner</span>
+      <input type="text" name="meaning" maxlength="200">
+    </label>
+    {% if sign_off is defined and sign_off.reauth != "off" %}
+      {% if sign_off.reauthenticated %}
+      <p class="hint">You signed in again – your decision is confirmed with single sign-on (for {{ sign_off.window_minutes }} minutes).</p>
+      {% elif sign_off.sso %}
+      <p class="notice">This server asks for a fresh sign-in to {% if sign_off.rejections_too %}decide{% else %}approve{% endif %}.
+        <a class="button" href="/auth/oidc/reauth?next=/changes/{{ change.id }}%23decision">Sign in again</a></p>
+      {% else %}
+      <label>Your password <span class="hint">this server asks for it to {% if sign_off.rejections_too %}approve or reject{% else %}approve{% endif %}</span>
+        <input type="password" name="password" autocomplete="current-password">
+      </label>
+      {% endif %}
+    {% endif %}
     <div class="actions">
       <button class="primary" type="submit" name="decision" value="approve">Approve change</button>
       <button class="danger" type="submit" name="decision" value="reject">Reject</button>
@@ -107,13 +128,13 @@
     <h2>Reviewers{% if review_round and review_round > 1 %} <span class="small muted">(round {{ review_round }})</span>{% endif %}</h2>
     {% if reviews %}
     <table>
-      <thead><tr><th scope="col">Reviewer</th><th scope="col">Decision</th><th scope="col">Comment</th>{% if can.modify or can.replace_reviewer %}<th scope="col"></th>{% endif %}</tr></thead>
+      <thead><tr><th scope="col">Reviewer</th><th scope="col">Decision</th><th scope="col">Comment</th>{% if can.modify or can.replace_reviewer %}<th scope="col"><span class="visually-hidden">Actions</span></th>{% endif %}</tr></thead>
       <tbody>
       {% for r in reviews %}
         <tr>
           <td class="nowrap" title="{{ r.reviewer_username }}">{{ r.reviewer_name }}
             {% if r.absent %}<span class="small block absent-reviewer">Cannot decide: {% if r.absent == "deactivated" %}deactivated{% elif r.absent == "not_editor" %}no longer an editor{% else %}cannot see every item{% endif %}</span>{% endif %}</td>
-          <td class="nowrap">{{ m.badge(r.decision) }}{% if r.decided_at %}<span class="small muted block decided-at">{{ m.time(r.decided_at) }}</span>{% endif %}</td>
+          <td class="nowrap">{{ m.badge(r.decision) }}{% if r.decided_at %}<span class="small muted block decided-at">{{ m.time(r.decided_at) }}</span>{% endif %}{{ m.sign_off(r) }}</td>
           <td class="pre">{{ r.comment }}</td>
           {% if can.modify %}
           <td class="right">
@@ -147,7 +168,7 @@
         <tr>
           <td class="nowrap">{{ r.round }}</td>
           <td class="nowrap" title="{{ r.reviewer_username }}">{{ r.reviewer_name }}</td>
-          <td class="nowrap">{{ m.badge(r.decision) }}{% if r.decided_at %}<span class="small muted block decided-at">{{ m.time(r.decided_at) }}</span>{% endif %}</td>
+          <td class="nowrap">{{ m.badge(r.decision) }}{% if r.decided_at %}<span class="small muted block decided-at">{{ m.time(r.decided_at) }}</span>{% endif %}{{ m.sign_off(r) }}</td>
           <td class="pre">{{ r.comment }}</td>
         </tr>
       {% endfor %}
@@ -192,13 +213,14 @@
   {% if items %}
   <div class="table-wrap">
   <table>
-    <thead><tr><th scope="col">Revision</th><th scope="col">Name</th><th scope="col">State</th>{% if can.modify %}<th scope="col"></th>{% endif %}</tr></thead>
+    <thead><tr><th scope="col">Revision</th><th scope="col">Name</th><th scope="col">State</th><th scope="col">On release</th>{% if can.modify %}<th scope="col"><span class="visually-hidden">Actions</span></th>{% endif %}</tr></thead>
     <tbody>
     {% for i in items %}
       <tr>
         <td class="mono nowrap">{% if i.restricted %}{{ m.restricted() }}{% else %}<a href="/revisions/{{ i.revision_id }}">{{ i.item_number }}/{{ i.code }}</a>{% endif %}</td>
         <td>{{ i.name }}</td>
         <td>{% if not i.restricted %}{{ m.badge(i.state) }}{% endif %}{% if i.checked_out_by_name %} {{ m.lock(i.checked_out_by_name) }}{% endif %}</td>
+        <td>{% if i.restricted %}{% elif i.action == "obsolete" %}Mark obsolete{% elif i.action == "supersede" %}Mark obsolete, superseded by {{ i.successor_number }}{% else %}Release{% endif %}</td>
         {% if can.modify %}
         <td class="right">
           {% if not i.restricted %}<form class="inline" method="post" action="/changes/{{ change.id }}/items/{{ i.revision_id }}/remove">
@@ -217,6 +239,18 @@
     <label>Item <input class="item-no" type="text" name="item_number" placeholder="e.g. PRT-000012" required></label>
     <button type="submit">Add its in-work revision</button>
   </form>
+  <form class="inline fields" method="post" action="/changes/{{ change.id }}/actions">
+    <label>Item <input class="item-no" type="text" name="item_number" placeholder="e.g. PRT-000012" required></label>
+    <label>On release
+      <select name="action">
+        <option value="obsolete">mark its latest revision obsolete</option>
+        <option value="supersede">mark obsolete and supersede by …</option>
+      </select>
+    </label>
+    <label>Successor <input class="item-no" type="text" name="successor" placeholder="supersede only"></label>
+    <button type="submit">Add obsolete line</button>
+  </form>
+  <p class="hint">An obsolete or supersede line is applied when the change is released, together with the other revisions. Groups can require this for obsoleting (project group page, review policy).</p>
   {% endif %}
 </section>
 
@@ -245,7 +279,7 @@
   {% if readiness_rows %}
   <div class="table-wrap">
   <table>
-    <thead><tr><th scope="col">Dependency</th><th scope="col">Name</th><th scope="col">Needed by</th><th scope="col">State</th>{% if can.modify %}<th scope="col"></th>{% endif %}</tr></thead>
+    <thead><tr><th scope="col">Dependency</th><th scope="col">Name</th><th scope="col">Needed by</th><th scope="col">State</th>{% if can.modify %}<th scope="col"><span class="visually-hidden">Actions</span></th>{% endif %}</tr></thead>
     <tbody>
     {% for d in readiness_rows %}
       <tr>

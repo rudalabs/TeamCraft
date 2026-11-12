@@ -79,6 +79,8 @@ pub struct ProjectMember {
     pub added_at: DateTime<Utc>,
     /// Managers maintain the group: details and members.
     pub manager: bool,
+    /// Revisions of the group the member has checked out.
+    pub checkouts: i64,
 }
 
 /// One row of the item search result, combined with its latest revision.
@@ -448,7 +450,8 @@ pub struct Change {
     pub closed_at: Option<DateTime<Utc>>,
 }
 
-/// A revision affected by (= released through) a change.
+/// A line of a change order: a revision released through it, or a released revision that is
+/// obsoleted or superseded by it.
 #[derive(Clone, Debug, Serialize, sqlx::FromRow)]
 pub struct ChangeItem {
     pub revision_id: Uuid,
@@ -458,6 +461,15 @@ pub struct ChangeItem {
     pub name: String,
     pub state: String,
     pub checked_out_by_name: Option<String>,
+    /// `release` (an in-work revision to release), `obsolete` or `supersede` (an action on a
+    /// released revision, applied when the change is released).
+    pub action: String,
+    /// For `supersede`: the number of the successor item.
+    pub successor_number: Option<String>,
+    /// Group of the successor (for the read check; never sent).
+    #[sqlx(default)]
+    #[serde(skip)]
+    pub successor_project_id: Option<Uuid>,
     /// Project group of the item (for the read check; never sent).
     #[sqlx(default)]
     #[serde(skip)]
@@ -477,6 +489,9 @@ impl ChangeItem {
         self.name = String::new();
         self.state = String::new();
         self.checked_out_by_name = None;
+        self.action = String::new();
+        self.successor_number = None;
+        self.successor_project_id = None;
         self.project_id = None;
         self.restricted = true;
     }
@@ -490,6 +505,12 @@ pub struct ChangeReview {
     pub decision: String,
     pub comment: String,
     pub decided_at: Option<DateTime<Utc>>,
+    /// How the decision was signed off (`session`, `password`, `sso`, `token`).
+    #[sqlx(default)]
+    pub sign_off_method: Option<String>,
+    /// What the sign-off means, as the reviewer stated it.
+    #[sqlx(default)]
+    pub sign_off_meaning: String,
     /// Why a pending reviewer can no longer decide (`deactivated`, `not_editor`,
     /// `cannot_see_items`); `None` when they can, and for decided reviews.
     #[sqlx(default)]
@@ -507,6 +528,10 @@ pub struct ChangeReviewRound {
     pub comment: String,
     pub decided_at: Option<DateTime<Utc>>,
     pub closed_at: DateTime<Utc>,
+    #[sqlx(default)]
+    pub sign_off_method: Option<String>,
+    #[sqlx(default)]
+    pub sign_off_meaning: String,
 }
 
 /// An engineering change request (ECR).
@@ -645,6 +670,7 @@ mod tests {
             display_name: "Reader".into(),
             role: Role::Viewer,
             skin: String::new(),
+            preferred_cad: String::new(),
             projects: Vec::new(),
             hidden_projects: hidden,
         }
@@ -737,6 +763,9 @@ mod tests {
             name: secret("name"),
             state: secret("state"),
             checked_out_by_name: Some(secret("user")),
+            action: secret("supersede"),
+            successor_number: Some(secret("successor")),
+            successor_project_id: Some(id()),
             project_id: Some(id()),
             restricted: false,
         }

@@ -110,19 +110,45 @@ impl OidcClient {
 
     /// Starts a login and returns the URL to redirect the browser to.
     pub async fn start_login(&self, pool: &PgPool, return_to: &str) -> AppResult<String> {
+        self.start(pool, return_to, None).await
+    }
+
+    /// Starts a fresh sign-in of the user of an existing web session (the
+    /// hash of its token) to confirm a review decision: the provider is
+    /// asked to authenticate again (`prompt=login`, `max_age=0`), and the
+    /// callback marks that session instead of opening a new one.
+    pub async fn start_reauth(
+        &self,
+        pool: &PgPool,
+        return_to: &str,
+        session_hash: &str,
+    ) -> AppResult<String> {
+        self.start(pool, return_to, Some(session_hash)).await
+    }
+
+    async fn start(
+        &self,
+        pool: &PgPool,
+        return_to: &str,
+        reauth_session: Option<&str>,
+    ) -> AppResult<String> {
         let discovery = self.discovery().await?;
         let state = random_urlsafe();
         let nonce = random_urlsafe();
         let verifier = random_urlsafe();
         let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
-        sqlx::query("INSERT INTO oidc_states (state, nonce, pkce_verifier, return_to) VALUES ($1, $2, $3, $4)")
-            .bind(&state)
-            .bind(&nonce)
-            .bind(&verifier)
-            .bind(util::safe_redirect_target(Some(return_to)))
-            .execute(pool)
-            .await?;
-        let params = [
+        sqlx::query(
+            "INSERT INTO oidc_states (state, nonce, pkce_verifier, return_to, reauth_session)
+             VALUES ($1, $2, $3, $4, $5)",
+        )
+        .bind(&state)
+        .bind(&nonce)
+        .bind(&verifier)
+        .bind(util::safe_redirect_target(Some(return_to)))
+        .bind(reauth_session)
+        .execute(pool)
+        .await?;
+        let mut params = vec![
             ("response_type", "code"),
             ("client_id", self.config.client_id.as_str()),
             ("redirect_uri", self.redirect_uri.as_str()),
@@ -132,6 +158,10 @@ impl OidcClient {
             ("code_challenge", challenge.as_str()),
             ("code_challenge_method", "S256"),
         ];
+        if reauth_session.is_some() {
+            params.push(("prompt", "login"));
+            params.push(("max_age", "0"));
+        }
         let query = params
             .iter()
             .map(|(k, v)| format!("{k}={}", util::pct_encode(v)))
@@ -145,22 +175,25 @@ impl OidcClient {
         Ok(format!("{}{sep}{query}", discovery.authorization_endpoint))
     }
 
-    /// Completes a login. Returns the identity and the local page to return to.
+    /// Completes a login. Returns the identity, the local page to return to
+    /// and – for a fresh sign-in started by [`Self::start_reauth`] – the hash
+    /// of the session to mark.
     pub async fn finish_login(
         &self,
         pool: &PgPool,
         code: &str,
         state: &str,
-    ) -> AppResult<(OidcIdentity, String)> {
+    ) -> AppResult<(OidcIdentity, String, Option<String>)> {
         #[derive(sqlx::FromRow)]
         struct Pending {
             nonce: String,
             pkce_verifier: String,
             return_to: String,
+            reauth_session: Option<String>,
         }
         let pending = sqlx::query_as::<_, Pending>(
             "DELETE FROM oidc_states WHERE state = $1 AND created_at > now() - interval '15 minutes'
-             RETURNING nonce, pkce_verifier, return_to",
+             RETURNING nonce, pkce_verifier, return_to, reauth_session",
         )
         .bind(state)
         .fetch_optional(pool)
@@ -247,8 +280,11 @@ impl OidcClient {
             }
         }
 
+        if pending.reauth_session.is_some() {
+            fresh_sign_in(&claims, chrono::Utc::now().timestamp())?;
+        }
         let identity = identity_from_claims(&claims, &self.config)?;
-        Ok((identity, pending.return_to))
+        Ok((identity, pending.return_to, pending.reauth_session))
     }
 
     async fn userinfo(&self, endpoint: &str, access_token: &str) -> AppResult<Value> {
@@ -289,6 +325,19 @@ fn decode_jwt_claims(jwt: &str) -> AppResult<Value> {
         .map_err(|e| AppError::Other(anyhow::anyhow!("id_token is not base64url: {e}")))?;
     serde_json::from_slice(&bytes)
         .map_err(|e| AppError::Other(anyhow::anyhow!("id_token payload is not JSON: {e}")))
+}
+
+/// For a fresh sign-in (`max_age=0`): the provider must report when the user
+/// authenticated (`auth_time`, OIDC Core 3.1.2.1), and that must be within
+/// the last few minutes (clock skew included).
+pub(crate) fn fresh_sign_in(claims: &Value, now: i64) -> AppResult<()> {
+    const FRESH_SECONDS: i64 = 300;
+    match claims.get("auth_time").and_then(Value::as_i64) {
+        Some(at) if now - at <= FRESH_SECONDS && at <= now + 60 => Ok(()),
+        _ => Err(AppError::BadRequest(
+            "The identity provider did not confirm a fresh sign-in. Please try again.".into(),
+        )),
+    }
 }
 
 fn validate_id_token_claims(
@@ -397,6 +446,7 @@ fn identity_from_claims(claims: &Value, config: &OidcConfig) -> AppResult<OidcId
         email: get("email"),
         role,
         groups,
+        claims: crate::services::membership_conditions::claim_values(claims),
     })
 }
 

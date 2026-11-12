@@ -3,7 +3,7 @@
 {% block content %}
 <div class="login">
   {% if branding and branding.wide %}
-  <img class="login-logo" src="/branding/wide?v={{ branding.wide }}" alt="{{ instance_name }}">
+  <img class="login-logo" src="/branding/wide?v={{ branding.wide }}" alt="{{ (branding.display_name if branding and branding.display_name else instance_name) }}">
   {% else %}
   <img class="login-logo on-dark" src="/static/media/logos/TeamCraft_Logo_White.svg?v={{ assets }}" alt="TeamCraft">
   <img class="login-logo on-light" src="/static/media/logos/TeamCraft_Logo_Blue.svg?v={{ assets }}" alt="TeamCraft">

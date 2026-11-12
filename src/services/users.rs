@@ -24,7 +24,7 @@ use crate::{
 /// (see [`access::hidden_of_user`]; archived groups count too).
 fn actor_columns() -> String {
     format!(
-        "u.id, u.username, u.display_name, u.role, u.skin,
+        "u.id, u.username, u.display_name, u.role, u.skin, u.preferred_cad,
     COALESCE((SELECT array_agg(pm.project_id) FROM project_members pm WHERE pm.user_id = u.id),
              '{{}}'::uuid[]) AS projects,
     {} AS hidden_projects",
@@ -39,6 +39,7 @@ struct ActorRow {
     display_name: String,
     role: String,
     skin: String,
+    preferred_cad: String,
     projects: Vec<Uuid>,
     hidden_projects: Vec<Uuid>,
 }
@@ -51,7 +52,19 @@ impl From<ActorRow> for Actor {
             display_name: row.display_name,
             role: Role::parse(&row.role).unwrap_or(Role::Viewer),
             skin: domain::skin_or_default(&row.skin).to_string(),
-            projects: row.projects,
+            // an id no longer registered shows all files alike
+            preferred_cad: if crate::cadformat::is_family(&row.preferred_cad) {
+                row.preferred_cad
+            } else {
+                String::new()
+            },
+            // a member hidden by the conditions on membership of a group is
+            // treated as a non-member of it (also for editing)
+            projects: row
+                .projects
+                .into_iter()
+                .filter(|p| !row.hidden_projects.contains(p))
+                .collect(),
             hidden_projects: row.hidden_projects,
         }
     }
@@ -88,16 +101,33 @@ pub async fn active_actor(pool: &PgPool, user_id: Uuid) -> AppResult<Option<Acto
 // ---------------------------------------------------------------------------
 
 pub async fn actor_for_session(pool: &PgPool, token: &str) -> AppResult<Option<Actor>> {
+    Ok(session_actor(pool, token).await?.map(|(actor, _)| actor))
+}
+
+#[derive(sqlx::FromRow)]
+struct SessionActorRow {
+    #[sqlx(flatten)]
+    actor: ActorRow,
+    session_started: chrono::DateTime<Utc>,
+}
+
+/// The user of a web session and when the session began (for the maximum
+/// sign-in age of need-to-know groups); `None` for an unknown or expired
+/// session or a deactivated user.
+pub async fn session_actor(
+    pool: &PgPool,
+    token: &str,
+) -> AppResult<Option<(Actor, chrono::DateTime<Utc>)>> {
     let cols = actor_columns();
-    let row = sqlx::query_as::<_, ActorRow>(&format!(
-        "SELECT {cols}
+    let row = sqlx::query_as::<_, SessionActorRow>(&format!(
+        "SELECT {cols}, s.created_at AS session_started
          FROM sessions s JOIN users u ON u.id = s.user_id
          WHERE s.token_hash = $1 AND s.expires_at > now() AND u.active"
     ))
     .bind(auth::hash_token(token))
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(Actor::from))
+    Ok(row.map(|r| (Actor::from(r.actor), r.session_started)))
 }
 
 #[derive(sqlx::FromRow)]
@@ -155,6 +185,23 @@ pub async fn set_skin(pool: &PgPool, actor: &Actor, skin: &str) -> AppResult<()>
     sqlx::query("UPDATE users SET skin = $2 WHERE id = $1")
         .bind(actor.id)
         .bind(skin)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Stores the preferred CAD program of the signed-in user: a format family
+/// (`cadformat::families`) or `""` = show all files alike. Display only –
+/// it never changes what the user may read or download.
+pub async fn set_preferred_cad(pool: &PgPool, actor: &Actor, family: &str) -> AppResult<()> {
+    if !family.is_empty() && !crate::cadformat::is_family(family) {
+        return Err(AppError::BadRequest(format!(
+            "Unknown CAD program '{family}'."
+        )));
+    }
+    sqlx::query("UPDATE users SET preferred_cad = $2 WHERE id = $1")
+        .bind(actor.id)
+        .bind(family)
         .execute(pool)
         .await?;
     Ok(())
@@ -413,8 +460,8 @@ pub async fn create_token(
 /// * **Atomic:** one transaction.
 pub async fn revoke_token(pool: &PgPool, actor: &Actor, token_id: Uuid) -> AppResult<()> {
     let mut tx = pool.begin().await?;
-    let name = sqlx::query_scalar::<_, String>(
-        "DELETE FROM api_tokens WHERE id = $1 AND (user_id = $2 OR $3) RETURNING name",
+    let (name, owner) = sqlx::query_as::<_, (String, Uuid)>(
+        "DELETE FROM api_tokens WHERE id = $1 AND (user_id = $2 OR $3) RETURNING name, user_id",
     )
     .bind(token_id)
     .bind(actor.id)
@@ -422,13 +469,24 @@ pub async fn revoke_token(pool: &PgPool, actor: &Actor, token_id: Uuid) -> AppRe
     .fetch_optional(&mut *tx)
     .await?
     .ok_or_else(|| AppError::not_found("API token not found."))?;
+    // The entry belongs to the token's owner – an admin revoking a leaver's
+    // token shows up in the leaver's history, not in the admin's own.
+    let summary = if owner == actor.id {
+        format!("Revoked API token '{name}'")
+    } else {
+        let username = sqlx::query_scalar::<_, String>("SELECT username FROM users WHERE id = $1")
+            .bind(owner)
+            .fetch_one(&mut *tx)
+            .await?;
+        format!("Revoked API token '{name}' of {username}")
+    };
     audit::record(
         &mut tx,
         Some(actor),
         "token.revoke",
         "user",
-        Some(actor.id),
-        format!("Revoked API token '{name}'"),
+        Some(owner),
+        summary,
         json!({ "token_id": token_id }),
     )
     .await?;
@@ -819,6 +877,107 @@ pub async fn change_own_password(
     Ok(())
 }
 
+/// How long a fresh single sign-on counts as the sign-off of a review
+/// decision (`TEAMCRAFT_APPROVAL_REAUTH`).
+pub const REAUTH_WINDOW_MINUTES: i64 = 10;
+
+/// Confirms the actor's own password for a sign-off (#152 step 4).
+///
+/// # Invariants
+///
+/// * **Permission:** a local account (single sign-on accounts sign in again
+///   instead, 400); not throttled (429 with the wait); the password must be
+///   right (400, counted like a failed sign-in).
+/// * **Audit:** a wrong password writes `user.password_failed` (never the
+///   password); a right one writes nothing (the decision records the method).
+pub async fn confirm_own_password(
+    pool: &PgPool,
+    throttle: &auth::SignInThrottle,
+    actor: &Actor,
+    password: &str,
+) -> AppResult<()> {
+    if get(pool, actor.id).await?.auth_source != "local" {
+        return Err(AppError::BadRequest(
+            "This account signs in via single sign-on: confirm by signing in again.".into(),
+        ));
+    }
+    let keys = auth::SignInThrottle::keys(&actor.username, None);
+    if let Some(wait) = throttle.blocked(&keys) {
+        let minutes = wait.as_secs().div_ceil(60).max(1);
+        return Err(AppError::TooManyRequests {
+            message: format!(
+                "Too many failed attempts. Try again in {minutes} minute{}.",
+                if minutes == 1 { "" } else { "s" }
+            ),
+            retry_after: wait,
+        });
+    }
+    if authenticate_local(pool, &actor.username, password)
+        .await?
+        .is_none()
+    {
+        throttle.failed(&keys);
+        record_failed_password_change(pool, actor).await?;
+        return Err(AppError::BadRequest("The password is wrong.".into()));
+    }
+    throttle.succeeded(&actor.username);
+    Ok(())
+}
+
+/// Whether the web session `token` of the user signed in again with single
+/// sign-on within the last [`REAUTH_WINDOW_MINUTES`].
+pub async fn session_recently_reauthenticated(
+    pool: &PgPool,
+    user_id: Uuid,
+    token: &str,
+) -> AppResult<bool> {
+    Ok(sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM sessions
+                       WHERE token_hash = $1 AND user_id = $2 AND expires_at > now()
+                         AND reauth_at > now() - make_interval(mins => $3::int))",
+    )
+    .bind(auth::hash_token(token))
+    .bind(user_id)
+    .bind(REAUTH_WINDOW_MINUTES as i32)
+    .fetch_one(pool)
+    .await?)
+}
+
+/// Marks the web session (by the hash of its token) of `user_id` as signed
+/// in again just now. False when the session is not the user's (or gone).
+pub async fn mark_session_reauthenticated(
+    pool: &PgPool,
+    user_id: Uuid,
+    token_hash: &str,
+) -> AppResult<bool> {
+    let me = actor(pool, user_id).await?;
+    let mut tx = pool.begin().await?;
+    let marked = sqlx::query(
+        "UPDATE sessions SET reauth_at = now()
+         WHERE token_hash = $1 AND user_id = $2 AND expires_at > now()",
+    )
+    .bind(token_hash)
+    .bind(user_id)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected()
+        == 1;
+    if marked {
+        audit::record(
+            &mut tx,
+            Some(&me),
+            "user.reauthenticate",
+            "user",
+            Some(user_id),
+            "Signed in again with single sign-on to confirm a decision",
+            json!({}),
+        )
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(marked)
+}
+
 /// Records a wrong current password of the own password change
 /// (`user.password_failed`), like a failed sign-in: the account, never what
 /// was typed.
@@ -849,6 +1008,10 @@ pub struct OidcIdentity {
     pub role: Role,
     /// All IdP groups (used to synchronise project memberships).
     pub groups: Vec<String>,
+    /// The claims of the sign-in as name → values; only those that a
+    /// need-to-know group's conditions name are kept
+    /// (`membership_conditions::store_claims`).
+    pub claims: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 /// Finds or provisions the user for an OIDC identity and synchronises name,
@@ -860,7 +1023,9 @@ pub struct OidcIdentity {
 /// * **Locks:** the existing user row (`FOR UPDATE`).
 /// * **Data:** the role always follows the IdP groups; a new user gets a free
 ///   username (suffix `-2` to `-99`, else 409). Memberships from the IdP are
-///   added and dropped to match the groups; manual ones are kept.
+///   added and dropped to match the groups; manual ones are kept. The claims
+///   that a need-to-know group's conditions name replace the stored ones
+///   (`users.idp_claims`); other claims are not kept.
 /// * **Audit:** `user.provision` for a new user, `user.role_sync` when the
 ///   role changed.
 /// * **Notifications / webhooks:** none.
@@ -964,6 +1129,7 @@ pub async fn upsert_oidc_user(pool: &PgPool, ident: OidcIdentity) -> AppResult<U
         user
     };
     sync_oidc_memberships(&mut tx, user.id, &ident.groups).await?;
+    crate::services::membership_conditions::store_claims(&mut tx, user.id, &ident.claims).await?;
     tx.commit().await?;
     Ok(user)
 }

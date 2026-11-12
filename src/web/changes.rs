@@ -14,7 +14,7 @@ use super::{
     PER_PAGE,
 };
 use crate::{
-    domain::{ChangeStatus, Decision, LifecycleState, Priority, Role},
+    domain::{ChangeStatus, Decision, LifecycleState, LineAction, Priority, Role, SignOffMethod},
     error::{AppError, AppResult},
     services::{audit, changes, items, notifications, requests, reviewers, revisions, users, Page},
     AppState,
@@ -170,6 +170,7 @@ pub async fn show(
     State(st): State<AppState>,
     ctx: WebCtx,
     Path(id): Path<Uuid>,
+    headers: axum::http::HeaderMap,
 ) -> AppResult<Response> {
     let me = &ctx.me;
     let change = changes::get(&st.db, me, id).await?;
@@ -193,6 +194,9 @@ pub async fn show(
     };
     let ready = readiness.as_ref().is_none_or(|r| r.is_ready());
     let is_owner = me.can_edit() && (change.created_by == me.id || me.is_admin());
+    // A manager of every affected group acting for a deactivated author.
+    let stand_in = !is_owner && changes::may_stand_in(&st.db, me, &change).await?;
+    let can_close = is_owner || stand_in;
     let modifiable = is_owner && status.is_modifiable();
     let candidates: Vec<_> = if modifiable {
         users::reviewer_candidates(&st.db)
@@ -232,12 +236,32 @@ pub async fn show(
         "add_dependencies": modifiable
             && status == ChangeStatus::Draft
             && readiness.as_ref().is_some_and(|r| !r.addable_blockers().is_empty()),
-        "withdraw": is_owner && status == ChangeStatus::InReview,
-        "reopen": is_owner && status == ChangeStatus::Rejected,
-        "cancel": is_owner && matches!(status, ChangeStatus::Draft | ChangeStatus::Rejected),
+        "withdraw": can_close && status == ChangeStatus::InReview,
+        "reopen": can_close && status == ChangeStatus::Rejected,
+        "cancel": can_close && matches!(status, ChangeStatus::Draft | ChangeStatus::Rejected),
+        "take_over": stand_in && matches!(status, ChangeStatus::Draft | ChangeStatus::Rejected),
         "review": my_pending_review,
         "replace_reviewer": can_replace,
     });
+    // what the review form asks for to sign a decision off
+    let reauth = st.config.approval_reauth;
+    let sign_off = if my_pending_review && reauth != crate::domain::ApprovalReauth::Off {
+        let sso = users::get(&st.db, me.id).await?.auth_source != "local";
+        let reauthenticated = match crate::auth::cookie_value(&headers, crate::auth::SESSION_COOKIE)
+        {
+            Some(token) => users::session_recently_reauthenticated(&st.db, me.id, &token).await?,
+            None => false,
+        };
+        json!({
+            "reauth": reauth.as_str(),
+            "rejections_too": reauth == crate::domain::ApprovalReauth::EveryDecision,
+            "sso": sso,
+            "reauthenticated": reauthenticated,
+            "window_minutes": users::REAUTH_WINDOW_MINUTES,
+        })
+    } else {
+        json!({ "reauth": reauth.as_str() })
+    };
     render(
         &st,
         &ctx,
@@ -262,6 +286,7 @@ pub async fn show(
             "history": history,
             "priorities": priorities(),
             "can": can,
+            "sign_off": sign_off,
         }),
     )
 }
@@ -318,6 +343,43 @@ pub async fn add_item(
     .await;
     finish(&st, result, &back, |label| {
         (back.clone(), format!("Added {label}"))
+    })
+}
+
+#[derive(Deserialize)]
+pub struct AddActionForm {
+    #[serde(default)]
+    item_number: String,
+    #[serde(default)]
+    action: String,
+    #[serde(default)]
+    successor: String,
+}
+
+/// `POST /changes/{id}/actions` – an obsolete or supersede line for the item's latest revision.
+pub async fn add_action(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+    Form(form): Form<AddActionForm>,
+) -> AppResult<Response> {
+    let back = format!("/changes/{id}");
+    let result = async {
+        changes::get(&st.db, &ctx.me, id).await?;
+        let action = LineAction::parse(&form.action)
+            .filter(|a| *a != LineAction::Release)
+            .ok_or_else(|| AppError::BadRequest("Choose obsolete or supersede.".into()))?;
+        let item = items::get_by_number(&st.db, &ctx.me, &form.item_number).await?;
+        let rev = items::latest_revision(&st.db, &ctx.me, item.id).await?;
+        changes::add_action(&st.db, &ctx.me, id, rev.id, action, Some(&form.successor)).await?;
+        Ok((revisions::label(&rev), action))
+    }
+    .await;
+    finish(&st, result, &back, |(label, action)| {
+        (
+            back.clone(),
+            format!("Added {label} to the change ({})", action.as_str()),
+        )
     })
 }
 
@@ -454,17 +516,58 @@ pub struct ReviewForm {
     decision: String,
     #[serde(default)]
     comment: String,
+    /// What the sign-off means ("approved as design owner").
+    #[serde(default)]
+    meaning: String,
+    /// The account password, when the server asks for a fresh sign-in.
+    #[serde(default)]
+    password: String,
+}
+
+/// How the browser signs off a decision: a single sign-on within the last
+/// minutes, the password typed with the decision, or the session alone.
+async fn sign_off_method(
+    st: &AppState,
+    ctx: &WebCtx,
+    headers: &axum::http::HeaderMap,
+    password: &str,
+) -> AppResult<SignOffMethod> {
+    if let Some(token) = crate::auth::cookie_value(headers, crate::auth::SESSION_COOKIE) {
+        if users::session_recently_reauthenticated(&st.db, ctx.me.id, &token).await? {
+            return Ok(SignOffMethod::Sso);
+        }
+    }
+    if !password.is_empty() {
+        users::confirm_own_password(&st.db, &st.sign_in, &ctx.me, password).await?;
+        return Ok(SignOffMethod::Password);
+    }
+    Ok(SignOffMethod::Session)
 }
 
 pub async fn review(
     State(st): State<AppState>,
     ctx: WebCtx,
     Path(id): Path<Uuid>,
+    headers: axum::http::HeaderMap,
     Form(form): Form<ReviewForm>,
 ) -> AppResult<Response> {
     let back = format!("/changes/{id}");
     let result = match Decision::parse(&form.decision) {
-        Some(decision) => changes::review(&st.db, &ctx.me, id, decision, &form.comment).await,
+        Some(decision) => match sign_off_method(&st, &ctx, &headers, &form.password).await {
+            Ok(method) => {
+                changes::review(
+                    &st.db,
+                    &ctx.me,
+                    id,
+                    decision,
+                    &form.comment,
+                    &changes::SignOff::new(method, &form.meaning),
+                    st.config.approval_reauth,
+                )
+                .await
+            }
+            Err(e) => Err(e),
+        },
         None => Err(AppError::BadRequest("Choose approve or reject.".into())),
     };
     finish(&st, result, &back, |c| {
@@ -500,6 +603,23 @@ pub async fn reopen(
     let result = changes::reopen(&st.db, &ctx.me, id).await;
     finish(&st, result, &back, |c| {
         (back.clone(), format!("{} was reopened as draft", c.number))
+    })
+}
+
+/// `POST /changes/{id}/take-over` – a manager of every affected group (or an
+/// administrator) takes over the change of a deactivated author.
+pub async fn take_over(
+    State(st): State<AppState>,
+    ctx: WebCtx,
+    Path(id): Path<Uuid>,
+) -> AppResult<Response> {
+    let back = format!("/changes/{id}");
+    let result = changes::take_over(&st.db, &ctx.me, id).await;
+    finish(&st, result, &back, |c| {
+        (
+            back.clone(),
+            format!("You are now the author of {}", c.number),
+        )
     })
 }
 

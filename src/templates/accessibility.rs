@@ -12,7 +12,10 @@
 //! * no `tabindex` above 0;
 //! * `<html lang>` on a full page;
 //! * headings do not skip a level on the way down (h2 → h4);
-//! * every `<th>` has a `scope`.
+//! * every `<th>` has a `scope` and a name (text – a visually hidden one
+//!   for action columns – or `aria-label`/`title`);
+//! * a full page with a `<main>` starts with a skip link: its first link
+//!   points to the id of `<main>`.
 //!
 //! A small tokenizer is enough for HTML the templates produce: tags with
 //! quoted attributes, comments, raw text in `script`/`style`.
@@ -172,6 +175,9 @@ pub fn check(page: &str, html: &str) -> Vec<String> {
     let mut in_label = 0usize;
     let mut open: Vec<Open> = Vec::new();
     let mut last_heading = 0u8;
+    // the first link of the page and the id of <main> (skip link)
+    let mut first_link: Option<String> = None;
+    let mut main_id: Option<Option<String>> = None;
     let full_page = html
         .trim_start()
         .to_ascii_lowercase()
@@ -194,7 +200,7 @@ pub fn check(page: &str, html: &str) -> Vec<String> {
         if tag.closing {
             match n {
                 "label" => in_label = in_label.saturating_sub(1),
-                "a" | "button" => {
+                "a" | "button" | "th" => {
                     if let Some(pos) = open.iter().rposition(|o| o.tag == n) {
                         let o = open.remove(pos);
                         if !o.named {
@@ -249,6 +255,11 @@ pub fn check(page: &str, html: &str) -> Vec<String> {
                 }
             }
             "a" | "button" => {
+                if n == "a" && first_link.is_none() {
+                    if let Some(href) = tag.attr("href") {
+                        first_link = Some(href.to_string());
+                    }
+                }
                 // a link without href is no control (an anchor or a placeholder)
                 if n == "button" || tag.attr("href").is_some() {
                     open.push(Open {
@@ -278,6 +289,14 @@ pub fn check(page: &str, html: &str) -> Vec<String> {
                 if tag.attr("scope").is_none_or(|s| s.trim().is_empty()) {
                     report("<th> without scope".into());
                 }
+                open.push(Open {
+                    tag: "th",
+                    what: describe(tag),
+                    named: tag.has_name_attr(),
+                });
+            }
+            "main" if main_id.is_none() => {
+                main_id = Some(tag.attr("id").map(str::to_string));
             }
             h if h.len() == 2 && h.starts_with('h') => {
                 if let Some(level) = h[1..].parse::<u8>().ok().filter(|l| (1..=6).contains(l)) {
@@ -299,6 +318,14 @@ pub fn check(page: &str, html: &str) -> Vec<String> {
     }
     for o in open {
         report(format!("{} is not closed", o.what));
+    }
+    if full_page {
+        if let Some(id) = main_id {
+            let target = id.map(|id| format!("#{id}"));
+            if target.is_none() || first_link != target {
+                report("no skip link to <main> as the first link of the page".into());
+            }
+        }
     }
     if full_page
         && !tokens
@@ -333,8 +360,10 @@ mod tests {
             <input name="q"><select id="s"></select><textarea id="t"></textarea>
             <button class="x"></button><a href="/a"><span class="icon"></span></a>
             <img src="/x.png"><div tabindex="2"></div>
-            <table><tr><th>Name</th></tr></table>
+            <main id="main">
+            <table><tr><th>Name</th><th scope="col"></th></tr></table>
             <input type="submit">
+            </main>
         </body></html>"#;
         let p = check("bad", bad);
         let has = |part: &str| p.iter().any(|m| m.contains(part));
@@ -355,9 +384,17 @@ mod tests {
             has(r#"<input type="submit"> has no accessible name"#),
             "{p:#?}"
         );
-        assert_eq!(p.len(), 11, "{p:#?}");
+        assert!(has("<th> has no accessible name"), "{p:#?}");
+        assert!(has("no skip link to <main>"), "{p:#?}");
+        assert_eq!(p.len(), 13, "{p:#?}");
+        // a skip link to another target does not count either
+        let elsewhere = r##"<!DOCTYPE html><html lang="en"><body>
+            <a href="#top">Top</a><main id="main"><h1>T</h1></main></body></html>"##;
+        assert_eq!(check("elsewhere", elsewhere).len(), 1);
 
-        let good = r#"<!DOCTYPE html><html lang="en"><body>
+        let good = r##"<!DOCTYPE html><html lang="en"><body>
+            <a class="skip-link" href="#main">Skip to the main content</a>
+            <main id="main">
             <h1>T</h1><h2>a</h2><h3>b</h3><h2>c</h2>
             <label for="q">Search</label><input id="q" name="q">
             <label>Name <input name="n"></label>
@@ -368,9 +405,12 @@ mod tests {
             <a href="/a" title="Home"><span class="icon"></span></a>
             <a href="/b"><img src="/b.png" alt="Logo"></a><img src="/d.png" alt="">
             <a name="anchor"></a><div tabindex="0"></div><span tabindex="-1"></span>
-            <table><tr><th scope="col">Name</th></tr></table>
+            <table><tr><th scope="col">Name</th>
+              <th scope="col"><span class="visually-hidden">Actions</span></th>
+              <th scope="col" aria-label="Select"></th></tr></table>
             <script>if (a < b && "<button>") {}</script>
-        </body></html>"#;
+            </main>
+        </body></html>"##;
         assert_eq!(check("good", good), Vec::<String>::new());
     }
 }

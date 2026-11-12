@@ -5,7 +5,7 @@
 import { $, ICONS, api, badge, call, clear, dialog, enc, errorText, fmtDate, fmtSize, h, invoke, label, run, state, svgIcon, toast, tool } from "./core.js";
 import { checkServerVersion, showConnect } from "./connect.js";
 import { navHead, selectView } from "./navigator.js";
-import { activeTab, closeTab, renderActive, renderTabs } from "./tabs.js";
+import { activeTab, closeTab, renderActive, renderTabs, tabShortcut } from "./tabs.js";
 import { agent, agentProfiles, applyAiPolicy, localAgentsAllowed, openAgent, schedulePaint, updateAgentControls } from "./agent.js";
 import { openRevision } from "./revision.js";
 import { impactGroups } from "./references.js";
@@ -67,6 +67,13 @@ export function brandingImage(kind, token, type) {
   return brandingImages[key];
 }
 
+/** Title bar texts from GET /branding; an older server sends none: built-in TeamCraft / PLM. About and Settings stay TeamCraft. */
+export function brandTexts(b) {
+  var name = b && typeof b.display_name === "string" && b.display_name.trim() ? b.display_name.trim() : "TeamCraft";
+  var sub = b && typeof b.subtitle === "string" ? b.subtitle : "PLM";
+  return { name: name, subtitle: sub };
+}
+
 /** Shows the logos the administrators set: wide in the title bar, square in the rail; built-in ones otherwise. */
 export function applyBranding() {
   var brand = document.querySelector(".titlebar .brand"), mark = document.querySelector(".rail-mark");
@@ -77,6 +84,10 @@ export function applyBranding() {
     if (old) old.remove();
   }
   api("GET", "/branding").then(function (b) {
+    var texts = brandTexts(b);
+    document.getElementById("brand-name").textContent = texts.name;
+    document.getElementById("brand-sub").textContent = texts.subtitle;
+    document.getElementById("brand-sub").hidden = !texts.subtitle;
     if (b.wide) {
       brandingImage("wide", b.wide, b.wide_type).then(function (url) {
         var img = brand.querySelector(".brand-wide");
@@ -196,6 +207,7 @@ export function initShell() {
   });
   document.addEventListener("keydown", function (e) {
     var mod = e.ctrlKey || e.metaKey;
+    if (tabShortcut(e)) return;
     if (mod && e.key.toLowerCase() === "w" && state.active) {
       e.preventDefault();
       closeTab(state.active);

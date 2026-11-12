@@ -42,6 +42,10 @@ enum Command {
     Backup {
         /// Target directory; it must not exist or be empty.
         dir: std::path::PathBuf,
+        /// Encrypt every file with a passphrase (TEAMCRAFT_BACKUP_PASSPHRASE
+        /// or _FILE, otherwise prompted for); the restore needs it.
+        #[arg(long)]
+        encrypt: bool,
     },
     /// Restore the database and the file vault from a backup directory.
     Restore {
@@ -120,8 +124,9 @@ enum Command {
     /// runs every conversion in its own process with a time limit).
     #[command(hide = true)]
     PreviewMesh {
-        /// Format id: stl, obj, ply, off, 3mf, amf, gltf, glb, 3ds, step, nx-part, sketchup, pts, xyz, las –
-        /// or tcm for a cached preview mesh (only --signature)
+        /// Format id: stl, obj, ply, off, 3mf, amf, gltf, glb, 3ds, step, nx-part, solidworks-part, rhino, sketchup,
+        /// pts, xyz, las –
+        /// or tcm for a cached preview mesh (only --signature / --mass-properties)
         #[arg(long)]
         format: String,
         #[arg(long)]
@@ -132,6 +137,9 @@ enum Command {
         /// Also write the shape signature (JSON) for the similar part search.
         #[arg(long)]
         signature: Option<std::path::PathBuf>,
+        /// Also write the mass properties (JSON) per unit density in model units.
+        #[arg(long)]
+        mass_properties: Option<std::path::PathBuf>,
         /// Refuse an input file larger than this before opening it.
         #[arg(long, default_value_t = u64::MAX)]
         max_input_bytes: u64,
@@ -165,6 +173,43 @@ enum UserCommand {
     },
     /// List all accounts.
     List,
+    /// What an account still holds before somebody leaves: check-outs, open
+    /// change orders, pending reviews, change requests, owned items,
+    /// memberships and API tokens (read-only; every project group, as the
+    /// operator of the server).
+    Holdings {
+        #[arg(long)]
+        username: String,
+    },
+    /// Deactivate an account as an offboarding step: optionally hand its
+    /// work and manager roles over, release its check-outs and delete its
+    /// API tokens (as the operator of the server; every step is audited).
+    Deactivate {
+        #[arg(long)]
+        username: String,
+        /// Release every check-out the account holds.
+        #[arg(long)]
+        release_checkouts: bool,
+        /// Hand items, change orders, requests, reviews and manager roles
+        /// over to this account.
+        #[arg(long)]
+        hand_over_to: Option<String>,
+        /// Delete the account's API tokens.
+        #[arg(long)]
+        revoke_tokens: bool,
+        /// Leave groups the account alone manages without an active manager.
+        #[arg(long)]
+        confirm_no_manager: bool,
+    },
+    /// Show the storage usage and quota of an account; with --mb set the
+    /// quota (counted over the sizes of the versions the user stored).
+    Quota {
+        #[arg(long)]
+        username: String,
+        /// New quota in MiB, or `none` for no limit.
+        #[arg(long)]
+        mb: Option<String>,
+    },
     /// Create a personal access token for an account (e.g. for a CI job or
     /// an MCP client) and print it once on standard output.
     CreateToken {
@@ -253,6 +298,13 @@ enum VaultCommand {
         #[arg(long, default_value_t = teamcraft::preview::MAX_PARALLEL)]
         jobs: usize,
     },
+    /// Show the storage usage and quota of the whole vault; with --mb set
+    /// the quota (counted over the sizes of all stored versions).
+    Quota {
+        /// New quota in MiB, or `none` for no limit.
+        #[arg(long)]
+        mb: Option<String>,
+    },
 }
 
 fn main() -> ExitCode {
@@ -264,6 +316,7 @@ fn main() -> ExitCode {
         input,
         output,
         signature,
+        mass_properties,
         max_input_bytes,
         max_memory_bytes,
     }) = &cli.command
@@ -274,6 +327,7 @@ fn main() -> ExitCode {
             input,
             output.as_deref(),
             signature.as_deref(),
+            mass_properties.as_deref(),
             *max_input_bytes,
         );
     }
@@ -333,7 +387,7 @@ async fn run(cli: Cli) -> ExitCode {
         Command::Mcp { server, token_file } => mcp_bridge(&server, token_file.as_deref()).await,
         Command::Serve { no_migrate } => serve(no_migrate).await,
         Command::Migrate => migrate().await,
-        Command::Backup { dir } => backup_command(dir).await,
+        Command::Backup { dir, encrypt } => backup_command(dir, encrypt).await,
         Command::Restore { dir, force } => restore_command(dir, force).await,
         Command::User { command } => user_command(command).await,
         Command::Vault { command } => vault_command(command).await,
@@ -459,6 +513,18 @@ async fn serve(no_migrate: bool) -> Result<ExitCode> {
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e, "session cleanup failed"),
             }
+            // need-to-know groups whose access review is due (#151)
+            match services::access_review::remind_due(&pool).await {
+                Ok(n) if n > 0 => tracing::info!(groups = n, "reminded of due access reviews"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "access review reminders failed"),
+            }
+            // groups that lost their last present manager (#173)
+            match services::manager_gaps::alert_admins(&pool).await {
+                Ok(n) if n > 0 => tracing::info!(groups = n, "manager gap alerts sent"),
+                Ok(_) => {}
+                Err(e) => tracing::warn!(error = %e, "manager gap alerts failed"),
+            }
             match services::imports::purge_stale(&pool, &vault).await {
                 Ok(n) if n > 0 => tracing::info!(removed = n, "removed stale staged imports"),
                 Ok(_) => {}
@@ -542,22 +608,23 @@ async fn serve(no_migrate: bool) -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-/// `teamcraft preview-mesh`: one conversion and/or shape signature, errors
-/// as the last line of stderr.
+/// `teamcraft preview-mesh`: one conversion, shape signature and/or mass
+/// properties, errors as the last line of stderr.
 fn preview_mesh(
     format: &str,
     input: &std::path::Path,
     output: Option<&std::path::Path>,
     signature: Option<&std::path::Path>,
+    mass: Option<&std::path::Path>,
     max_input_bytes: u64,
 ) -> ExitCode {
-    if output.is_none() && signature.is_none() {
-        eprintln!("Error: give --output and/or --signature");
+    if output.is_none() && signature.is_none() && mass.is_none() {
+        eprintln!("Error: give --output, --signature and/or --mass-properties");
         return ExitCode::FAILURE;
     }
     // the kernel's panic messages are not meant for users
     std::panic::set_hook(Box::new(|_| {}));
-    match teamcraft::preview::run_job(format, input, output, signature, max_input_bytes) {
+    match teamcraft::preview::run_job(format, input, output, signature, mass, max_input_bytes) {
         Ok(mesh) => {
             // for people running it by hand (the server ignores stdout)
             let partial = mesh
@@ -609,9 +676,30 @@ async fn migrate() -> Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-async fn backup_command(dir: std::path::PathBuf) -> Result<ExitCode> {
+/// The backup passphrase: from the configuration, otherwise prompted for on
+/// a terminal (twice when `confirm`).
+fn backup_passphrase(config: &teamcraft::config::Config, confirm: bool) -> Result<String> {
+    if let Some(p) = &config.backup_passphrase {
+        return Ok(p.clone());
+    }
+    if !std::io::stdin().is_terminal() {
+        bail!("set TEAMCRAFT_BACKUP_PASSPHRASE (or TEAMCRAFT_BACKUP_PASSPHRASE_FILE)");
+    }
+    let first = rpassword::prompt_password("Backup passphrase: ")?;
+    if confirm && rpassword::prompt_password("Repeat the passphrase: ")? != first {
+        bail!("the passphrases do not match");
+    }
+    Ok(first)
+}
+
+async fn backup_command(dir: std::path::PathBuf, encrypt: bool) -> Result<ExitCode> {
     let config = load_config()?;
-    let summary = teamcraft::backup::backup(&config, &dir).await?;
+    let summary = if encrypt {
+        let passphrase = backup_passphrase(&config, true)?;
+        teamcraft::backup::backup_encrypted(&config, &dir, &passphrase).await?
+    } else {
+        teamcraft::backup::backup(&config, &dir).await?
+    };
     println!(
         "backup written to '{}': {} vault object(s), {} byte database dump (sha256 {})",
         dir.display(),
@@ -624,7 +712,13 @@ async fn backup_command(dir: std::path::PathBuf) -> Result<ExitCode> {
 
 async fn restore_command(dir: std::path::PathBuf, force: bool) -> Result<ExitCode> {
     let config = load_config()?;
-    let summary = teamcraft::backup::restore(&config, &dir, force).await?;
+    let passphrase = if teamcraft::backup::is_encrypted(&dir)? {
+        Some(backup_passphrase(&config, false)?)
+    } else {
+        None
+    };
+    let summary =
+        teamcraft::backup::restore_with(&config, &dir, force, passphrase.as_deref()).await?;
     println!(
         "restore from '{}' finished: {} vault object(s), {} copied, {} already present",
         dir.display(),
@@ -745,6 +839,73 @@ async fn user_command(command: UserCommand) -> Result<ExitCode> {
             )?;
             println!("{token}");
         }
+        UserCommand::Quota { username, mb } => {
+            let user = services::users::find_by_username(&pool, &username)
+                .await?
+                .with_context(|| format!("no user named '{username}'"))?;
+            if let Some(mb) = mb {
+                let limit = services::quotas::parse_limit_mb(&mb).map_err(anyhow::Error::msg)?;
+                services::quotas::set_user_quota(
+                    &pool,
+                    &teamcraft::auth::Actor::system(),
+                    user.id,
+                    limit,
+                )
+                .await?;
+            }
+            let usage = services::quotas::user_usage(&pool, user.id).await?;
+            writeln!(
+                std::io::stdout(),
+                "{}: {}",
+                user.username,
+                describe_usage(&usage)
+            )?;
+        }
+        UserCommand::Holdings { username } => {
+            let user = services::users::find_by_username(&pool, &username)
+                .await?
+                .with_context(|| format!("no user named '{username}'"))?;
+            let report =
+                services::offboarding::holdings(&pool, &teamcraft::auth::Actor::system(), user.id)
+                    .await?;
+            write!(
+                std::io::stdout(),
+                "{}",
+                services::offboarding::to_text(&report)
+            )?;
+        }
+        UserCommand::Deactivate {
+            username,
+            release_checkouts,
+            hand_over_to,
+            revoke_tokens,
+            confirm_no_manager,
+        } => {
+            let user = services::users::find_by_username(&pool, &username)
+                .await?
+                .with_context(|| format!("no user named '{username}'"))?;
+            let hand_over_to = match hand_over_to {
+                Some(name) => Some(
+                    services::users::find_by_username(&pool, &name)
+                        .await?
+                        .with_context(|| format!("no user named '{name}'"))?
+                        .id,
+                ),
+                None => None,
+            };
+            let opts = services::deactivation::Offboarding {
+                release_checkouts,
+                hand_over_to,
+                revoke_tokens,
+                confirm_no_manager,
+            };
+            let actor = teamcraft::auth::Actor::system();
+            let report = services::deactivation::deactivate(&pool, &actor, user.id, &opts).await?;
+            writeln!(std::io::stdout(), "{}", report.summary())?;
+            if report.releases.iter().any(|o| !o.ok) {
+                return Ok(ExitCode::from(2));
+            }
+        }
         UserCommand::List => {
             let users = services::users::list(&pool).await?;
             let mut out = std::io::stdout().lock();
@@ -763,6 +924,18 @@ async fn user_command(command: UserCommand) -> Result<ExitCode> {
         }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// `12.0 MB of 1.0 GB used` / `12.0 MB used, no quota`.
+fn describe_usage(usage: &services::quotas::Usage) -> String {
+    let used = teamcraft::util::format_bytes(usage.used);
+    match usage.limit {
+        Some(limit) => format!(
+            "{used} of {} used (storage quota)",
+            teamcraft::util::format_bytes(limit)
+        ),
+        None => format!("{used} used, no storage quota"),
+    }
 }
 
 /// Prompts twice on a terminal, otherwise reads one line from stdin
@@ -862,6 +1035,20 @@ async fn assistant_command(command: AssistantCommand) -> Result<ExitCode> {
     })
 }
 
+/// `teamcraft vault quota [--mb N|none]`.
+async fn vault_quota(mb: Option<String>) -> Result<ExitCode> {
+    let config = load_config()?;
+    let pool = db::connect(&config).await?;
+    db::migrate(&pool).await?;
+    if let Some(mb) = mb {
+        let limit = services::quotas::parse_limit_mb(&mb).map_err(anyhow::Error::msg)?;
+        services::quotas::set_vault_quota(&pool, &teamcraft::auth::Actor::system(), limit).await?;
+    }
+    let usage = services::quotas::vault_usage(&pool).await?;
+    println!("vault: {}", describe_usage(&usage));
+    Ok(ExitCode::SUCCESS)
+}
+
 async fn vault_command(command: VaultCommand) -> Result<ExitCode> {
     let verify_hashes = match command {
         VaultCommand::Check { verify_hashes } => verify_hashes,
@@ -870,6 +1057,7 @@ async fn vault_command(command: VaultCommand) -> Result<ExitCode> {
         VaultCommand::PurgeVersions { apply, grace_days } => {
             return vault_purge_versions(apply, grace_days).await
         }
+        VaultCommand::Quota { mb } => return vault_quota(mb).await,
     };
     let config = load_config()?;
     let pool = db::connect(&config).await?;
