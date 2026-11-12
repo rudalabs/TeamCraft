@@ -166,6 +166,15 @@ Changes since the `v0.2.6` tag.
 
 ### Added
 
+- 3D preview of SketchUp models (`.skp`, SketchUp 3 to 2026): the faces are
+  triangulated (earcut port, holes included), components and groups placed
+  with their transforms, nested and scaled ones too, in millimetres; hidden
+  faces, hidden components, hidden tags (layers) and images are left out. The
+  thumbnail is rendered from the 3D preview; a file without faces keeps its
+  stored picture. SketchUp 2021+ files are read by an own reader, older ones
+  by the Rust port of OpenSKP (MIT), vendored unchanged in `vendor/openskp`.
+  39 test files of OpenSKP in `tests/fixtures/cad/openskp`. Research:
+  `docs/src/research/sketchup-preview.md`.
 - The *Material* field (*New item*, *Edit revision*, desktop app) suggests the
   materials of the library with their density while you type (a `<datalist>`,
   also without JavaScript); a name that is not in the library gets a hint.

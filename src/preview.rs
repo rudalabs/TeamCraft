@@ -182,6 +182,8 @@ pub enum PreviewFormat {
     InvAssembly,
     /// CATIA V5 parts: the visualisation (CGR) data they store.
     CatiaPart,
+    /// SketchUp models: their faces triangulated, components placed.
+    SketchUp,
     Pts,
     Xyz,
     Las,
@@ -193,7 +195,7 @@ pub enum PreviewFormat {
 }
 
 impl PreviewFormat {
-    pub const ALL: [PreviewFormat; 25] = [
+    pub const ALL: [PreviewFormat; 26] = [
         PreviewFormat::Stl,
         PreviewFormat::Obj,
         PreviewFormat::Ply,
@@ -212,6 +214,7 @@ impl PreviewFormat {
         PreviewFormat::InvPart,
         PreviewFormat::InvAssembly,
         PreviewFormat::CatiaPart,
+        PreviewFormat::SketchUp,
         PreviewFormat::Pts,
         PreviewFormat::Xyz,
         PreviewFormat::Las,
@@ -252,6 +255,7 @@ impl PreviewFormat {
             PreviewFormat::InvPart => "inventor-part",
             PreviewFormat::InvAssembly => "inventor-assembly",
             PreviewFormat::CatiaPart => "catia-part",
+            PreviewFormat::SketchUp => "sketchup",
             PreviewFormat::Pts => "pts",
             PreviewFormat::Xyz => "xyz",
             PreviewFormat::Las => "las",
