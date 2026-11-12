@@ -90,10 +90,41 @@ Not now: shattered files (a partition that names another `.jt` file),
 polygon-set LODs, colours and materials, PMI, the B-rep segments (XT, ULP,
 LWPA).
 
+## Addendum 2026-11-12: JT 9.5 assemblies
+
+Until now a stand-alone JT 9 file went to the reader of the JT inside NX
+parts, which reads the LOD 0 segments without the scene graph: a JT 9.5
+assembly showed its parts piled up at the origin.
+
+* **Format.** The scene graph of JT 9.5 (*JT File Format Reference* 9.5
+  Rev A, 2010 = ISO 14306:2012) has the same elements, property atoms and
+  property table as JT 10; what differs are field widths: version numbers
+  are `I16` (JT 10: `U8`), transform elements `F32` (JT 10: `F64`), Base
+  Attribute Data has no *field final flags*, Base Property Atom Data is
+  `I16` + `U32`. The TOC has 32-bit offsets (28-byte entries), the scene
+  graph is zlib-compressed with the same segment header as JT 10.
+* **Checked** on the JT 9.4 streams of all eight NIST NX parts: their scene
+  graphs parse with this layout and end exactly at the end of the segment;
+  each part has one tri-strip shape node whose late-loaded property points
+  to its LOD 0 segment. They carry no unit property (NX writes metres).
+* **Test data.** No openly licensed JT 9.5 assembly was found (the JT
+  Assistant samples and vendor samples have no clear licence). The tests
+  build JT 9.5 files by the reference around the real shape segment of the
+  NIST hex nut: several instances with translation, rotation and mirror
+  transforms, units, damaged bytes.
+
+Decision: stand-alone JT 9 files with more than one shape occurrence or a
+placed one are put together through the scene graph (`Layout::Jt9` in
+`src/mesh/jt10.rs`, shapes through the JT 9 reader), in metres unless the
+graph names its units. A single part and any file whose scene graph cannot
+be read go through the JT 9 reader as before, so their meshes do not
+change; the JT inside NX parts is not touched. Known gap: verified only on
+synthetic assemblies.
+
 ## Sources
 
-* Siemens, *JT File Format Reference*, version 10.0 Rev B (2015) and
-  version 10.5 Rev B (2023); ISO 14306. JT is a trademark of Siemens; the
+* Siemens, *JT File Format Reference*, version 9.5 Rev A (2010),
+  version 10.0 Rev B (2015) and version 10.5 Rev B (2023); ISO 14306. JT is a trademark of Siemens; the
   JT data format is © Siemens.
 * NIST, *Design, Manufacturing, and Inspection Data for a Box Assembly*
   (NX and JT files in `tests/fixtures/cad/nist/mtc-assembly`) and

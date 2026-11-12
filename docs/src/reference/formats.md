@@ -64,8 +64,11 @@ Creo):
   decoded with the JT 9 topology coder plus the newer integer codecs, its
   hash checked, refined along the stored normals within the same budget as
   NX parts and placed per instance.
-- **JT 9** with topologically compressed triangle LODs, as NX writes them,
-  goes through the reader of NX parts (no placements).
+- **JT 9** with topologically compressed triangle LODs, as NX writes them:
+  an assembly (several shapes, or a placed one) is put together through its
+  scene graph like JT 10 – the JT 9.5 field widths (`I16` versions, `F32`
+  transforms), zlib instead of LZMA, metres unless the file names its units;
+  a single part goes through the reader of NX parts as before.
 - Other versions report their version. Not read: files that keep their parts
   in other `.jt` files ("shattered"), colours, PMI and the B-rep segments.
 
