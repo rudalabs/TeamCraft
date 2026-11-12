@@ -179,7 +179,13 @@ Sld_VisGeom / active_geom
   added. The twist layout of `end_uv_deriv` is plausible but only affects
   the interior and could not be checked against edges.
 * Model units: the file says mm or inch in `UnitSystemDef`; the mesh keeps
-  the model units for now.
+  the model units for now. All NIST parts are stored in mm, so an inch
+  part would show 25.4 times too small until the unit is read.
+* Open edges: the prototype leaves a few open edges on some parts (4–8 on
+  `ctc-03`, `ftc-07`, `ftc-09`) and about 1 200 on `ctc-02`, where planes
+  are split into twin halves; faces whose stored record is wrong or missing
+  are not rebuilt (the prototype has a least-squares primitive fit for
+  them). Only `ctc-01` is a repository fixture and checked by the Rust tests.
 * Assemblies (`.asm.N`): no freely licensed test file was found (NIST has no
   Creo assembly; the GitHub finds carry no licence). Component names are in
   `MdlRefInfo`; placements have not been looked at.
