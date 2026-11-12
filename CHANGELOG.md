@@ -15,6 +15,12 @@ see the notices in the README.
 
 ### Added
 
+- JT 9.5 assemblies in the 3D preview: a stand-alone JT 9 file with several
+  shapes (or a placed one) is put together through its scene graph like JT
+  10 – instances, transforms, units, hidden nodes – instead of showing its
+  parts piled up at the origin. Single-part JT 9 files and the JT inside NX
+  parts read exactly as before. Tested with JT 9.5 files built around the
+  real NIST hex nut (no openly licensed JT 9.5 assembly exists).
 - 3D preview of stand-alone JT 10 files (`.jt`, ISO 14306): parts and whole
   assemblies from one file – the scene graph (LZMA via the pure-Rust
   `lzma-rs`, MIT) with transforms, units and hidden nodes, each shape's
@@ -124,6 +130,10 @@ see the notices in the README.
   loosen. The access review shows the conditions and whether each member met
   them. The assistant applies the request's conditions (and, for a token, the
   `api_tokens` switch) at every tool step. Migration 0068.
+- 3D preview of CATIA V5 parts (`.CATPart`) from the visualisation (CGR)
+  data CATIA stores in the file, refined along its exact surface normals
+  like NX parts. Their thumbnail is rendered from it. Products are not
+  previewed yet.
 
 ### Changed
 
@@ -274,7 +284,6 @@ Changes since the `v0.2.5` tag.
   `PUT /api/v1/branding/name` sets them (admins). The footer, About, version
   and licence notices stay TeamCraft. `TEAMCRAFT_INSTANCE_NAME` is now only
   the default.
-
 - Need-to-know project groups, step 5 (#151): access review of a restricted
   group (migration 0053, `project_access_reviews`). Page `/projects/{id}/access-review` for managers and
   administrators: members with role, group role, source (manual or identity

@@ -204,6 +204,8 @@ export function renderRevision(tab, body, toolbar) {
     moreMenu([
       { label: "Pack and Go…", icon: "package", run: function () { savePackage(rev, null); }, title: "Save this revision with all files of its structure as ZIP (bom.csv, manifest.json) – for sending, not for working" },
       { label: "Add files…", icon: "plus", run: function () { addFilesDialog(tab); }, disabled: !filesHint(d).ok, title: filesHint(d).text },
+      { label: "Park…", icon: "upload", run: function () { checkinDialog(tab, true); }, disabled: !can.checkin || rev.checked_out_by !== state.me.id,
+        title: rev.checked_out_by === state.me.id ? "Upload your changes as new versions and keep the check-out – safe on the server if this computer is lost" : "Check out first – parking keeps your check-out" },
       { label: "Import BOM…", icon: "download", run: function () { importBomDialog(rev); }, disabled: !can.edit, title: can.edit ? "Add the lines of a BOM exported by the CAD program (CSV, Excel, STEP assembly)" : why.edit },
       { label: "Quantities from CAD…", icon: "refresh", run: function () { bomFromCadDialog(rev); }, disabled: !can.edit, title: can.edit ? "Add missing BOM lines and correct quantities from the instances counted in the CAD files (SOLIDWORKS, NX, STEP)" : why.edit },
       { label: "Open in browser", icon: "web", run: function () { call("open_web", { path: "/revisions/" + rev.id }).catch(function (e) { toast(errorText(e), "error"); }); }, title: "Open this revision in the web UI" },

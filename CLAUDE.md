@@ -92,7 +92,7 @@ src/assistant.rs   built-in assistant ("Ask TeamCraft"): tool loop over src/llm 
 src/pagecontext.rs the page the user is on (kind, ids, view, rule, query, rows shown): parsing and caps only – ids are hints
 src/vault.rs       content-addressed file storage (objects/ab/cd/<sha256>)
 src/httprange.rs   Range / If-Range of file downloads (ETag = SHA-256, 206 / 416): resumable downloads
-src/mesh.rs        pure-Rust 3D readers (STL, OBJ, PLY, OFF, 3MF, AMF, glTF, 3DS, PTS/XYZ/LAS, STEP via truck, NX parts via their JT stream: mesh/jt.rs, SOLIDWORKS parts via their display lists: mesh/sw.rs, Inventor parts via their graphics segment: mesh/inventor.rs, all + PN refinement mesh/pn.rs,
+src/mesh.rs        pure-Rust 3D readers (STL, OBJ, PLY, OFF, 3MF, AMF, glTF, 3DS, PTS/XYZ/LAS, STEP via truck, NX parts via their JT stream: mesh/jt.rs, SOLIDWORKS parts via their display lists: mesh/sw.rs, Inventor parts via their graphics segment: mesh/inventor.rs, CATIA V5 parts via their CGR data: mesh/catia.rs, all + PN refinement mesh/pn.rs,
                    Rhino .3dm: stored meshes, SubD subdivided, blocks placed: mesh/rhino.rs,
                    SketchUp .skp: faces triangulated (mesh/earcut.rs), components placed: mesh/sketchup.rs, 3–2020 files via vendor/openskp,
                    stand-alone JT 10 files with their scene graph: mesh/jt10.rs) → TCMESH01;
@@ -122,7 +122,7 @@ src/invpart.rs     Inventor files: OLE storage RSeStorage, zlib or Zstandard seg
                    sections, typed arrays; src/invplace.rs: assembly components (UFRxDoc: files, visibility) + placements
                    (AmRxSegment), composed by services/assemblies.rs
 src/thumbnail.rs   preview images stored in Inventor / Solid Edge / SolidWorks / NX files (OLE via cfb, PNG, DIB → BMP, JPEG), cached in previews/;
-                   NX, SOLIDWORKS and Inventor parts/assemblies, Rhino and SketchUp models: a PNG rendered from the 3D preview instead (mesh/render.rs, software z-buffer)
+                   NX, SOLIDWORKS and Inventor parts/assemblies, CATIA parts, Rhino and SketchUp models: a PNG rendered from the 3D preview instead (mesh/render.rs, software z-buffer)
 src/bomtable.rs    BOM tables exported by CAD programs (CSV/TSV, Excel, ODS): header synonyms, levels, units – heuristic
 src/stepbom.rs     product structure of STEP assemblies (own Part 21 reader: PRODUCT … NEXT_ASSEMBLY_USAGE_OCCURRENCE) → BomTable
 src/assets.rs      embedded CSS/JS/logos/fonts, cache busting (?v=<asset hash>, ETag)

@@ -567,7 +567,7 @@ async fn index() -> Json<Value> {
             "PATCH  /api/v1/uploads/{id}                              header Upload-Offset, body = next chunk (≤ chunk_bytes) → 409 at any other offset",
             "POST   /api/v1/uploads/{id}/finish                       {comment?, check_in?} – verify size and sha256, store the new version (and release the check-out)",
             "DELETE /api/v1/uploads/{id}                              cancel the upload",
-            "GET    /api/v1/items/{number}/revisions/{code}/file-status   current version, sha256 and lock of every file",
+            "GET    /api/v1/items/{number}/revisions/{code}/file-status   current version, sha256 and lock of every file; released = {by_name, at, reason, message} when someone else released my check-out",
             "POST   /api/v1/items/{number}/revisions/{code}/file-status   {files: [{filename, sha256, base_version? | base_sha256?}]} → up_to_date | modified | outdated | conflict | new | missing",
             "POST   /api/v1/worklist/checkin-all                      {revisions?: [id]} – check in my check-outs without new files (lock release), one by one",
             "POST   /api/v1/items/{number}/revisions/{code}/cancel-checkout",

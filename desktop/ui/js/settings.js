@@ -2,10 +2,10 @@
 // TeamCraft Desktop – Settings, sign-out and About.
 // Part of the desktop UI (ES modules, no build step; js/main.js starts it).
 
-import { $, SKINS, TAURI, api, call, dialog, errorText, field, h, label, state, toast } from "./core.js";
+import { $, SKINS, TAURI, api, call, confirmDialog, dialog, errorText, field, h, label, run, state, toast } from "./core.js";
 import { applySkin } from "./skins.js";
 import { checkServerUrl, showConnect } from "./connect.js";
-import { checkUpdate } from "./shell.js";
+import { atRisk, checkUpdate, checkoutsWithChanges, localChangesList, refreshWorklistCount, sendLocalChanges } from "./shell.js";
 import { resetCompanyAi } from "./assistant.js";
 import { agent, agentSettingsDialog, endAgentPermissions, localAgentsAllowed, localAgentsOffText } from "./agent.js";
 
@@ -181,7 +181,57 @@ export function passwordDialog() {
   ]);
 }
 
+/** Sign out (or change the server). Check-outs with local changes are listed
+ * first, with the offer to check them in or park them (issue #173, step 10):
+ * the working folder stays, but work that is only on this computer is not
+ * safe there – a lost laptop or a forced release later keeps it nowhere else. */
 export function signOut(changeServer) {
+  if (!state.session.signed_in) { finishSignOut(changeServer); return; }
+  run("Looking for local changes in your check-outs", function () {
+    return refreshWorklistCount().then(function (w) { return checkoutsWithChanges(w.checkouts || []); });
+  }).then(function (report) {
+    if (!atRisk(report)) { finishSignOut(changeServer); return; }
+    var what = changeServer ? "changing the server" : "signing out";
+    dialog("Local changes before " + what, h("div.stack", null, [
+      h("p", { text: atRisk(report) + (atRisk(report) === 1 ? " check-out has" : " check-outs have") + " changes in the working folder that are not on the server yet:" }),
+      localChangesList(report),
+      h("p.small.muted", { text: "Check in: new versions, the locks are released. Park: new versions, you keep the check-outs. " +
+        "Either way your work is on the server even if this computer is lost. Check-outs with a conflict stay as they are – merge them in their Workspace tab." })
+    ]), [
+      { label: "Cancel", onClick: function (d) { d.close(); } },
+      { label: "Sign out anyway", danger: true, onClick: function (d) { d.close(); finishSignOut(changeServer); } },
+      { label: "Park and sign out", onClick: function (d) { d.close(); sendThenSignOut(report, true, changeServer); } },
+      { label: "Check in and sign out", primary: true, submit: true, onClick: function (d) { d.close(); sendThenSignOut(report, false, changeServer); } }
+    ], { wide: true });
+  }, function () {
+    // the server cannot be asked: say so instead of signing out blindly
+    confirmDialog("Sign out", "Your check-outs could not be compared with the working folder. " +
+      "Changes that are only on this computer stay in the working folder. Sign out anyway?", "Sign out", true)
+      .then(function (ok) { if (ok) finishSignOut(changeServer); });
+  });
+}
+
+/** Checks in or parks the local changes, then signs out – unless something
+ * was left behind, which is shown first. */
+function sendThenSignOut(report, park, changeServer) {
+  sendLocalChanges(report, park, park ? "" : "Checked in before signing out").then(function (sent) {
+    refreshWorklistCount().catch(function () {});
+    if (!sent.kept.length && !sent.failed.length) {
+      toast((park ? "Parked " : "Checked in ") + sent.done.length + " check-out(s) with their local changes");
+      finishSignOut(changeServer);
+      return;
+    }
+    dialog("Not everything is on the server", h("div.stack", null, [
+      sent.done.length ? h("p", { text: (park ? "Parked: " : "Checked in: ") + sent.done.join(", ") }) : null,
+      h("ul.small", null, sent.kept.concat(sent.failed).map(function (t) { return h("li", { text: t }); }))
+    ]), [
+      { label: "Stay signed in", primary: true, submit: true, onClick: function (d) { d.close(); } },
+      { label: "Sign out anyway", danger: true, onClick: function (d) { d.close(); finishSignOut(changeServer); } }
+    ], { wide: true });
+  });
+}
+
+function finishSignOut(changeServer) {
   call("sign_out").then(function () {
     state.session.signed_in = false;
     state.tabs = [];

@@ -510,6 +510,65 @@ fn damaged_jt_files_never_panic() {
     }
 }
 
+const CATIA_PART: &str = "ctc-01/catia-v5/nist_ctc_01_asme1_rd_ct5290_ra.CATPart";
+
+/// A CATIA V5 part is previewed from the visualisation (CGR) data CATIA
+/// stores in it: closed, in millimetres, and exactly as large as the STEP
+/// export of the same model (vertex box -400..400, -225..225, -100..50).
+#[test]
+fn catia_parts_get_a_closed_3d_preview() {
+    assert_eq!(
+        preview::PreviewFormat::of(CATIA_PART),
+        Some(preview::PreviewFormat::CatiaPart)
+    );
+    let mesh = preview::convert(preview::PreviewFormat::CatiaPart, &fixture(CATIA_PART))
+        .unwrap_or_else(|e| panic!("{e}"));
+    mesh.check().unwrap();
+    // 6 932 stored triangles, refined along the stored normals
+    assert!(mesh.triangle_count() > 6_932, "{}", mesh.triangle_count());
+    let mut edges = std::collections::HashMap::<(u32, u32), u32>::new();
+    for t in mesh.indices.chunks_exact(3) {
+        for (a, b) in [(t[0], t[1]), (t[1], t[2]), (t[2], t[0])] {
+            *edges.entry((a, b)).or_default() += 1;
+        }
+    }
+    assert!(
+        edges
+            .iter()
+            .all(|(&(a, b), &n)| n == 1 && edges.get(&(b, a)) == Some(&1)),
+        "the mesh is not closed"
+    );
+    let b = mesh.bounds();
+    for (got, want) in b.iter().zip([-400.0, -225.0, -100.0, 400.0, 225.0, 50.0]) {
+        assert!((got - want).abs() < 0.01, "{b:?}");
+    }
+    let s = teamcraft::shape::compute(&mesh).unwrap();
+    assert!(s.is_valid() && s.closed && s.volume > 0.0, "{s:?}");
+    let bytes = mesh.encode();
+    assert_eq!(mesh::Mesh::decode(&bytes).unwrap(), mesh);
+}
+
+/// Damaged CATIA files are an error or a smaller mesh, never a panic.
+#[test]
+fn damaged_catia_parts_never_panic() {
+    let data = std::fs::read(fixture(CATIA_PART)).unwrap();
+    // the nested CGR document holds the mesh
+    let start = data
+        .windows(8)
+        .skip(1)
+        .position(|w| w == b"V5_CFV2\0")
+        .unwrap()
+        + 1;
+    for at in (start..data.len()).step_by(2_999) {
+        let mut copy = data.clone();
+        copy[at] ^= 0x5A;
+        let _ = mesh::read("catia-part", &copy);
+    }
+    for cut in (0..data.len()).step_by(4999) {
+        let _ = mesh::read("catia-part", &data[..cut]);
+    }
+}
+
 /// Every STEP fixture – AP203 geometry only and AP242 with PMI – gets a
 /// complete 3D preview. The AP242 file used to fail: its tessellated PMI
 /// (empty lists `()`) made the B-rep reader's parser reject the whole file.

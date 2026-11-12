@@ -24,6 +24,7 @@
 
 use anyhow::{bail, Result};
 
+mod catia;
 mod earcut;
 mod gltf;
 mod helpers;
@@ -78,6 +79,7 @@ pub fn read(format: &str, data: &[u8]) -> Result<Mesh> {
         "inventor-assembly" => bail!(
             "An Inventor assembly is shown with the previews of its parts (found by file name)."
         ),
+        "catia-part" => catia::read_part(data)?,
         "sketchup" => sketchup::read(data)?,
         "vtk-legacy" => crate::simmesh::vtk_legacy(data)?,
         "vtk-unstructured" | "vtk-polydata" => crate::simmesh::vtk_xml(data)?,
