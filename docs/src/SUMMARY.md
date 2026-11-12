@@ -62,6 +62,7 @@
     - [Mass properties from exported meshes](research/mass-properties.md)
     - [3D preview of Fusion designs](research/fusion-ogs-preview.md)
     - [3D preview of Inventor files](research/inventor-display-preview.md)
+    - [Inventor 2026 and later: Zstandard streams](research/inventor-zstd-streams.md)
     - [3D preview of SOLIDWORKS files](research/solidworks-display-preview.md)
     - [Mutation testing with cargo-mutants](research/mutation-testing.md)
     - [3D preview of NX parts](research/nx-jt-preview.md)
