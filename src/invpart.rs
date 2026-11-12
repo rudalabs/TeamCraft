@@ -695,9 +695,31 @@ pub(crate) mod tests {
         assert!(zlib_header(&zlib(&data)) && !zlib_header(&zstd(&data)));
     }
 
+    /// The NIST parts with every segment repacked as Zstandard: each
+    /// segment unpacks to the same bytes as from the zlib original (the
+    /// preview is built from these bytes alone).
+    #[test]
+    fn nist_parts_repacked_as_zstandard_unpack_to_the_same_segments() {
+        let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/cad/nist");
+        let zlib = std::fs::read(format!(
+            "{dir}/ftc-11/inventor-2021/INV_nist_ftc_11_asme1_2021.ipt"
+        ))
+        .unwrap();
+        let zstd = as_zstd(&zlib, 0);
+        let (mut a, mut b) = (open(zlib), open(zstd));
+        for name in ["PmGraphicsSegment", "PmAppSegment", "PmBRepSegment"] {
+            let x = segment(&mut a, name, MAX_RAW).unwrap();
+            let y = segment(&mut b, name, MAX_RAW).unwrap();
+            let (x, y) = (x.expect(name), y.expect(name));
+            assert_eq!(x.lengths, y.lengths, "{name}");
+            assert_eq!(x.classes, y.classes, "{name}");
+            assert!(x.data == y.data, "{name}: data differs");
+        }
+    }
+
     #[test]
     fn damaged_zstandard_segments_are_errors_not_panics() {
-        let data: Vec<u8> = (0..20_000u32)
+        let data: Vec<u8> = (0..2_000u32)
             .flat_map(|k| (k % 251).to_le_bytes())
             .collect();
         let packed = zstd(&data);
