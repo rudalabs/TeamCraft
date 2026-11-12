@@ -59,6 +59,7 @@
 - [Research notes](research/index.md)
     - [Deprovisioning through the identity provider (SCIM)](research/scim-deprovisioning.md)
     - [3D preview of CATIA V5 parts](research/catia-cgr-preview.md)
+    - [3D preview of CATIA V5 products](research/catia-product-structure.md)
     - [Instance counts of Inventor assemblies](research/inventor-instance-counts.md)
     - [Crash reports from the desktop app](research/crash-reporting.md)
     - [Mass properties from exported meshes](research/mass-properties.md)
