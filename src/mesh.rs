@@ -27,6 +27,7 @@ use std::io::{Cursor, Read};
 
 use anyhow::{anyhow, bail, Context, Result};
 
+pub mod creo;
 mod jt;
 mod p21;
 mod pn;
@@ -430,6 +431,7 @@ pub fn read(format: &str, data: &[u8]) -> Result<Mesh> {
         "nx-part" => jt::read_nx(data)?,
         "jt" => jt::read_file(data)?,
         "solidworks-part" => sw::read_part(data)?,
+        "creo-part" => creo::read_part(data)?,
         "solidworks-assembly" => bail!(
             "A SOLIDWORKS assembly is shown with the previews of its parts (found by file name)."
         ),

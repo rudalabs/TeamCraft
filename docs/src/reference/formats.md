@@ -66,6 +66,18 @@ virtual components are left out, and components are found by the file
 name of their stored path. Files saved before 2015 (OLE compound files) and
 drawings have no 3D preview.
 
+Creo parts (`.prt.N`, `src/mesh/creo/`) store no display tessellation. The
+3D preview is tessellated from the B-rep in the `VisibGeom` section: the
+table of contents and the LZW-compressed sections (`container.rs`), the
+self-describing tagged format with its compressed numbers (`tagged.rs`),
+planes, cylinders, cones and tori with their contours and the edges sampled
+in both faces' parameter spaces (`brep.rs`), interpolating bicubic splines,
+rolling-ball fillets and ruled surfaces (`freeform.rs`), ear clipping of
+every face region in the parameter plane with every edge evaluated once on
+its most exact face, welding and PN refinement along the analytic normals
+(`tess.rs`). Lengths stay in the model's unit, and Creo assemblies and
+drawings keep their stored JPEG (see [Research: 3D preview of Creo parts](../research/creo-brep-preview.md)).
+
 SOLIDWORKS files from 2015 on are no OLE files any more but a sequence of
 Deflate-compressed sections (`src/swpart.rs`; verified with SOLIDWORKS 2018
 files). TeamCraft inflates only the sections it needs, with a hard size

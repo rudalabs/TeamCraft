@@ -54,7 +54,7 @@ has the same notes under `/api/v1/file-versions/{id}/annotations`.
 | Previewed           | Formats                                                                                                                       |
 |---------------------|-------------------------------------------------------------------------------------------------------------------------------|
 | B-rep (tessellated) | STEP (`.step`, `.stp`, `.p21`)                                                                                                |
-| Native CAD          | NX parts (`.prt`), SOLIDWORKS parts (`.sldprt`, 2015+) – the tessellation stored in the file; their assemblies from the parts |
+| Native CAD          | NX parts (`.prt`), SOLIDWORKS parts (`.sldprt`, 2015+) – the tessellation stored in the file; their assemblies from the parts; Creo parts (`.prt.N`) – tessellated from the stored B-rep |
 | Meshes              | STL, OBJ, PLY, OFF, 3MF (incl. components), AMF, glTF / GLB, 3DS                                                              |
 | Point clouds        | PTS, XYZ, LAS (uncompressed), PLY and OBJ without faces                                                                       |
 | Simulation results  | VTK (`.vtk`), VTU, VTP, CalculiX FRD – coloured by result fields                                                              |
@@ -81,9 +81,12 @@ several fields, a selector – see [Simulations](simulation.md#results-in-3d).
 Native CAD files (Inventor, Solid Edge, SolidWorks, NX, Creo, CATIA, …) are
 proprietary; TeamCraft does not read their exact geometry (see
 [Research: previews of native CAD files](../research/cad-previews.md)).
-The exceptions are **NX** and **SOLIDWORKS**. Both save a tessellation of
+The exceptions are **NX**, **SOLIDWORKS** and **Creo**. NX and SOLIDWORKS save a tessellation of
 every part into the file: NX in a documented format (JT 9), SOLIDWORKS (2015 and later) as the display lists it draws
-the part with.
+the part with. Creo stores no tessellation, but its exact faces with every
+edge already sampled; TeamCraft triangulates those faces itself – planes,
+cylinders, cones, tori, spline, fillet and ruled faces (see
+[Research: 3D preview of Creo parts](../research/creo-brep-preview.md)).
 
 TeamCraft shows that tessellation in the 3D viewer, refined along the
 exact surface normals stored with it, so round faces stay round.
@@ -103,8 +106,8 @@ These components are left out:
 
 For the rest TeamCraft shows what other PLM systems show:
 
-* **A picture of the 3D preview** for NX and SOLIDWORKS parts and
-  assemblies. It replaces the image stored in the file and is a 512 × 512
+* **A picture of the 3D preview** for NX, SOLIDWORKS and Creo parts and
+  NX and SOLIDWORKS assemblies. It replaces the image stored in the file and is a 512 × 512
   PNG with a transparent background, drawn once and cached. An assembly's
   picture is drawn again when one of its parts changes. Drawings, and
   assemblies none of whose parts are in TeamCraft, keep the stored image.

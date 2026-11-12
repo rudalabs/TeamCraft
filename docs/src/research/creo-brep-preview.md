@@ -15,10 +15,11 @@ face boundaries come ready-made, each face is ear-clipped in its parameter
 plane, mapped to 3D, welded with its neighbours and refined along the
 analytic normals (`mesh/pn.rs`, as for NX and SOLIDWORKS).
 
-Status: `src/mesh/creo/` reads planes, cylinders, cones and tori. The NIST
-test part `ctc-01` (Creo 10) gives a closed mesh whose bounding box is the
-STEP export's to 0.05 mm. Spline, fillet and ruled surfaces are not yet
-evaluated (see *Gaps*).
+Status: `src/mesh/creo/` reads planes, cylinders, cones, tori, bicubic
+splines, rolling-ball fillets and ruled surfaces. The NIST test part
+`ctc-01` (Creo 10) gives a closed mesh whose bounding box is the STEP
+export's to 0.05 mm; most other NIST parts are closed as well (see
+*Verification* and *Gaps*).
 
 ## Container
 
@@ -131,6 +132,30 @@ Sld_VisGeom / active_geom
   normal ∂u×∂v; `orient = −1` turns it. The signed volume of the whole mesh
   decides the global sense.
 
+### Freeform faces
+
+* `splsrf` (40): an interpolating bicubic C² spline (de Boor) through the
+  grid `i_points[iu·nv + iv]` with knots `u_params`/`v_params`, end
+  tangents `end_u_tangts[e·nv + iv]`, `end_v_tangts[e·nu + iu]` and the
+  corner twists `end_uv_deriv[eu·2 + ev]`; derivatives are with respect to
+  the real parameters. Edge samples are hit to 8·10⁻⁴ of the face size;
+  the rest is the spline's own approximation of circular neighbours.
+* `fillet_srf` (41): a rolling-ball blend. With `s = par_v_0 + v (par_v_1
+  − par_v_0)`, centre `C = ctr(s)`, radius vector `A = pnt(s) − C` and
+  circle axis `T = tan(s)`, the face is `C + cos u · A + sin u · (T × A)`;
+  the three curves are clamped C² splines (`i_pnts`, `params`,
+  `end_tangts`). Exact to 10⁻⁷ on `ctc-02`.
+* `ruled_srf` (42): `C1(u) + v (C2(u) − C1(u))` with `u` normalised along
+  both curves; a `curve(conic)` is the ellipse `O + c1 cos t X + c2 sin t
+  Y`, `t = t0 + u (t1 − t0)`, a `curve(spline)` a clamped spline.
+* Freeform faces carry absolute 3D data and seed the convention resolution
+  of the analytic faces (`ftc-07` has no plane with the identity frame).
+* Every edge is evaluated once on its most exact neighbour (plane before
+  cylinder … before spline) and both faces use those vertices; edges whose
+  sides disagree by more than 10⁻³ of the model size keep separate vertices,
+  so real errors stay visible as open edges. Edge ends that meet in a
+  contour are unified across the contours.
+
 ## Verification
 
 * 28 NIST parts (22 FTC/CTC in Creo 4 and Creo 10, 5 STC, 1 HTC); the FTC
@@ -138,17 +163,21 @@ Sld_VisGeom / active_geom
 * `ctc-01`: 145 body faces (8 twins), 151 regions, closed (0 open edges),
   bounding box equal to the STEP export, volume 14.7·10⁶ mm³; the PN
   refinement keeps the mesh closed.
-* `ctc-02`, `ctc-03`, `ctc-04`, `ftc-06`, `ftc-09`: bounding boxes equal to
-  STEP within 0.05 mm; not closed where fillet or spline faces are skipped
-  or torus conventions are unresolved.
+* Closed as well (prototype): `ctc-04`, `ctc-05`, `ftc-06`, `ftc-08`,
+  `ftc-10`, `ftc-11`; a handful of open edges on `ctc-03` (4), `ftc-07`
+  (8), `ftc-09` (4); `ctc-02` keeps about 1 200 open edges on planes with
+  twin halves. Bounding boxes equal to STEP for `ctc-01`–`ctc-04`,
+  `ftc-06`, `ftc-09`; `ctc-05`, `ftc-07` and `ftc-08` match Creo's own
+  body outline rather than the STEP definition.
 * Prototype and notes: `cad-decoding-notes/creo.md` and
   `creo-prototypes/` next to the repository (not in it).
 
 ## Gaps
 
-* Spline surfaces (`splsrf`: interpolated point grid with end tangents),
-  fillet surfaces (three splines of a rolling-ball blend) and ruled surfaces
-  are skipped – 64 of 4 332 faces in the test parts.
+* The mesh has vertices only on the face boundaries: freeform faces show
+  as facets between their edge samples until interior sample points are
+  added. The twist layout of `end_uv_deriv` is plausible but only affects
+  the interior and could not be checked against edges.
 * Model units: the file says mm or inch in `UnitSystemDef`; the mesh keeps
   the model units for now.
 * Assemblies (`.asm.N`): no freely licensed test file was found (NIST has no

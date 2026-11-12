@@ -17,6 +17,16 @@ Changes on `main` since the `v0.2.5` tag.
 
 ### Added
 
+- 3D preview of PTC Creo parts (`.prt.N`): the exact B-rep stored in the
+  file (`VisibGeom`) is read – text table of contents, LZW sections, the
+  self-describing tagged format with its compressed numbers – and
+  tessellated: planes, cylinders, cones, tori, bicubic splines, rolling-ball
+  fillets and ruled surfaces with their contours, edges sampled in both
+  faces' parameter spaces, ear clipping per face region, welding and PN
+  refinement along the analytic normals (`src/mesh/creo/`). The thumbnail is
+  rendered from the preview (`CACHE_VERSION` 5). Model units and assemblies
+  are not covered yet
+  (`docs/src/research/creo-brep-preview.md`).
 - Branding (#184): administrators rename the header name and subtitle ("TeamCraft PLM") under *Admin → Branding*;
   effective at once in the web
   header, page titles, sign-in page, notification e-mails and the desktop
