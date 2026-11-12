@@ -216,6 +216,13 @@ see the notices in the README.
 
 ### Fixed
 
+- Documentation site: the search box in the tab bar searched for ever
+  ("searching" never ended). mdBook 0.5 loads its search index only when its
+  own search toggle opens the search, and the Doxygen theme hides that
+  toggle; the theme now opens the search through it at the first focus, so
+  the index loads and what was typed meanwhile is searched. A link with
+  `?search=…` keeps its results open. The book's title and footer show the
+  current version (0.2.7) instead of 0.1.0.
 - Inventor 3D preview (#271): parts and assemblies whose segments are
   compressed with Zstandard instead of zlib (seen in newer Inventor files;
   every part failed with *damaged compressed data*) get their preview and

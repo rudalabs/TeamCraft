@@ -4,7 +4,8 @@
 (function () {
   "use strict";
   var root = typeof path_to_root === "string" ? path_to_root : "";
-  var version = "0.1.0";
+  // the version in the title and footer: bumped with Cargo.toml (release checklist)
+  var version = "0.2.7";
   var tabs = [
     { label: "Main Page", href: "index.html", match: /\/TeamCraft\/(index\.html)?$|^\/(index\.html)?$/ },
     { label: "User Guide", href: "guide/getting-started.html", match: /\/guide\// },
@@ -64,19 +65,38 @@
   var form = document.getElementById("mdbook-searchbar-outer");
   var bar = document.getElementById("mdbook-searchbar");
   var wrapper = document.getElementById("mdbook-search-wrapper");
+  var toggle = document.getElementById("mdbook-search-toggle");
   if (form && bar && wrapper) {
     search.appendChild(form);
     bar.setAttribute("placeholder", "Search");
+    // mdBook (0.5) loads its search index only when its own toggle opens the
+    // search (searcher.js showSearch). That toggle sits in the hidden menu
+    // bar, so typing into the moved box searched without an index and stayed
+    // "searching" for ever. The first focus opens the search through the
+    // toggle once, which loads the index; searcher.js then searches for what
+    // was typed meanwhile.
+    var loadIndex = function () {
+      if (!toggle || document.getElementById("mdbook-search-index")) return;
+      if (!wrapper.classList.contains("hidden")) return;
+      // the toggle's handler also scrolls to the top: keep the reader's place
+      var x = window.scrollX, y = window.scrollY;
+      toggle.click();
+      window.scrollTo(x, y);
+    };
     var open = function () { if (bar.value.trim()) wrapper.classList.remove("hidden"); };
     var close = function () { wrapper.classList.add("hidden"); };
-    bar.addEventListener("input", open);
-    bar.addEventListener("focus", open);
+    bar.addEventListener("focus", function () {
+      loadIndex();
+      if (bar.value.trim()) { open(); } else { close(); }
+    });
+    bar.addEventListener("input", function () { loadIndex(); open(); });
     bar.addEventListener("keydown", function (e) { if (e.key === "Escape") { close(); bar.blur(); } });
     form.addEventListener("submit", function (e) { e.preventDefault(); open(); });
     document.addEventListener("click", function (e) {
       if (!wrapper.contains(e.target) && !search.contains(e.target)) close();
     });
-    close();
+    // a link with ?search=… was already opened by searcher.js (it runs first)
+    if (bar.value.trim()) { open(); } else { close(); }
   }
 
   // ------------------------------------------------- breadcrumb and footer
